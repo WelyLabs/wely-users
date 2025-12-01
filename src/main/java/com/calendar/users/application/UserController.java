@@ -8,6 +8,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Mono;
 
 @RestController
 @RequestMapping("users")
@@ -25,7 +26,7 @@ public class UserController {
     }
 
     @GetMapping("me")
-    public ResponseEntity<BusinessUser> readProfile(@AuthenticationPrincipal Jwt jwt) {
-        return ResponseEntity.ok(userService.readProfile(jwt));
+    public Mono<ResponseEntity<BusinessUser>> readProfile(@AuthenticationPrincipal Jwt jwt) {
+        return userService.readProfile(jwt).map(ResponseEntity::ok);
     }
 }

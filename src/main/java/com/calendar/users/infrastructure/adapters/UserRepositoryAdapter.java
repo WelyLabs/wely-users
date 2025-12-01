@@ -7,6 +7,7 @@ import com.calendar.users.infrastructure.models.entities.UserEntity;
 import com.calendar.users.infrastructure.repositories.UserRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Mono;
 
 @Component
 public class UserRepositoryAdapter implements UserRepositoryPort {
@@ -19,12 +20,12 @@ public class UserRepositoryAdapter implements UserRepositoryPort {
         this.userEntityMapper = userEntityMapper;
     }
 
-    public BusinessUser save(BusinessUser businessUser, String keycloakId) {
+    public Mono<BusinessUser> save(BusinessUser businessUser, String keycloakId) {
         try {
             UserEntity userEntity = userEntityMapper.toUserEntity(businessUser);
             userEntity.setKeycloakId(keycloakId);
-            return userEntityMapper.toBusinessUser(
-                    userRepository.save(userEntity));
+            return userRepository.save(userEntity)
+                    .map(userEntityMapper::toBusinessUser);
         } catch (DataIntegrityViolationException e) {
             throw e;
         } catch (Exception e) {
@@ -32,7 +33,7 @@ public class UserRepositoryAdapter implements UserRepositoryPort {
         }
     }
 
-    public BusinessUser getBusinessUserByKeycloakId(String keycloakId) {
-        return userEntityMapper.toBusinessUser(userRepository.findByKeycloakId(keycloakId));
+    public Mono<BusinessUser> getBusinessUserByKeycloakId(String keycloakId) {
+        return userRepository.findByKeycloakId(keycloakId).map(userEntityMapper::toBusinessUser);
     }
 }

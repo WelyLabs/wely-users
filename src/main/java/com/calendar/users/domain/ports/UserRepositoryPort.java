@@ -1,10 +1,11 @@
 package com.calendar.users.domain.ports;
 
 import com.calendar.users.domain.models.BusinessUser;
+import reactor.core.publisher.Mono;
 
 public interface UserRepositoryPort {
 
-    BusinessUser save(BusinessUser businessUser, String keycloakId);
+    Mono<BusinessUser> save(BusinessUser businessUser, String keycloakId);
 
-    BusinessUser getBusinessUserByKeycloakId(String keycloakId);
+    Mono<BusinessUser> getBusinessUserByKeycloakId(String keycloakId);
 }
