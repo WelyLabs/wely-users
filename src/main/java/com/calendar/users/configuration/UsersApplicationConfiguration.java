@@ -1,5 +1,6 @@
 package com.calendar.users.configuration;
 
+import com.calendar.users.domain.ports.AwsPort;
 import com.calendar.users.domain.ports.UserRepositoryPort;
 import com.calendar.users.domain.services.UserService;
 import org.springframework.context.annotation.Bean;
@@ -12,7 +13,9 @@ import org.springframework.security.config.annotation.web.reactive.EnableWebFlux
 public class UsersApplicationConfiguration {
 
     @Bean
-    public UserService userService(UserRepositoryPort userRepositoryPort) {
-        return new UserService(userRepositoryPort);
+    public UserService userService(
+            UserRepositoryPort userRepositoryPort,
+            AwsPort awsPort) {
+        return new UserService(userRepositoryPort, awsPort);
     }
 }

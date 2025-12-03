@@ -26,6 +26,9 @@ public class UserEntity {
     @Column("keycloak_id")
     private String keycloakId;
 
+    @Column("profile_pic_url")
+    private String profilePicUrl;
+
     @Column("joined_date")
     private LocalDateTime joinedDate;
 

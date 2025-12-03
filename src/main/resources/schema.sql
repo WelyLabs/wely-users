@@ -1,12 +1,22 @@
 -- Fichier : src/main/resources/schema.sql
 
+DROP SCHEMA public CASCADE;
+
+-- 2. Recrée le schéma public vide
+CREATE SCHEMA public;
+
+-- 3. Accorde les permissions de base sur le nouveau schéma
+GRANT ALL ON SCHEMA public TO CURRENT_USER;
+GRANT ALL ON SCHEMA public TO PUBLIC;
+
 -- TABLE PRINCIPALE : app_user (renommée pour éviter conflit avec le mot-clé 'user')
 CREATE TABLE IF NOT EXISTS app_user (
     -- ID : Clé primaire, auto-incrémentée (BIGSERIAL pour des raisons de performance/taille)
                                         id BIGSERIAL PRIMARY KEY,
 
-    -- ID Keycloak : Doit être unique et non nul pour l'authentification
-                                        keycloak_id VARCHAR(255) UNIQUE NOT NULL,
+                                        keycloak_id TEXT UNIQUE NOT NULL,
+
+    profile_pic_url TEXT,
 
     -- Date d'adhésion
     joined_date TIMESTAMP WITHOUT TIME ZONE NOT NULL
