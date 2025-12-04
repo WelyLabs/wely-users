@@ -23,14 +23,12 @@ public class UserService {
     public Mono<BusinessUser> readProfile(Jwt jwt) {
         return userRepositoryPort.getBusinessUserByKeycloakId(jwt.getSubject())
                 .switchIfEmpty(
-                        Mono.defer(() -> {
-                            System.out.println("ça passe ?");
-                            return userRepositoryPort.save(new BusinessUser(
+                        Mono.defer(() -> userRepositoryPort.save(new BusinessUser(
                                     null,
                                     null,
                                     LocalDateTime.now()
-                            ), jwt.getSubject());
-                        })
+                            ), jwt.getSubject())
+                        )
                 );
     }
 
