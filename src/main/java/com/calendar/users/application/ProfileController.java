@@ -22,11 +22,16 @@ public class ProfileController {
         return userService.resolveInternalUserId(keycloakId).map(ResponseEntity::ok);
     }
 
-    @GetMapping()
+    @GetMapping
     public Mono<ResponseEntity<BusinessUser>> readProfile(
             @RequestHeader("X-Internal-User-Id") String userId) {
         return userService.readProfile(userId).map(ResponseEntity::ok);
     }
+
+//    @PutMapping
+//    public Mono<ResponseEntity> updateProfile(@RequestBody BusinessUser businessUser) {
+//
+//    }
 
     @PostMapping("profile/picture")
     public Mono<ResponseEntity<String>> updateProfilePicture(
