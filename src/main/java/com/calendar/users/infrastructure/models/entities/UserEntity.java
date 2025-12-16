@@ -26,12 +26,18 @@ public class UserEntity {
     @Column("keycloak_id")
     private String keycloakId;
 
+    @Column("user_name")
+    private String userName;
+
+    @Column("first_name")
+    private String firstName;
+
+    @Column("last_name")
+    private String lastName;
+
     @Column("profile_pic_url")
     private String profilePicUrl;
 
     @Column("joined_date")
     private LocalDateTime joinedDate;
-
-    @Transient
-    private Set<FriendshipEntity> friendships = new HashSet<>();
 }

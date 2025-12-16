@@ -12,8 +12,9 @@ GRANT ALL ON SCHEMA public TO PUBLIC;
 CREATE TABLE IF NOT EXISTS app_user (
                                         id BIGSERIAL PRIMARY KEY,
                                         keycloak_id TEXT UNIQUE NOT NULL,
+                                        user_name TEXT,
+                                        first_name TEXT,
+                                        last_name TEXT,
                                         profile_pic_url TEXT,
                                         joined_date TIMESTAMP WITHOUT TIME ZONE NOT NULL
 );
-
-CREATE UNIQUE INDEX idx_app_user_keycloak_id ON app_user (keycloak_id);
