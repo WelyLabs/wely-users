@@ -17,7 +17,7 @@ public interface UserRepository extends ReactiveCrudRepository<UserEntity, Long>
             "WHERE f.user_id = :userId")
     Flux<UserEntity> findFriendByUserId(Long userId, Pageable pageable);
 
-    Mono<UserEntity> findByKeycloakId(String keycloakId);
+    Mono<UserEntity> findById(String userId);
 
     @Modifying
     @Query("UPDATE app_user SET profile_pic_url = :url WHERE keycloak_id = :keycloakId")

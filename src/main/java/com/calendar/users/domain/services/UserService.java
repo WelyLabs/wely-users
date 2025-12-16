@@ -4,8 +4,6 @@ import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.ports.AwsPort;
 import com.calendar.users.domain.ports.UserRepositoryPort;
 import org.springframework.http.codec.multipart.FilePart;
-import org.springframework.security.oauth2.jwt.Jwt;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
@@ -20,20 +18,16 @@ public class UserService {
         this.awsPort = awsPort;
     }
 
-    public Mono<BusinessUser> readProfile(Jwt jwt) {
-        return userRepositoryPort.getBusinessUserByKeycloakId(jwt.getSubject())
-                .switchIfEmpty(
-                        Mono.defer(() -> userRepositoryPort.save(new BusinessUser(
-                                    null,
-                                    null,
-                                    LocalDateTime.now()
-                            ), jwt.getSubject())
-                        )
-                );
+    public Mono<BusinessUser> readProfile(String userId) {
+        return userRepositoryPort.getBusinessUserByUserId(userId)
+                .onErrorResume(e -> Mono.empty());
     }
 
-    public Mono<String> updateProfilePicture(Jwt jwt, Mono<FilePart> filePartMono) {
-        String keycloakId = jwt.getSubject();
+    public Mono<BusinessUser> createUserOnSignUp(String keycloakId) {
+        return userRepositoryPort.save(new BusinessUser(null, null, LocalDateTime.now()), keycloakId);
+    }
+
+    public Mono<String> updateProfilePicture(String keycloakId, Mono<FilePart> filePartMono) {
         return filePartMono.flatMap(filePart ->
                     awsPort.storeObject(filePart, keycloakId)
                         .flatMap(profilePicUrl ->

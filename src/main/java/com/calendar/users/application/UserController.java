@@ -21,14 +21,19 @@ public class UserController {
 
     @GetMapping("me")
     public Mono<ResponseEntity<BusinessUser>> readProfile(
-            @AuthenticationPrincipal Jwt jwt) {
-        return userService.readProfile(jwt).map(ResponseEntity::ok);
+            @RequestHeader("X-Internal-User-Id") String userId) {
+        return userService.readProfile(userId).map(ResponseEntity::ok);
+    }
+
+    @PostMapping("signUp")
+    public Mono<ResponseEntity<BusinessUser>> signUp(@RequestHeader("X-Keycloak-Sub") String keycloakId) {
+        return userService.createUserOnSignUp(keycloakId).map(ResponseEntity::ok);
     }
 
     @PostMapping("me/profilePicture")
     public Mono<ResponseEntity<String>> updateProfilePicture(
-            @AuthenticationPrincipal Jwt jwt, @RequestPart("file") Mono<FilePart> filePartMono) {
-        return userService.updateProfilePicture(jwt, filePartMono).map(ResponseEntity::ok);
+            @RequestHeader("X-Keycloak-Sub") String keycloakId, @RequestPart("file") Mono<FilePart> filePartMono) {
+        return userService.updateProfilePicture(keycloakId, filePartMono).map(ResponseEntity::ok);
     }
 
 }
