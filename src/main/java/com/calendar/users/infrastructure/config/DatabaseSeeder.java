@@ -1,6 +1,7 @@
 package com.calendar.users.infrastructure.config;
 
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.annotation.Profile;
 import org.springframework.data.r2dbc.core.R2dbcEntityTemplate;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
@@ -11,7 +12,7 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 @Component
-//@Profile({"dev", "test"})
+@Profile({"local", "test"})
 public class DatabaseSeeder implements CommandLineRunner {
 
     private final static int USER_COUNT = 1_000_000;
