@@ -1,4 +1,4 @@
-package com.calendar.users.application;
+package com.calendar.users.application.rest;
 
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.services.UserService;
