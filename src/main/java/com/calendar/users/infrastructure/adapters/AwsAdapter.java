@@ -13,6 +13,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 
+// todo : transférer cette classe dans service dédié
 @Component
 public class AwsAdapter implements AwsPort {
 

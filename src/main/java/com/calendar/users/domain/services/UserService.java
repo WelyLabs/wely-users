@@ -5,6 +5,8 @@ import com.calendar.users.domain.ports.AwsPort;
 import com.calendar.users.domain.ports.KeycloakPort;
 import com.calendar.users.domain.ports.UserEventPublisher;
 import com.calendar.users.domain.ports.UserRepositoryPort;
+import com.calendar.users.exception.BusinessErrorCode;
+import com.calendar.users.exception.BusinessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,7 +31,7 @@ public class UserService {
 
     public Mono<BusinessUser> readProfile(Long userId) {
         return userRepositoryPort.getBusinessUserByUserId(userId)
-                .onErrorResume(e -> Mono.empty());
+                .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
     }
 
     public Mono<Long> resolveInternalUserId(String keycloakId) {
@@ -53,13 +55,10 @@ public class UserService {
                                                             .flatMap(userEventPublisher::publishUserCreatedEvent);
                                                 })
                                 )
-                                .switchIfEmpty(Mono.error(new RuntimeException("Keycloak User not found")))
-                                .onErrorResume(DataIntegrityViolationException.class, e ->
-                                        resolveInternalUserId(keycloakId)
-                                )
                 );
     }
 
+    // todo : transférer cette logique dans un service dédié
     public Mono<String> updateProfilePicture(Long userId, Mono<FilePart> filePartMono) {
         return filePartMono.flatMap(filePart ->
                     awsPort.storeObject(filePart, userId.toString())

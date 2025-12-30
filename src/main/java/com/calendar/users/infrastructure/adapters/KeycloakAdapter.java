@@ -1,11 +1,15 @@
 package com.calendar.users.infrastructure.adapters;
 
 import com.calendar.users.domain.ports.KeycloakPort;
+import com.calendar.users.exception.TechnicalErrorCode;
+import com.calendar.users.exception.TechnicalException;
 import com.calendar.users.infrastructure.api.KeycloakAdminApi;
 import com.calendar.users.infrastructure.models.dtos.KeycloakUserResponse;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
+@Slf4j
 @Component
 public class KeycloakAdapter implements KeycloakPort {
 
@@ -17,6 +21,9 @@ public class KeycloakAdapter implements KeycloakPort {
 
     public Mono<KeycloakUserResponse> getUser(String keycloakId) {
         return keycloakAdminApi.getUser(keycloakId)
-                .onErrorResume(e -> Mono.error(e));
+                .onErrorMap(e -> {
+                    log.error("Erreur Keycloak : {}", e.getMessage());
+                    return new TechnicalException(TechnicalErrorCode.KEYCLOAK_ERROR);
+                });
     }
 }

@@ -2,12 +2,16 @@ package com.calendar.users.infrastructure.adapters;
 
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.ports.UserEventPublisher;
+import com.calendar.users.exception.TechnicalErrorCode;
+import com.calendar.users.exception.TechnicalException;
 import com.calendar.users.infrastructure.mappers.KafkaDataMapper;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 import tools.jackson.databind.ObjectMapper;
 
+@Slf4j
 @Component
 public class KafkaUserEventAdapter implements UserEventPublisher {
 
@@ -27,9 +31,11 @@ public class KafkaUserEventAdapter implements UserEventPublisher {
         return Mono.fromCallable(() -> objectMapper.writeValueAsString(kafkaDataMapper.toUserCreatedEventDTO(businessUser)))
                 .flatMap(payload -> {
                     var future = kafkaTemplate.send(USER_CREATED_TOPIC, String.valueOf(businessUser.id()), payload);
-                    return Mono.fromFuture(future);
+                    return Mono.fromFuture(future).onErrorMap(e -> {
+                        log.error("Erreur lors de l'envoi du message Kafka : {}", e.getMessage());
+                        return new TechnicalException(TechnicalErrorCode.KAFKA_ERROR);
+                    });
                 })
-                .onErrorMap(throwable -> new RuntimeException("Error publishing user created event", throwable))
                 .thenReturn(businessUser.id());
     }
 }
