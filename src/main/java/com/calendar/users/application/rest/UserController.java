@@ -1,10 +1,12 @@
 package com.calendar.users.application.rest;
 
 import com.calendar.users.domain.services.UserService;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("users")
+@Validated
 public class UserController {
 
     private final UserService userService;
