@@ -3,6 +3,7 @@ package com.calendar.users.application.rest;
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.services.UserService;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.validation.annotation.Validated;
@@ -28,7 +29,7 @@ public class ProfileController {
 
     @GetMapping
     public Mono<ResponseEntity<BusinessUser>> readProfile(
-            @NotBlank @RequestHeader("X-Internal-User-Id") Long userId) {
+            @NotNull @RequestHeader("X-Internal-User-Id") Long userId) {
         return userService.readProfile(userId).map(ResponseEntity::ok);
     }
 
@@ -40,7 +41,7 @@ public class ProfileController {
     // todo : faudra transférer ça aussi et changer le retour de l'url en vrai objet de réponse
     @PostMapping("picture")
     public Mono<ResponseEntity<String>> updateProfilePicture(
-            @NotBlank @RequestHeader("X-Internal-User-Id") Long userId, @RequestPart("file") Mono<FilePart> filePartMono) {
+            @NotNull @RequestHeader("X-Internal-User-Id") Long userId, @RequestPart("file") Mono<FilePart> filePartMono) {
         return userService.updateProfilePicture(userId, filePartMono).map(ResponseEntity::ok);
     }
 }

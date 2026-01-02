@@ -6,6 +6,7 @@ import com.calendar.users.exception.TechnicalErrorCode;
 import com.calendar.users.exception.TechnicalException;
 import com.calendar.users.infrastructure.mappers.KafkaDataMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cloud.stream.function.StreamBridge;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
@@ -15,27 +16,25 @@ import tools.jackson.databind.ObjectMapper;
 @Component
 public class KafkaUserEventAdapter implements UserEventPublisher {
 
-    private final KafkaTemplate<String, String> kafkaTemplate;
     private final KafkaDataMapper kafkaDataMapper;
-    private final ObjectMapper objectMapper;
+    private final StreamBridge streamBridge;
 
-    private static final String USER_CREATED_TOPIC = "USER_CREATED";
+    private static final String DESTINATION = "userCreated-out-0";
 
-    public KafkaUserEventAdapter(KafkaTemplate<String, String> kafkaTemplate, KafkaDataMapper kafkaDataMapper, ObjectMapper objectMapper) {
-        this.kafkaTemplate = kafkaTemplate;
+    public KafkaUserEventAdapter(KafkaDataMapper kafkaDataMapper, StreamBridge streamBridge) {
         this.kafkaDataMapper = kafkaDataMapper;
-        this.objectMapper = objectMapper;
+        this.streamBridge = streamBridge;
     }
 
     public Mono<Long> publishUserCreatedEvent(BusinessUser businessUser) {
-        return Mono.fromCallable(() -> objectMapper.writeValueAsString(kafkaDataMapper.toUserCreatedEventDTO(businessUser)))
-                .flatMap(payload -> {
-                    var future = kafkaTemplate.send(USER_CREATED_TOPIC, String.valueOf(businessUser.id()), payload);
-                    return Mono.fromFuture(future).onErrorMap(e -> {
-                        log.error("Erreur lors de l'envoi du message Kafka : {}", e.getMessage());
-                        return new TechnicalException(TechnicalErrorCode.KAFKA_ERROR);
-                    });
-                })
-                .thenReturn(businessUser.id());
+        return Mono.fromCallable(() -> kafkaDataMapper.toUserCreatedEventDTO(businessUser))
+                .flatMap(eventDto -> {
+                    boolean sent = streamBridge.send(DESTINATION, eventDto);
+
+                    if (!sent) {
+                        return Mono.error(new TechnicalException(TechnicalErrorCode.KAFKA_ERROR));
+                    }
+                    return Mono.just(businessUser.id());
+                });
     }
 }

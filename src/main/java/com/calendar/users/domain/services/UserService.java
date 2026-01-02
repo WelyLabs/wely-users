@@ -7,9 +7,7 @@ import com.calendar.users.domain.ports.UserEventPublisher;
 import com.calendar.users.domain.ports.UserRepositoryPort;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.codec.multipart.FilePart;
-import org.springframework.transaction.annotation.Transactional;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
