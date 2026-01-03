@@ -1,7 +1,7 @@
-package com.calendar.users.infrastructure.mappers;
+package com.calendar.users.infrastructure.persistence.mappers;
 
 import com.calendar.users.domain.models.BusinessUser;
-import com.calendar.users.infrastructure.models.entities.UserEntity;
+import com.calendar.users.infrastructure.persistence.models.entities.UserEntity;
 import org.mapstruct.Mapper;
 
 @Mapper(componentModel = "spring")

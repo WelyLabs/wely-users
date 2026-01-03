@@ -1,6 +1,6 @@
-package com.calendar.users.infrastructure.repositories;
+package com.calendar.users.infrastructure.persistence.repositories;
 
-import com.calendar.users.infrastructure.models.entities.UserEntity;
+import com.calendar.users.infrastructure.persistence.models.entities.UserEntity;
 import org.springframework.data.r2dbc.repository.Modifying;
 import org.springframework.data.r2dbc.repository.Query;
 import org.springframework.data.repository.reactive.ReactiveCrudRepository;

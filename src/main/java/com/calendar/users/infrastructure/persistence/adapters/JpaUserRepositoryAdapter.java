@@ -1,14 +1,13 @@
-package com.calendar.users.infrastructure.adapters;
+package com.calendar.users.infrastructure.persistence.adapters;
 
 import com.calendar.users.domain.models.BusinessUser;
-import com.calendar.users.domain.ports.UserRepositoryPort;
+import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
 import com.calendar.users.exception.TechnicalErrorCode;
 import com.calendar.users.exception.TechnicalException;
-import com.calendar.users.infrastructure.mappers.UserEntityMapper;
-import com.calendar.users.infrastructure.models.entities.UserEntity;
-import com.calendar.users.infrastructure.repositories.UserRepository;
+import com.calendar.users.infrastructure.persistence.mappers.UserEntityMapper;
+import com.calendar.users.infrastructure.persistence.models.entities.UserEntity;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
@@ -16,12 +15,12 @@ import reactor.core.publisher.Mono;
 
 @Slf4j
 @Component
-public class UserRepositoryAdapter implements UserRepositoryPort {
+public class JpaUserRepositoryAdapter implements UserRepository {
 
-    private final UserRepository userRepository;
+    private final com.calendar.users.infrastructure.persistence.repositories.UserRepository userRepository;
     private final UserEntityMapper userEntityMapper;
 
-    public UserRepositoryAdapter(UserRepository userRepository, UserEntityMapper userEntityMapper) {
+    public JpaUserRepositoryAdapter(com.calendar.users.infrastructure.persistence.repositories.UserRepository userRepository, UserEntityMapper userEntityMapper) {
         this.userRepository = userRepository;
         this.userEntityMapper = userEntityMapper;
     }

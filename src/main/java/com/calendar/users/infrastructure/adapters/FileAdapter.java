@@ -1,7 +1,7 @@
 package com.calendar.users.infrastructure.adapters;
 
 import com.calendar.users.configuration.properties.AwsS3Properties;
-import com.calendar.users.domain.ports.AwsPort;
+import com.calendar.users.domain.ports.FileStorage;
 import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.stereotype.Component;
@@ -15,12 +15,12 @@ import java.util.Objects;
 
 // todo : transférer cette classe dans service dédié
 @Component
-public class AwsAdapter implements AwsPort {
+public class FileAdapter implements FileStorage {
 
     private final S3AsyncClient s3Client;
     private final AwsS3Properties s3Properties;
 
-    public AwsAdapter(S3AsyncClient s3Client, AwsS3Properties s3Properties) {
+    public FileAdapter(S3AsyncClient s3Client, AwsS3Properties s3Properties) {
         this.s3Client = s3Client;
         this.s3Properties = s3Properties;
     }

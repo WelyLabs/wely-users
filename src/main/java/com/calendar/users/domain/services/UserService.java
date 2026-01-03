@@ -1,10 +1,10 @@
 package com.calendar.users.domain.services;
 
 import com.calendar.users.domain.models.BusinessUser;
-import com.calendar.users.domain.ports.AwsPort;
-import com.calendar.users.domain.ports.KeycloakPort;
+import com.calendar.users.domain.ports.FileStorage;
+import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.UserEventPublisher;
-import com.calendar.users.domain.ports.UserRepositoryPort;
+import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
 import org.springframework.http.codec.multipart.FilePart;
@@ -15,27 +15,27 @@ import java.util.concurrent.ThreadLocalRandom;
 
 public class UserService {
 
-    private final UserRepositoryPort userRepositoryPort;
-    private final AwsPort awsPort;
-    private final KeycloakPort keycloakPort;
+    private final UserRepository userRepository;
+    private final FileStorage fileStorage;
+    private final IdentityProvider identityProvider;
     private final UserEventPublisher userEventPublisher;
 
-    public UserService(UserRepositoryPort userRepositoryPort, AwsPort awsPort, KeycloakPort keycloakPort, UserEventPublisher userEventPublisher) {
-        this.userRepositoryPort = userRepositoryPort;
-        this.awsPort = awsPort;
-        this.keycloakPort = keycloakPort;
+    public UserService(UserRepository userRepository, FileStorage fileStorage, IdentityProvider identityProvider, UserEventPublisher userEventPublisher) {
+        this.userRepository = userRepository;
+        this.fileStorage = fileStorage;
+        this.identityProvider = identityProvider;
         this.userEventPublisher = userEventPublisher;
     }
 
     public Mono<BusinessUser> readProfile(Long userId) {
-        return userRepositoryPort.getBusinessUserByUserId(userId)
+        return userRepository.getBusinessUserByUserId(userId)
                 .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
     }
 
     public Mono<Long> resolveInternalUserId(String keycloakId) {
-        return userRepositoryPort.findIdByKeycloakId(keycloakId)
+        return userRepository.findIdByKeycloakId(keycloakId)
                 .switchIfEmpty(
-                        keycloakPort.getUser(keycloakId)
+                        identityProvider.getUser(keycloakId)
                                 .flatMap(keycloakUserResponse ->
                                         generateUniqueHashtag(keycloakUserResponse.username())
                                                 .flatMap(hashtag -> {
@@ -49,7 +49,7 @@ public class UserService {
                                                             LocalDateTime.now()
                                                     );
 
-                                                    return userRepositoryPort.save(newUser, keycloakId)
+                                                    return userRepository.save(newUser, keycloakId)
                                                             .flatMap(userEventPublisher::publishUserCreatedEvent);
                                                 })
                                 )
@@ -59,9 +59,9 @@ public class UserService {
     // todo : transférer cette logique dans un service dédié
     public Mono<String> updateProfilePicture(Long userId, Mono<FilePart> filePartMono) {
         return filePartMono.flatMap(filePart ->
-                    awsPort.storeObject(filePart, userId.toString())
+                    fileStorage.storeObject(filePart, userId.toString())
                         .flatMap(profilePicUrl ->
-                                userRepositoryPort.updateProfilePicUrl(profilePicUrl, userId)
+                                userRepository.updateProfilePicUrl(profilePicUrl, userId)
                                         .flatMap(update ->
                                             update > 0 ? Mono.just(profilePicUrl) :  Mono.error(new Exception())
                                         )
@@ -73,7 +73,7 @@ public class UserService {
         int candidate = ThreadLocalRandom.current().nextInt(1000, 10000);
 
         // 2. On vérifie en base s'il est déjà pris pour ce pseudo
-        return userRepositoryPort.existsByUserNameAndHashtag(username, candidate)
+        return userRepository.existsByUserNameAndHashtag(username, candidate)
                 .flatMap(exists -> {
                     if (exists) {
                         // S'il existe, on relance récursivement la génération

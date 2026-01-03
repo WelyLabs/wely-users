@@ -1,4 +1,4 @@
-package com.calendar.users.infrastructure.models.dtos;
+package com.calendar.users.infrastructure.identity.models;
 
 public record KeycloakUserResponse(
         String username,

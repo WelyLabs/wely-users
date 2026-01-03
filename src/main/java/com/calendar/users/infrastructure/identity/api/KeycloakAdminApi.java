@@ -1,12 +1,10 @@
-package com.calendar.users.infrastructure.api;
+package com.calendar.users.infrastructure.identity.api;
 
 
-import com.calendar.users.infrastructure.models.dtos.KeycloakUserResponse;
+import com.calendar.users.infrastructure.identity.models.KeycloakUserResponse;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.service.annotation.GetExchange;
 import org.springframework.web.service.annotation.HttpExchange;
-import org.springframework.web.service.annotation.PutExchange;
 import reactor.core.publisher.Mono;
 
 @HttpExchange("/users")

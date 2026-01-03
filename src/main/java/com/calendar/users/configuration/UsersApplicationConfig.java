@@ -1,9 +1,9 @@
 package com.calendar.users.configuration;
 
-import com.calendar.users.domain.ports.AwsPort;
-import com.calendar.users.domain.ports.KeycloakPort;
+import com.calendar.users.domain.ports.FileStorage;
+import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.UserEventPublisher;
-import com.calendar.users.domain.ports.UserRepositoryPort;
+import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.domain.services.UserService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -13,10 +13,10 @@ public class UsersApplicationConfig {
 
     @Bean
     public UserService userService(
-            UserRepositoryPort userRepositoryPort,
-            AwsPort awsPort,
-            KeycloakPort keycloakPort,
+            UserRepository userRepository,
+            FileStorage fileStorage,
+            IdentityProvider identityProvider,
             UserEventPublisher userEventPublisher) {
-        return new UserService(userRepositoryPort, awsPort, keycloakPort, userEventPublisher);
+        return new UserService(userRepository, fileStorage, identityProvider, userEventPublisher);
     }
 }

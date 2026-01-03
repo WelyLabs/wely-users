@@ -1,4 +1,4 @@
-package com.calendar.users.infrastructure.models.dtos;
+package com.calendar.users.infrastructure.messaging.models;
 
 public record UserCreatedEventDTO(
         Long userId,

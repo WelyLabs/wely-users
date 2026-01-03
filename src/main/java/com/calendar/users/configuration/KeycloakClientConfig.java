@@ -1,6 +1,6 @@
 package com.calendar.users.configuration;
 
-import com.calendar.users.infrastructure.api.KeycloakAdminApi;
+import com.calendar.users.infrastructure.identity.api.KeycloakAdminApi;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

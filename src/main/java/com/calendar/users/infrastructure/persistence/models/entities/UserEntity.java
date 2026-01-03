@@ -1,4 +1,4 @@
-package com.calendar.users.infrastructure.models.entities;
+package com.calendar.users.infrastructure.persistence.models.entities;
 
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.Transient;

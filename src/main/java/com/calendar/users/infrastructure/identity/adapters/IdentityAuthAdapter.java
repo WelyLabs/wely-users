@@ -1,21 +1,21 @@
-package com.calendar.users.infrastructure.adapters;
+package com.calendar.users.infrastructure.identity.adapters;
 
-import com.calendar.users.domain.ports.KeycloakPort;
+import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.exception.TechnicalErrorCode;
 import com.calendar.users.exception.TechnicalException;
-import com.calendar.users.infrastructure.api.KeycloakAdminApi;
-import com.calendar.users.infrastructure.models.dtos.KeycloakUserResponse;
+import com.calendar.users.infrastructure.identity.api.KeycloakAdminApi;
+import com.calendar.users.infrastructure.identity.models.KeycloakUserResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
 @Slf4j
 @Component
-public class KeycloakAdapter implements KeycloakPort {
+public class IdentityAuthAdapter implements IdentityProvider {
 
     private final KeycloakAdminApi keycloakAdminApi;
 
-    public KeycloakAdapter(KeycloakAdminApi keycloakAdminApi) {
+    public IdentityAuthAdapter(KeycloakAdminApi keycloakAdminApi) {
         this.keycloakAdminApi = keycloakAdminApi;
     }
 

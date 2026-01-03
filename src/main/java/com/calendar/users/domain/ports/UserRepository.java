@@ -3,7 +3,7 @@ package com.calendar.users.domain.ports;
 import com.calendar.users.domain.models.BusinessUser;
 import reactor.core.publisher.Mono;
 
-public interface UserRepositoryPort {
+public interface UserRepository {
 
     Mono<BusinessUser> save(BusinessUser businessUser, String keycloakId);
 
