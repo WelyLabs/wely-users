@@ -1,7 +1,6 @@
 package com.calendar.users.infrastructure.persistence.models.entities;
 
 import org.springframework.data.annotation.Id;
-import org.springframework.data.annotation.Transient;
 import org.springframework.data.relational.core.mapping.Column;
 import org.springframework.data.relational.core.mapping.Table;
 import lombok.AllArgsConstructor;
@@ -10,8 +9,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.time.LocalDateTime;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.UUID;
 
 @Setter
 @Getter
@@ -21,7 +19,7 @@ import java.util.Set;
 public class UserEntity {
 
     @Id
-    private Long id;
+    private UUID id;
 
     @Column("keycloak_id")
     private String keycloakId;

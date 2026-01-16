@@ -6,9 +6,13 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.multipart.FilePart;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
+
+import java.util.UUID;
 
 @RestController
 @RequestMapping("profile")
@@ -29,7 +33,9 @@ public class ProfileController {
 
     @GetMapping
     public Mono<ResponseEntity<BusinessUser>> readProfile(
-            @NotNull @RequestHeader("X-Internal-User-Id") Long userId) {
+            @AuthenticationPrincipal Jwt jwt) {
+        UUID userId = UUID.fromString(jwt.getClaimAsString("businessId"));
+
         return userService.readProfile(userId).map(ResponseEntity::ok);
     }
 

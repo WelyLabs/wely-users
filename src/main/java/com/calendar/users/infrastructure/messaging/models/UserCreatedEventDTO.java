@@ -1,7 +1,9 @@
 package com.calendar.users.infrastructure.messaging.models;
 
+import java.util.UUID;
+
 public record UserCreatedEventDTO(
-        Long userId,
+        UUID userId,
         String userName,
         Integer hashtag,
         String profilePicUrl

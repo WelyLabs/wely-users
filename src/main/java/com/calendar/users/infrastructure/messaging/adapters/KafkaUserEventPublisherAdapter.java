@@ -10,6 +10,8 @@ import org.springframework.cloud.stream.function.StreamBridge;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
+import java.util.UUID;
+
 @Slf4j
 @Component
 public class KafkaUserEventPublisherAdapter implements UserEventPublisher {
@@ -24,7 +26,7 @@ public class KafkaUserEventPublisherAdapter implements UserEventPublisher {
         this.streamBridge = streamBridge;
     }
 
-    public Mono<Long> publishUserCreatedEvent(BusinessUser businessUser) {
+    public Mono<UUID> publishUserCreatedEvent(BusinessUser businessUser) {
         return Mono.fromCallable(() -> kafkaDataMapper.toUserCreatedEventDTO(businessUser))
                 .flatMap(eventDto -> {
                     boolean sent = streamBridge.send(DESTINATION, eventDto);

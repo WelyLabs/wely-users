@@ -7,12 +7,14 @@ import org.springframework.data.repository.reactive.ReactiveCrudRepository;
 import org.springframework.stereotype.Repository;
 import reactor.core.publisher.Mono;
 
+import java.util.UUID;
+
 @Repository
-public interface UserRepository extends ReactiveCrudRepository<UserEntity, Long> {
+public interface UserR2dbcRepository extends ReactiveCrudRepository<UserEntity, UUID> {
 
-    Mono<UserEntity> findById(Long userId);
+    Mono<UserEntity> findById(UUID userId);
 
-    Mono<Long> findIdByKeycloakId(String keycloakId);
+    Mono<UUID> findIdByKeycloakId(String keycloakId);
 
     Mono<Boolean> existsByUserNameAndHashtag(String userName, Integer hashTag);
 

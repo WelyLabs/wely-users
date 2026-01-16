@@ -11,6 +11,7 @@ import org.springframework.http.codec.multipart.FilePart;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 public class UserService {
@@ -27,12 +28,12 @@ public class UserService {
         this.userEventPublisher = userEventPublisher;
     }
 
-    public Mono<BusinessUser> readProfile(Long userId) {
+    public Mono<BusinessUser> readProfile(UUID userId) {
         return userRepository.getBusinessUserByUserId(userId)
                 .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
     }
 
-    public Mono<Long> resolveInternalUserId(String keycloakId) {
+    public Mono<UUID> resolveInternalUserId(String keycloakId) {
         return userRepository.findIdByKeycloakId(keycloakId)
                 .switchIfEmpty(
                         identityProvider.getUser(keycloakId)

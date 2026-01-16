@@ -1,10 +1,11 @@
 package com.calendar.users.domain.models;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 public record BusinessUser(
 
-        Long id,
+        UUID id,
         String userName,
         Integer hashtag,
         String firstName,
