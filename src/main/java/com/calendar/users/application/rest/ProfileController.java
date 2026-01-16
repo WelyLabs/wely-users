@@ -21,10 +21,10 @@ public class ProfileController {
         this.userService = userService;
     }
 
-    @GetMapping("resolve")
-    public Mono<ResponseEntity<Long>> resolveInternalUserId(
-            @NotBlank @RequestHeader("X-Keycloak-Sub") String keycloakId) {
-        return userService.resolveInternalUserId(keycloakId).map(ResponseEntity::ok);
+    @GetMapping("resolve/{keycloakId}")
+    public Mono<String> resolveInternalUserId(
+             @NotNull @PathVariable String keycloakId) {
+        return userService.resolveInternalUserId(keycloakId).map(String::valueOf);
     }
 
     @GetMapping
