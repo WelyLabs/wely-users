@@ -30,6 +30,10 @@
 	<properties>
 		<java.version>25</java.version>
         <org.mapstruct.version>1.6.3</org.mapstruct.version>
+		<build.dir>target</build.dir>
+		<sonar.projectKey>WelyLabs_calendar-users-api</sonar.projectKey>
+		<sonar.organization>welylabs</sonar.organization>
+		<sonar.host.url>https://sonarcloud.io</sonar.host.url>
 	</properties>
     <dependencyManagement>
         <dependencies>
@@ -135,11 +139,20 @@
 	</dependencies>
 
 	<build>
+		<directory>${build.dir}</directory>
 		<plugins>
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>
 				<version>0.8.13</version>
+				<configuration>
+					<excludes>
+						<exclude>com/calendar/users/UsersApplication.class</exclude>
+						<exclude>com/calendar/users/infrastructure/config/DatabaseSeeder.class</exclude>
+						<exclude>com/calendar/users/configuration/**</exclude>
+						<exclude>com/calendar/users/configuration/properties/**</exclude>
+					</excludes>
+				</configuration>
 				<executions>
 					<execution>
 						<goals>
@@ -231,4 +244,17 @@
 		</plugins>
 	</build>
 
+	<profiles>
+		<profile>
+			<id>local-isolation</id>
+			<activation>
+				<property>
+					<name>!env.CI</name>
+				</property>
+			</activation>
+			<properties>
+				<build.dir>target-maven</build.dir>
+			</properties>
+		</profile>
+	</profiles>
 </project>
