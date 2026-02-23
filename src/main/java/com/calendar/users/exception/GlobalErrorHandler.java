@@ -22,8 +22,7 @@ public class GlobalErrorHandler {
 
         return Mono.just(ResponseEntity
                 .status(error.getHttpStatus())
-                .body(new ErrorResponse(error.getMessage(), error.getCode(), LocalDateTime.now()))
-        );
+                .body(new ErrorResponse(error.getMessage(), error.getCode(), LocalDateTime.now())));
     }
 
     @ExceptionHandler(TechnicalException.class)
@@ -33,19 +32,33 @@ public class GlobalErrorHandler {
 
         log.warn("⚠️ [Technical Error] Code: {} | Message: {}", error.getCode(), error.getMessage());
 
-        return Mono.just(ResponseEntity.status(500).body(new ErrorResponse(error.getMessage(), error.getCode(), LocalDateTime.now())));
+        return Mono.just(ResponseEntity.status(500)
+                .body(new ErrorResponse(error.getMessage(), error.getCode(), LocalDateTime.now())));
     }
 
     @ExceptionHandler(ValidationException.class)
     public Mono<ResponseEntity<ErrorResponse>> handleValidationException(ValidationException ex) {
 
-        log.warn("⚠️ [Technical Error] | Message: {}", ex.getMessage());
+        log.warn("⚠️ [Validation Error] | Message: {}", ex.getMessage());
 
         return Mono.just(ResponseEntity
                 .badRequest()
                 .body(new ErrorResponse(
                         ex.getMessage(),
                         "VALIDATION_ERROR",
+                        LocalDateTime.now())));
+    }
+
+    @ExceptionHandler(Exception.class)
+    public Mono<ResponseEntity<ErrorResponse>> handleGenericException(Exception ex) {
+
+        log.error("❌ [Generic Error] | Message: {}", ex.getMessage(), ex);
+
+        return Mono.just(ResponseEntity
+                .status(500)
+                .body(new ErrorResponse(
+                        "An unexpected error occurred",
+                        "INTERNAL_SERVER_ERROR",
                         LocalDateTime.now())));
     }
 }

@@ -85,4 +85,17 @@ class GlobalErrorHandlerTest {
                     assertEquals("VALIDATION_ERROR", response.errorCode());
                 });
     }
+
+    @Test
+    void handleGenericException_ShouldReturnInternalServerError() {
+        webTestClient.get()
+                .uri("/generic-error")
+                .exchange()
+                .expectStatus().is5xxServerError()
+                .expectBody(ErrorResponse.class)
+                .value(response -> {
+                    assertEquals("An unexpected error occurred", response.message());
+                    assertEquals("INTERNAL_SERVER_ERROR", response.errorCode());
+                });
+    }
 }
