@@ -1,13 +1,11 @@
 package com.calendar.users.domain.services;
 
 import com.calendar.users.domain.models.BusinessUser;
-import com.calendar.users.domain.ports.FileStorage;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.UserEventPublisher;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
-import org.springframework.http.codec.multipart.FilePart;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
@@ -17,13 +15,12 @@ import java.util.concurrent.ThreadLocalRandom;
 public class UserService {
 
     private final UserRepository userRepository;
-    private final FileStorage fileStorage;
     private final IdentityProvider identityProvider;
     private final UserEventPublisher userEventPublisher;
 
-    public UserService(UserRepository userRepository, FileStorage fileStorage, IdentityProvider identityProvider, UserEventPublisher userEventPublisher) {
+    public UserService(UserRepository userRepository, IdentityProvider identityProvider,
+            UserEventPublisher userEventPublisher) {
         this.userRepository = userRepository;
-        this.fileStorage = fileStorage;
         this.identityProvider = identityProvider;
         this.userEventPublisher = userEventPublisher;
     }
@@ -37,36 +34,20 @@ public class UserService {
         return userRepository.findIdByKeycloakId(keycloakId)
                 .switchIfEmpty(
                         identityProvider.getUser(keycloakId)
-                                .flatMap(keycloakUserResponse ->
-                                        generateUniqueHashtag(keycloakUserResponse.username())
-                                                .flatMap(hashtag -> {
-                                                    BusinessUser newUser = new BusinessUser(
-                                                            null,
-                                                            keycloakUserResponse.username(),
-                                                            hashtag,
-                                                            keycloakUserResponse.firstName(),
-                                                            keycloakUserResponse.lastName(),
-                                                            null,
-                                                            LocalDateTime.now()
-                                                    );
+                                .flatMap(keycloakUserResponse -> generateUniqueHashtag(keycloakUserResponse.username())
+                                        .flatMap(hashtag -> {
+                                            BusinessUser newUser = new BusinessUser(
+                                                    null,
+                                                    keycloakUserResponse.username(),
+                                                    hashtag,
+                                                    keycloakUserResponse.firstName(),
+                                                    keycloakUserResponse.lastName(),
+                                                    null,
+                                                    LocalDateTime.now());
 
-                                                    return userRepository.save(newUser, keycloakId)
-                                                            .flatMap(userEventPublisher::publishUserCreatedEvent);
-                                                })
-                                )
-                );
-    }
-
-    // todo : transférer cette logique dans un service dédié
-    public Mono<String> updateProfilePicture(Long userId, Mono<FilePart> filePartMono) {
-        return filePartMono.flatMap(filePart ->
-                    fileStorage.storeObject(filePart, userId.toString())
-                        .flatMap(profilePicUrl ->
-                                userRepository.updateProfilePicUrl(profilePicUrl, userId)
-                                        .flatMap(update ->
-                                            update > 0 ? Mono.just(profilePicUrl) :  Mono.error(new Exception())
-                                        )
-                        ));
+                                            return userRepository.save(newUser, keycloakId)
+                                                    .flatMap(userEventPublisher::publishUserCreatedEvent);
+                                        })));
     }
 
     private Mono<Integer> generateUniqueHashtag(String username) {

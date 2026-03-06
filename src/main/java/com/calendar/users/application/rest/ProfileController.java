@@ -2,10 +2,8 @@ package com.calendar.users.application.rest;
 
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.services.UserService;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.validation.annotation.Validated;
@@ -27,7 +25,7 @@ public class ProfileController {
 
     @GetMapping("resolve/{keycloakId}")
     public Mono<String> resolveInternalUserId(
-             @NotNull @PathVariable String keycloakId) {
+            @NotNull @PathVariable String keycloakId) {
         return userService.resolveInternalUserId(keycloakId).map(String::valueOf);
     }
 
@@ -39,15 +37,10 @@ public class ProfileController {
         return userService.readProfile(userId).map(ResponseEntity::ok);
     }
 
-//    @PutMapping
-//    public Mono<ResponseEntity> updateProfile(@RequestBody BusinessUser businessUser) {
-//
-//    }
+    // @PutMapping
+    // public Mono<ResponseEntity> updateProfile(@RequestBody BusinessUser
+    // businessUser) {
+    //
+    // }
 
-    // todo : faudra transférer ça aussi et changer le retour de l'url en vrai objet de réponse
-    @PostMapping("picture")
-    public Mono<ResponseEntity<String>> updateProfilePicture(
-            @NotNull @RequestHeader("X-Internal-User-Id") Long userId, @RequestPart("file") Mono<FilePart> filePartMono) {
-        return userService.updateProfilePicture(userId, filePartMono).map(ResponseEntity::ok);
-    }
 }

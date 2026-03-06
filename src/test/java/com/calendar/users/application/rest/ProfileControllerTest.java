@@ -5,16 +5,12 @@ import com.calendar.users.domain.services.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.MethodParameter;
-import org.springframework.http.MediaType;
-import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.web.reactive.BindingContext;
-import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.result.method.HandlerMethodArgumentResolver;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
@@ -22,7 +18,6 @@ import reactor.core.publisher.Mono;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -89,25 +84,4 @@ class ProfileControllerTest {
                 .jsonPath("$.userName").isEqualTo("user");
     }
 
-    @Test
-    void updateProfilePicture_ShouldReturnUrl() {
-        // Given
-        Long userId = 123L;
-        String profileUrl = "http://pic.url";
-        when(userService.updateProfilePicture(eq(userId), any())).thenReturn(Mono.just(profileUrl));
-
-        MultipartBodyBuilder builder = new MultipartBodyBuilder();
-        builder.part("file", "test-content".getBytes()).filename("test.jpg");
-
-        // When & Then
-        webTestClient.post()
-                .uri("/profile/picture")
-                .header("X-Internal-User-Id", userId.toString())
-                .contentType(MediaType.MULTIPART_FORM_DATA)
-                .body(BodyInserters.fromMultipartData(builder.build()))
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody(String.class)
-                .isEqualTo(profileUrl);
-    }
 }
