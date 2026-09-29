@@ -1,4 +1,4 @@
-# calendar-users-api
+# wely-users
 
 Service de gestion des profils utilisateurs et **pont entre l'identité Keycloak et l'identité métier** de la plateforme [Wely Calendar](https://github.com/WelyLabs/wely-platform).
 
@@ -77,7 +77,7 @@ Il se teste donc sans contexte Spring, avec trois implémentations d'interfaces.
 
 ## Le cœur du service : `resolveInternalUserId`
 
-C'est l'opération qui justifie l'existence du service. Appelée par le [mapper Keycloak](https://github.com/banettetheo/calendar-app-identity-service-config) pendant l'émission d'un token, elle traduit un UUID Keycloak en identifiant métier — **et crée l'utilisateur s'il n'existe pas encore**.
+C'est l'opération qui justifie l'existence du service. Appelée par le [mapper Keycloak](https://github.com/WelyLabs/wely-identity) pendant l'émission d'un token, elle traduit un UUID Keycloak en identifiant métier — **et crée l'utilisateur s'il n'existe pas encore**.
 
 ```mermaid
 sequenceDiagram
@@ -176,7 +176,7 @@ CREATE TABLE app_user (
 }
 ```
 
-Consommé par [`calendar-social-api`](https://github.com/banettetheo/calendar-social-api), qui crée le nœud correspondant dans Neo4j.
+Consommé par [`wely-social`](https://github.com/WelyLabs/wely-social), qui crée le nœud correspondant dans Neo4j.
 
 ---
 
