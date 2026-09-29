@@ -6,6 +6,7 @@ import com.calendar.users.domain.ports.UserEventPublisher;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
@@ -13,6 +14,10 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 public class UserService {
+
+    private static final int HASHTAG_MIN = 1000;
+    private static final int HASHTAG_MAX_EXCLUSIVE = 10_000;
+    private static final int MAX_HASHTAG_ATTEMPTS = 10;
 
     private final UserRepository userRepository;
     private final IdentityProvider identityProvider;
@@ -50,20 +55,26 @@ public class UserService {
                                         })));
     }
 
-    private Mono<Integer> generateUniqueHashtag(String username) {
-        // 1. On génère un candidat au hasard (ex: entre 1000 et 9999)
-        int candidate = ThreadLocalRandom.current().nextInt(1000, 10000);
-
-        // 2. On vérifie en base s'il est déjà pris pour ce pseudo
-        return userRepository.existsByUserNameAndHashtag(username, candidate)
-                .flatMap(exists -> {
-                    if (exists) {
-                        // S'il existe, on relance récursivement la génération
-                        return generateUniqueHashtag(username);
-                    } else {
-                        // S'il est libre, on le renvoie
-                        return Mono.just(candidate);
-                    }
-                });
+    /**
+     * Draws a hashtag that is free for this username, so the pair forms the public
+     * handle {@code Name#1234}.
+     *
+     * <p>Random draw rather than a shared counter, which would serialise every
+     * signup. Bounded to {@code MAX_HASHTAG_ATTEMPTS}: the previous version recursed
+     * without a limit, so a saturated username looped forever against the database.
+     * {@code concatMap} keeps the draws lazy — the first free candidate stops the
+     * sequence.
+     *
+     * <p>Uniqueness is ultimately enforced by the {@code unique_user_identity}
+     * constraint; this only avoids hitting it on the common path.
+     */
+    private Mono<Integer> generateUniqueHashtag(String userName) {
+        return Flux.range(0, MAX_HASHTAG_ATTEMPTS)
+                .map(attempt -> ThreadLocalRandom.current().nextInt(HASHTAG_MIN, HASHTAG_MAX_EXCLUSIVE))
+                .concatMap(candidate -> userRepository.existsByUserNameAndHashtag(userName, candidate)
+                        .filter(taken -> !taken)
+                        .map(free -> candidate))
+                .next()
+                .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.HASHTAG_UNAVAILABLE)));
     }
 }

@@ -144,4 +144,26 @@ class UserServiceTest {
                 verify(userRepository, times(2)).existsByUserNameAndHashtag(eq("username"), anyInt());
         }
 
+        @Test
+        void resolveInternalUserId_ShouldGiveUp_WhenEveryHashtagAttemptIsTaken() {
+                // Avant, generateUniqueHashtag se rappelait sans borne : un pseudo saturé
+                // bouclait indéfiniment contre la base.
+                KeycloakUserResponse keycloakUser =
+                                new KeycloakUserResponse("username", "first", "last", "a@b.c", true);
+
+                when(userRepository.findIdByKeycloakId("kc-1")).thenReturn(Mono.empty());
+                when(identityProvider.getUser("kc-1")).thenReturn(Mono.just(keycloakUser));
+                when(userRepository.existsByUserNameAndHashtag(eq("username"), anyInt()))
+                                .thenReturn(Mono.just(true));
+
+                StepVerifier.create(userService.resolveInternalUserId("kc-1"))
+                                .expectErrorMatches(e -> e instanceof BusinessException
+                                                && ((BusinessException) e).getErrorCode()
+                                                                == BusinessErrorCode.HASHTAG_UNAVAILABLE)
+                                .verify();
+
+                // Borné : 10 tentatives, puis abandon. Aucun enregistrement tenté.
+                verify(userRepository, times(10)).existsByUserNameAndHashtag(eq("username"), anyInt());
+                verify(userRepository, never()).save(any(), anyString());
+        }
 }
