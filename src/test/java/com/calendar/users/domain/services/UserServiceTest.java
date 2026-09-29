@@ -73,8 +73,6 @@ class UserServiceTest {
                 String kcId = "kc-123";
                 UUID internalId = UUID.randomUUID();
                 when(userRepository.findIdByKeycloakId(kcId)).thenReturn(Mono.just(internalId));
-                // Eager evaluation of switchIfEmpty requires this stubbing
-                when(identityProvider.getUser(kcId)).thenReturn(Mono.empty());
 
                 // When
                 Mono<UUID> result = userService.resolveInternalUserId(kcId);
@@ -83,6 +81,13 @@ class UserServiceTest {
                 StepVerifier.create(result)
                                 .expectNext(internalId)
                                 .verifyComplete();
+
+                // Le chemin de provisioning est derrière un Mono.defer : sur un
+                // utilisateur déjà connu, Keycloak n'est pas appelé du tout. Avant,
+                // switchIfEmpty assemblait la chaîne immédiatement et ce test devait
+                // stubber getUser pour ne pas exploser.
+                verify(identityProvider, never()).getUser(anyString());
+                verify(userRepository, never()).save(any(), anyString());
         }
 
         @Test

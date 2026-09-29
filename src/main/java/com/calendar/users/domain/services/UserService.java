@@ -35,24 +35,34 @@ public class UserService {
                 .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
     }
 
+    /**
+     * Translates a Keycloak subject into the internal business id, provisioning the
+     * user on first sight.
+     *
+     * <p>Called by the Keycloak protocol mapper while a token is being minted, so the
+     * common path — the user already exists — must stay a single query. Hence the
+     * {@link Mono#defer}: passing the provisioning chain directly to
+     * {@code switchIfEmpty} assembles it on every call, which means asking the identity
+     * provider for a user that was already found.
+     */
     public Mono<UUID> resolveInternalUserId(String keycloakId) {
         return userRepository.findIdByKeycloakId(keycloakId)
-                .switchIfEmpty(
-                        identityProvider.getUser(keycloakId)
-                                .flatMap(keycloakUserResponse -> generateUniqueHashtag(keycloakUserResponse.username())
-                                        .flatMap(hashtag -> {
-                                            BusinessUser newUser = new BusinessUser(
-                                                    null,
-                                                    keycloakUserResponse.username(),
-                                                    hashtag,
-                                                    keycloakUserResponse.firstName(),
-                                                    keycloakUserResponse.lastName(),
-                                                    null,
-                                                    LocalDateTime.now());
+                .switchIfEmpty(Mono.defer(() -> provisionUser(keycloakId)));
+    }
 
-                                            return userRepository.save(newUser, keycloakId)
-                                                    .flatMap(userEventPublisher::publishUserCreatedEvent);
-                                        })));
+    private Mono<UUID> provisionUser(String keycloakId) {
+        return identityProvider.getUser(keycloakId)
+                .flatMap(identityUser -> generateUniqueHashtag(identityUser.username())
+                        .map(hashtag -> new BusinessUser(
+                                null,
+                                identityUser.username(),
+                                hashtag,
+                                identityUser.firstName(),
+                                identityUser.lastName(),
+                                null,
+                                LocalDateTime.now()))
+                        .flatMap(newUser -> userRepository.save(newUser, keycloakId))
+                        .flatMap(userEventPublisher::publishUserCreatedEvent));
     }
 
     /**
