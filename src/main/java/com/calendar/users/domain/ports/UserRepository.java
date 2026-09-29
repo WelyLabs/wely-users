@@ -9,11 +9,9 @@ public interface UserRepository {
 
     Mono<BusinessUser> save(BusinessUser businessUser, String keycloakId);
 
-    Mono<BusinessUser> getBusinessUserByUserId(UUID UserId);
+    Mono<BusinessUser> getBusinessUserByUserId(UUID userId);
 
     Mono<Boolean> existsByUserNameAndHashtag(String userName, Integer hashTag);
-
-    Mono<Integer> updateProfilePicUrl(String profilePicUrl, Long userId);
 
     Mono<UUID> findIdByKeycloakId(String keycloakId);
 

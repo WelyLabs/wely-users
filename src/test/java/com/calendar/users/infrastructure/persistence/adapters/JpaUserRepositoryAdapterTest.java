@@ -192,17 +192,4 @@ class JpaUserRepositoryAdapterTest {
                                 .verify();
         }
 
-        @Test
-        void updateProfilePicUrl_ShouldReturnInteger() {
-                // Given
-                when(userR2dbcRepository.updateProfilePicUrlByKeycloakId("url", 123L)).thenReturn(Mono.just(1));
-
-                // When
-                Mono<Integer> result = adapter.updateProfilePicUrl("url", 123L);
-
-                // Then
-                StepVerifier.create(result)
-                                .expectNext(1)
-                                .verifyComplete();
-        }
 }

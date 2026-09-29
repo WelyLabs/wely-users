@@ -28,6 +28,7 @@ public class JpaUserRepositoryAdapter implements UserRepository {
         this.userEntityMapper = userEntityMapper;
     }
 
+    @Override
     public Mono<BusinessUser> save(BusinessUser businessUser, String keycloakId) {
         UserEntity userEntity = userEntityMapper.toUserEntity(businessUser);
         userEntity.setKeycloakId(keycloakId);
@@ -45,6 +46,7 @@ public class JpaUserRepositoryAdapter implements UserRepository {
 
     }
 
+    @Override
     public Mono<UUID> findIdByKeycloakId(String keycloakId) {
         return userR2dbcRepository.findIdByKeycloakId(keycloakId)
                 .onErrorMap(e -> {
@@ -53,6 +55,7 @@ public class JpaUserRepositoryAdapter implements UserRepository {
                 });
     }
 
+    @Override
     public Mono<Boolean> existsByUserNameAndHashtag(String userName, Integer hashTag) {
         return userR2dbcRepository.existsByUserNameAndHashtag(userName, hashTag)
                 .onErrorMap(e -> {
@@ -61,16 +64,12 @@ public class JpaUserRepositoryAdapter implements UserRepository {
                 });
     }
 
+    @Override
     public Mono<BusinessUser> getBusinessUserByUserId(UUID userId) {
         return userR2dbcRepository.findById(userId).map(userEntityMapper::toBusinessUser)
                 .onErrorMap(e -> {
                     log.error("Erreur lors de la récupération de l'utilisateur via son id : {}", e.getMessage());
                     return new TechnicalException(TechnicalErrorCode.DATABASE_ERROR);
                 });
-    }
-
-    // todo : transférer le code dans un service dédié
-    public Mono<Integer> updateProfilePicUrl(String profilePicUrl, Long userId) {
-        return userR2dbcRepository.updateProfilePicUrlByKeycloakId(profilePicUrl, userId);
     }
 }
