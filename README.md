@@ -49,7 +49,7 @@ Architecture hexagonale. Le domaine déclare trois ports ; l'infrastructure four
                   ┌────────────────────────────▼──▼──▼───┐
                   │           infrastructure/            │
                   │                                      │
-                  │  persistence/  JpaUserRepositoryAdapter
+                  │  persistence/  R2dbcUserRepositoryAdapter
                   │                → UserR2dbcRepository │
                   │  identity/     IdentityAuthAdapter   │
                   │                → KeycloakAdminApi    │
@@ -249,4 +249,3 @@ kubectl apply -k overlays/local --server-side
 - **Pas d'outbox transactionnel.** Si la publication Kafka échoue après le commit PostgreSQL, l'utilisateur existe en base sans nœud social, et aucun mécanisme ne rattrape.
 - **`generateUniqueHashtag` n'a pas de borne.** La récursion n'est limitée par aucun compteur ; un pseudo saturé provoquerait une récursion infinie.
 - **Pas de migrations.** Le schéma est décrit dans un `schema.sql` appliqué manuellement, sans Flyway ni Liquibase.
-- **Code mort résiduel :** `UserController` est vide, `updateProfilePicUrl` n'est plus appelé depuis le retrait de la gestion des avatars.
