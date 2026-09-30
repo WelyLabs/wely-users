@@ -37,10 +37,4 @@ public class ProfileController {
         return userService.readProfile(userId).map(ResponseEntity::ok);
     }
 
-    // @PutMapping
-    // public Mono<ResponseEntity> updateProfile(@RequestBody BusinessUser
-    // businessUser) {
-    //
-    // }
-
 }

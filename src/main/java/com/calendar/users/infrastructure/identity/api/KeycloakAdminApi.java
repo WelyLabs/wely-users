@@ -7,6 +7,12 @@ import org.springframework.web.service.annotation.GetExchange;
 import org.springframework.web.service.annotation.HttpExchange;
 import reactor.core.publisher.Mono;
 
+/**
+ * The slice of Keycloak's Admin API this service calls.
+ *
+ * <p>One method, because that is all the JIT provisioning flow needs: resolve a subject into a
+ * user. Writing attributes back is Keycloak's own job, through its console or its token mappers.
+ */
 @HttpExchange("/users")
 public interface KeycloakAdminApi {
 
@@ -14,18 +20,4 @@ public interface KeycloakAdminApi {
     Mono<KeycloakUserResponse> getUser(
             @PathVariable String keycloakId
     );
-
-//    @PutExchange("/{userId}")
-//    Mono<Void> updateAttributes(
-//
-//            @PathVariable String userId,
-//            @RequestBody KeycloakUserUpdateRequest userUpdate
-//    );
-//
-//    @PutExchange("/{userId}/execute-actions-email")
-//    Mono<Void> sendUpdateEmailAction(
-//
-//            @PathVariable String userId,
-//            @RequestBody String[] actions
-//    );
 }
