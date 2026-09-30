@@ -38,13 +38,13 @@ class KeycloakClientConfigTest {
     @Mock private ReactiveOAuth2AuthorizedClientService authorizedClientService;
 
     @Test
-    @DisplayName("le manager de client utilise le flux client_credentials côté service")
+    @DisplayName("the client manager uses the service-side client_credentials flow")
     void authorizedClientManager_shouldBeTheServiceVariant() {
         ReactiveOAuth2AuthorizedClientManager manager =
                 config.authorizedClientManager(clientRegistrationRepository, authorizedClientService);
 
-        // La variante « AuthorizedClientService » est celle qui convient hors contexte
-        // de requête utilisateur : le service s'authentifie pour lui-même.
+        // The AuthorizedClientService variant is the one that fits outside a user
+        // request: the service authenticates on its own behalf.
         assertThat(manager)
                 .isInstanceOf(AuthorizedClientServiceReactiveOAuth2AuthorizedClientManager.class);
         verifyNoInteractions(clientRegistrationRepository, authorizedClientService);
@@ -72,7 +72,7 @@ class KeycloakClientConfigTest {
     }
 
     @Test
-    @DisplayName("le client déclaratif implémente bien l'interface annotée")
+    @DisplayName("the declarative client implements the annotated interface")
     void keycloakAdminApi_shouldBeAProxyOfTheDeclaredInterface() {
         WebClient client = config.keycloakAdminWebClient(
                 BASE_URL,

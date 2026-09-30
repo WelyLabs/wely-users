@@ -41,10 +41,10 @@ class InfrastructureErrorAspectTest {
         return ((TechnicalException) error).getErrorCode();
     }
 
-    // --- persistance -------------------------------------------------------
+    // --- persistence -------------------------------------------------------
 
     @Test
-    @DisplayName("une panne de base devient DATABASE_ERROR")
+    @DisplayName("a database failure becomes DATABASE_ERROR")
     void translatePersistenceFailures_shouldMapToDatabaseError() throws Throwable {
         when(joinPoint.proceed()).thenReturn(Mono.error(new RuntimeException("connection reset")));
 
@@ -55,13 +55,13 @@ class InfrastructureErrorAspectTest {
     }
 
     @Test
-    @DisplayName("la règle métier de l'adaptateur traverse : contrainte unique ≠ incident")
+    @DisplayName("the adapter's business rule passes through: a unique constraint is not an incident")
     void translatePersistenceFailures_shouldLetBusinessFailuresThrough() throws Throwable {
         BusinessException alreadyExists = new BusinessException(BusinessErrorCode.USER_ALREADY_EXISTS);
         when(joinPoint.proceed()).thenReturn(Mono.error(alreadyExists));
 
-        // L'adaptateur traduit DataIntegrityViolationException avant l'aspect. Si l'aspect
-        // la réécrivait, un doublon de pseudo répondrait 500 au lieu de 409.
+        // The adapter translates DataIntegrityViolationException before the aspect. Were
+        // the aspect to rewrite it, a duplicate handle would answer 500 instead of 409.
         StepVerifier.create((Mono<?>) aspect.translatePersistenceFailures(joinPoint))
                 .expectErrorMatches(error -> error == alreadyExists)
                 .verify();
@@ -77,22 +77,22 @@ class InfrastructureErrorAspectTest {
                 .verify();
     }
 
-    // --- identité ----------------------------------------------------------
+    // --- identity ----------------------------------------------------------
 
     @Test
-    @DisplayName("un Keycloak injoignable devient KEYCLOAK_ERROR, pas DATABASE_ERROR")
+    @DisplayName("an unreachable Keycloak becomes KEYCLOAK_ERROR, not DATABASE_ERROR")
     void translateIdentityFailures_shouldMapToKeycloakError() throws Throwable {
         when(joinPoint.proceed()).thenReturn(Mono.error(new RuntimeException("503 from admin API")));
 
-        // Deux pointcuts distincts justement pour ça : confondre les deux incidents
-        // rendrait le diagnostic en production impossible.
+        // Two separate pointcuts exist for this: conflating the two incidents would make
+        // a production diagnosis impossible.
         StepVerifier.create((Mono<?>) aspect.translateIdentityFailures(joinPoint))
                 .expectErrorMatches(error -> error instanceof TechnicalException
                         && codeOf(error) == TechnicalErrorCode.KEYCLOAK_ERROR)
                 .verify();
     }
 
-    // --- forme du retour ---------------------------------------------------
+    // --- shape of the return value -----------------------------------------
 
     @Test
     void translatePersistenceFailures_shouldHandleFluxAsWell() throws Throwable {
@@ -123,10 +123,10 @@ class InfrastructureErrorAspectTest {
     }
 
     @Test
-    @DisplayName("rien n'est souscrit à l'assemblage : l'advice ne rejoue pas la requête")
+    @DisplayName("nothing is subscribed at assembly: the advice does not replay the query")
     void translatePersistenceFailures_shouldNotSubscribeEagerly() throws Throwable {
         Mono<String> lazy = Mono.fromSupplier(() -> {
-            throw new AssertionError("le publisher ne doit pas être souscrit ici");
+            throw new AssertionError("the publisher must not be subscribed here");
         });
         when(joinPoint.proceed()).thenReturn(lazy);
 

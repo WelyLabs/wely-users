@@ -40,7 +40,7 @@ class UsersApplicationTest {
 
     @Test
     void seederShouldNotBeActiveOutsideTheLocalProfile() {
-        // Le seeder insérait un million de lignes quand le profil test était actif.
+        // The seeder tried to insert a million rows whenever the test profile was on.
         assertThat(context.getBeansOfType(
                 com.calendar.users.infrastructure.config.DatabaseSeeder.class)).isEmpty();
     }

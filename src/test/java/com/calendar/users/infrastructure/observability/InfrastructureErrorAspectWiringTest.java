@@ -44,18 +44,18 @@ class InfrastructureErrorAspectWiringTest {
     @Autowired private IdentityProvider identityProvider;
 
     @Test
-    @DisplayName("les deux adaptateurs sont proxifiés par l'aspect")
+    @DisplayName("both adapters are advised by the aspect")
     void adapters_shouldBeAdvised() {
         assertThat(AopUtils.isAopProxy(userRepository))
-                .as("l'adaptateur de persistance devrait être un proxy AOP")
+                .as("the persistence adapter should be an AOP proxy")
                 .isTrue();
         assertThat(AopUtils.isAopProxy(identityProvider))
-                .as("l'adaptateur d'identité devrait être un proxy AOP")
+                .as("the identity adapter should be an AOP proxy")
                 .isTrue();
     }
 
     @Test
-    @DisplayName("une panne de base ressort en DATABASE_ERROR à travers le proxy")
+    @DisplayName("a database failure surfaces as DATABASE_ERROR through the proxy")
     void persistenceAdapter_shouldTranslateToDatabaseError() {
         when(userR2dbcRepository.findIdByKeycloakId(anyString()))
                 .thenReturn(Mono.error(new RuntimeException("connection reset by peer")));
@@ -68,7 +68,7 @@ class InfrastructureErrorAspectWiringTest {
     }
 
     @Test
-    @DisplayName("un Keycloak injoignable ressort en KEYCLOAK_ERROR, pas DATABASE_ERROR")
+    @DisplayName("an unreachable Keycloak surfaces as KEYCLOAK_ERROR, not DATABASE_ERROR")
     void identityAdapter_shouldTranslateToKeycloakError() {
         when(keycloakAdminApi.getUser(anyString()))
                 .thenReturn(Mono.error(new RuntimeException("503 Service Unavailable")));
@@ -81,7 +81,7 @@ class InfrastructureErrorAspectWiringTest {
     }
 
     @Test
-    @DisplayName("le pointcut couvre toutes les méthodes publiques de l'adaptateur")
+    @DisplayName("the pointcut covers every public method of the adapter")
     void persistenceAdapter_shouldTranslateEveryMethod() {
         when(userR2dbcRepository.findById(any(UUID.class)))
                 .thenReturn(Mono.error(new RuntimeException("statement timeout")));

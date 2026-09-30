@@ -1,64 +1,97 @@
 package com.calendar.users.exception;
 
-import jakarta.validation.ValidationException;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.ControllerAdvice;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
-import reactor.core.publisher.Mono;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.bind.support.WebExchangeBindException;
+import org.springframework.web.server.ServerWebExchange;
 
-import java.time.LocalDateTime;
+import java.net.URI;
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
+/**
+ * Turns every failure into an RFC 7807 {@code application/problem+json} response.
+ *
+ * <p>The three services that had error handling each answered in a different shape — a
+ * custom record here, a bare {@code Map} in events, nothing at all in chat — so a client
+ * had to know which service it was talking to before it could read an error. RFC 7807 is
+ * the standard for this and {@link ProblemDetail} ships with Spring, so there is no reason
+ * to invent a fourth shape.
+ *
+ * <p>Two properties are added beyond the standard fields: {@code code}, the stable
+ * identifier a client branches on, and {@code timestamp}, to correlate with logs.
+ */
 @Slf4j
-@ControllerAdvice
+@RestControllerAdvice
 public class GlobalErrorHandler {
 
+    /** Namespace for the {@code type} URI. Not dereferenced; it identifies, it does not serve. */
+    private static final String PROBLEM_TYPE_BASE = "https://welylabs.app/problems/";
+
     @ExceptionHandler(BusinessException.class)
-    public Mono<ResponseEntity<ErrorResponse>> handleBusinessException(BusinessException ex) {
+    public ProblemDetail handleBusinessException(BusinessException ex, ServerWebExchange exchange) {
+        BusinessErrorCode error = ex.getErrorCode();
 
-        var error = ex.getErrorCode();
+        // Expected outcome, not an incident: logged at WARN, and without a stack trace.
+        log.warn("Business failure {} on {}", error.getCode(), exchange.getRequest().getPath());
 
-        log.warn("⚠️ [Business Error] Code: {} | Message: {}", error.getCode(), error.getMessage());
-
-        return Mono.just(ResponseEntity
-                .status(error.getHttpStatus())
-                .body(new ErrorResponse(error.getMessage(), error.getCode(), LocalDateTime.now())));
+        return problem(error.getHttpStatus(), error.getCode(), error.getTitle(), error.getDetail(),
+                exchange);
     }
 
     @ExceptionHandler(TechnicalException.class)
-    public Mono<ResponseEntity<ErrorResponse>> handleTechnicalException(TechnicalException ex) {
+    public ProblemDetail handleTechnicalException(TechnicalException ex, ServerWebExchange exchange) {
+        TechnicalErrorCode error = ex.getErrorCode();
 
-        var error = ex.getErrorCode();
+        // A dependency is down: ERROR with the cause, because someone has to act on it.
+        // The previous version logged these at WARN, which hid them.
+        log.error("Technical failure {} on {}", error.getCode(), exchange.getRequest().getPath(), ex);
 
-        log.warn("⚠️ [Technical Error] Code: {} | Message: {}", error.getCode(), error.getMessage());
-
-        return Mono.just(ResponseEntity.status(500)
-                .body(new ErrorResponse(error.getMessage(), error.getCode(), LocalDateTime.now())));
+        return problem(error.getHttpStatus(), error.getCode(), error.getTitle(), error.getDetail(),
+                exchange);
     }
 
-    @ExceptionHandler(ValidationException.class)
-    public Mono<ResponseEntity<ErrorResponse>> handleValidationException(ValidationException ex) {
+    /** Bean Validation rejections, with the offending fields listed. */
+    @ExceptionHandler(WebExchangeBindException.class)
+    public ProblemDetail handleValidationException(WebExchangeBindException ex,
+                                                  ServerWebExchange exchange) {
+        Map<String, String> fieldErrors = new LinkedHashMap<>();
+        ex.getBindingResult().getFieldErrors()
+                .forEach(error -> fieldErrors.put(error.getField(), error.getDefaultMessage()));
 
-        log.warn("⚠️ [Validation Error] | Message: {}", ex.getMessage());
+        ProblemDetail problem = problem(HttpStatus.BAD_REQUEST, "USR-VAL-001",
+                "Invalid request", "One or more fields are invalid.", exchange);
+        problem.setProperty("errors", fieldErrors);
 
-        return Mono.just(ResponseEntity
-                .badRequest()
-                .body(new ErrorResponse(
-                        ex.getMessage(),
-                        "VALIDATION_ERROR",
-                        LocalDateTime.now())));
+        return problem;
     }
 
+    /**
+     * Last resort. The detail is deliberately generic: an exception message can carry a
+     * query, a constraint name or a host, and none of that belongs in a response. The real
+     * message goes to the logs, where the timestamp ties the two together.
+     */
     @ExceptionHandler(Exception.class)
-    public Mono<ResponseEntity<ErrorResponse>> handleGenericException(Exception ex) {
+    public ProblemDetail handleUnexpectedException(Exception ex, ServerWebExchange exchange) {
+        log.error("Unhandled failure on {}", exchange.getRequest().getPath(), ex);
 
-        log.error("❌ [Generic Error] | Message: {}", ex.getMessage(), ex);
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, "USR-TEC-000",
+                "Unexpected error", "The request could not be completed.", exchange);
+    }
 
-        return Mono.just(ResponseEntity
-                .status(500)
-                .body(new ErrorResponse(
-                        "An unexpected error occurred",
-                        "INTERNAL_SERVER_ERROR",
-                        LocalDateTime.now())));
+    private ProblemDetail problem(HttpStatus status, String code, String title, String detail,
+                                  ServerWebExchange exchange) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
+        problem.setType(URI.create(PROBLEM_TYPE_BASE + code.toLowerCase()));
+        problem.setTitle(title);
+        problem.setInstance(URI.create(exchange.getRequest().getPath().value()));
+        problem.setProperty("code", code);
+        problem.setProperty("timestamp", Instant.now().toString());
+
+        return problem;
     }
 }

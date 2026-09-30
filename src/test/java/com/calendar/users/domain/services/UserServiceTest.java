@@ -82,10 +82,9 @@ class UserServiceTest {
                                 .expectNext(internalId)
                                 .verifyComplete();
 
-                // Le chemin de provisioning est derrière un Mono.defer : sur un
-                // utilisateur déjà connu, Keycloak n'est pas appelé du tout. Avant,
-                // switchIfEmpty assemblait la chaîne immédiatement et ce test devait
-                // stubber getUser pour ne pas exploser.
+                // The provisioning path sits behind a Mono.defer, so a user already
+                // known does not reach Keycloak at all. switchIfEmpty used to assemble
+                // the chain eagerly, and this test had to stub getUser to survive.
                 verify(identityProvider, never()).getUser(anyString());
                 verify(userRepository, never()).save(any(), anyString());
         }
@@ -151,8 +150,8 @@ class UserServiceTest {
 
         @Test
         void resolveInternalUserId_ShouldGiveUp_WhenEveryHashtagAttemptIsTaken() {
-                // Avant, generateUniqueHashtag se rappelait sans borne : un pseudo saturé
-                // bouclait indéfiniment contre la base.
+                // generateUniqueHashtag used to recurse without a limit, so a saturated
+                // username looped forever against the database.
                 IdentityUser keycloakUser = new IdentityUser("username", "first", "last");
 
                 when(userRepository.findIdByKeycloakId("kc-1")).thenReturn(Mono.empty());
@@ -166,7 +165,7 @@ class UserServiceTest {
                                                                 == BusinessErrorCode.HASHTAG_UNAVAILABLE)
                                 .verify();
 
-                // Borné : 10 tentatives, puis abandon. Aucun enregistrement tenté.
+                // Bounded: ten attempts, then it gives up. No save is attempted.
                 verify(userRepository, times(10)).existsByUserNameAndHashtag(eq("username"), anyInt());
                 verify(userRepository, never()).save(any(), anyString());
         }

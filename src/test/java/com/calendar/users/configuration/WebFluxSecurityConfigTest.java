@@ -51,8 +51,8 @@ class WebFluxSecurityConfigTest {
     @MockitoBean
     private ReactiveJwtDecoder jwtDecoder;
 
-    // Les ports sont mockés pour que ce test porte sur la sécurité : sinon une requête
-    // autorisée atteint PostgreSQL et Keycloak, absents, et le test expire.
+    // The ports are mocked so this test covers security: otherwise an authorised
+    // request reaches an absent PostgreSQL and Keycloak, and the test times out.
     @MockitoBean private UserRepository userRepository;
     @MockitoBean private IdentityProvider identityProvider;
     @MockitoBean private UserEventPublisher userEventPublisher;
@@ -64,10 +64,10 @@ class WebFluxSecurityConfigTest {
                 .build();
     }
 
-    // --- le filtre à secret partagé ---------------------------------------
+    // --- the shared-secret filter -----------------------------------------
 
     @Test
-    @DisplayName("sans en-tête de secret, l'endpoint interne répond 401")
+    @DisplayName("without the secret header, the internal endpoint answers 401")
     void internalSecretFilter_shouldRejectAMissingHeader() {
         client().get().uri(RESOLVE_PATH)
                 .exchange()
@@ -75,7 +75,7 @@ class WebFluxSecurityConfigTest {
     }
 
     @Test
-    @DisplayName("un secret erroné répond 401")
+    @DisplayName("a wrong secret answers 401")
     void internalSecretFilter_shouldRejectAWrongSecret() {
         client().get().uri(RESOLVE_PATH)
                 .header(SECRET_HEADER, "wrong-secret")
@@ -84,10 +84,10 @@ class WebFluxSecurityConfigTest {
     }
 
     @Test
-    @DisplayName("un préfixe correct du secret ne suffit pas")
+    @DisplayName("a correct prefix of the secret is not enough")
     void internalSecretFilter_shouldRejectAPrefixOfTheSecret() {
-        // La comparaison est en temps constant : un préfixe valide ne doit pas être
-        // traité différemment d'une valeur totalement fausse.
+        // The comparison is constant-time: a valid prefix must not be treated any
+        // differently from a wholly wrong value.
         client().get().uri(RESOLVE_PATH)
                 .header(SECRET_HEADER, VALID_SECRET.substring(0, VALID_SECRET.length() - 1))
                 .exchange()
@@ -95,7 +95,7 @@ class WebFluxSecurityConfigTest {
     }
 
     @Test
-    @DisplayName("avec le bon secret, l'endpoint interne est atteint sans JWT")
+    @DisplayName("with the right secret, the internal endpoint is reached without a JWT")
     void internalSecretFilter_shouldAcceptTheValidSecretWithoutAToken() {
         UUID businessId = UUID.randomUUID();
         when(userRepository.findIdByKeycloakId("keycloak-abc")).thenReturn(Mono.just(businessId));
@@ -108,7 +108,7 @@ class WebFluxSecurityConfigTest {
     }
 
     @Test
-    @DisplayName("le préflight CORS traverse le filtre sans secret")
+    @DisplayName("the CORS preflight passes the filter without a secret")
     void internalSecretFilter_shouldLetCorsPreflightThrough() {
         client().options().uri(RESOLVE_PATH)
                 .header("Origin", "http://localhost:4200")
@@ -118,7 +118,7 @@ class WebFluxSecurityConfigTest {
     }
 
     @Test
-    @DisplayName("le secret ne donne accès qu'à l'endpoint interne, pas au reste de l'API")
+    @DisplayName("the secret grants the internal endpoint only, not the rest of the API")
     void internalSecretFilter_shouldNotGrantAccessToOtherPaths() {
         client().get().uri("/user-service/profile")
                 .header(SECRET_HEADER, VALID_SECRET)
@@ -126,7 +126,7 @@ class WebFluxSecurityConfigTest {
                 .expectStatus().isUnauthorized();
     }
 
-    // --- la chaîne de filtres --------------------------------------------
+    // --- the filter chain -------------------------------------------------
 
     @Test
     void apiHttpSecurity_shouldRequireATokenOnBusinessRoutes() {
@@ -149,10 +149,10 @@ class WebFluxSecurityConfigTest {
     }
 
     @Test
-    @DisplayName("les probes de santé répondent sans token, sinon le kubelet voit 401")
+    @DisplayName("the health probes answer without a token, or the kubelet sees 401")
     void apiHttpSecurity_shouldExposeHealthProbesAnonymously() {
-        // Le kubelet ne porte pas de JWT. Si ces chemins exigeaient une authentification,
-        // la liveness échouerait en boucle et Kubernetes redémarrerait des pods sains.
+        // The kubelet carries no JWT. Were these paths to require authentication,
+        // liveness would fail in a loop and Kubernetes would restart healthy pods.
         client().get().uri("/actuator/health/liveness")
                 .exchange()
                 .expectStatus().isOk();
@@ -163,7 +163,7 @@ class WebFluxSecurityConfigTest {
     }
 
     @Test
-    @DisplayName("le reste d'actuator n'est pas ouvert pour autant")
+    @DisplayName("the rest of actuator is not opened along with it")
     void apiHttpSecurity_shouldNotExposeTheRestOfActuator() {
         client().get().uri("/actuator/env")
                 .exchange()
@@ -172,15 +172,15 @@ class WebFluxSecurityConfigTest {
 
     @Test
     void apiHttpSecurity_shouldBeTheOnlyChainDeclared() {
-        // Une seconde chaîne plus permissive annulerait silencieusement celle-ci.
+        // A second, more permissive chain would silently override this one.
         assertThat(context.getBeansOfType(
                 org.springframework.security.web.server.SecurityWebFilterChain.class)).hasSize(1);
     }
 
-    // --- le décodeur JWT -------------------------------------------------
+    // --- the JWT decoder --------------------------------------------------
 
     @Test
-    @DisplayName("le décodeur est construit sur le JWKS interne, séparé de l'issuer public")
+    @DisplayName("the decoder is built on the internal JWKS, separate from the public issuer")
     void jwtDecoder_shouldBeConfigured() {
         assertThat(config.jwtDecoder()).isNotNull();
     }

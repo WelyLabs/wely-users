@@ -39,7 +39,7 @@ class IdentityAuthAdapterTest {
     }
 
     @Test
-    @DisplayName("le payload Keycloak est traduit en modèle de domaine")
+    @DisplayName("the Keycloak payload is translated into the domain model")
     void getUser_shouldReturnTheDomainModel() {
         KeycloakUserResponse wirePayload =
                 new KeycloakUserResponse("testuser", "First", "Last", "a@b.c", true);
@@ -56,11 +56,11 @@ class IdentityAuthAdapterTest {
     }
 
     @Test
-    @DisplayName("le type Keycloak ne franchit pas la frontière du port")
+    @DisplayName("the Keycloak type does not cross the port boundary")
     void getUser_shouldNotLeakTheVendorTypeThroughThePort() throws Exception {
-        // Le port déclarait Mono<KeycloakUserResponse> : le domaine ne compilait pas sans
-        // le client Keycloak au classpath, et changer de fournisseur d'identité aurait
-        // imposé de modifier le domaine.
+        // The port used to declare Mono<KeycloakUserResponse>: the domain would not
+        // compile without the Keycloak client on the classpath, and swapping identity
+        // providers would have meant editing the domain.
         var portMethod = com.calendar.users.domain.ports.IdentityProvider.class
                 .getMethod("getUser", String.class);
 
