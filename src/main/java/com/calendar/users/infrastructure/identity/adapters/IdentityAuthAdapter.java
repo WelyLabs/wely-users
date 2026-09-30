@@ -1,15 +1,19 @@
 package com.calendar.users.infrastructure.identity.adapters;
 
 import com.calendar.users.domain.ports.IdentityProvider;
-import com.calendar.users.exception.TechnicalErrorCode;
-import com.calendar.users.exception.TechnicalException;
 import com.calendar.users.infrastructure.identity.api.KeycloakAdminApi;
 import com.calendar.users.infrastructure.identity.models.KeycloakUserResponse;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
-@Slf4j
+/**
+ * Reads users from Keycloak's Admin API.
+ *
+ * <p>Failures are logged and mapped to {@code TechnicalException(KEYCLOAK_ERROR)} by
+ * {@link com.calendar.users.infrastructure.observability.InfrastructureErrorAspect}, under
+ * its own error code: an unreachable Keycloak is a different incident from a database
+ * timeout and should not surface as one.
+ */
 @Component
 public class IdentityAuthAdapter implements IdentityProvider {
 
@@ -19,11 +23,8 @@ public class IdentityAuthAdapter implements IdentityProvider {
         this.keycloakAdminApi = keycloakAdminApi;
     }
 
+    @Override
     public Mono<KeycloakUserResponse> getUser(String keycloakId) {
-        return keycloakAdminApi.getUser(keycloakId)
-                .onErrorMap(e -> {
-                    log.error("Erreur Keycloak : {}", e.getMessage());
-                    return new TechnicalException(TechnicalErrorCode.KEYCLOAK_ERROR);
-                });
+        return keycloakAdminApi.getUser(keycloakId);
     }
 }

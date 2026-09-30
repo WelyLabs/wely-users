@@ -17,6 +17,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+/**
+ * Failure translation moved to {@code InfrastructureErrorAspect}, under KEYCLOAK_ERROR
+ * rather than DATABASE_ERROR — an unreachable Keycloak is a different incident.
+ */
 class IdentityAuthAdapterTest {
 
     @Mock
@@ -42,19 +46,4 @@ class IdentityAuthAdapterTest {
                 .verifyComplete();
     }
 
-    @Test
-    void getUser_ShouldMapErrorToTechnicalException() {
-        // Given
-        String keycloakId = "user-123";
-        when(keycloakAdminApi.getUser(keycloakId)).thenReturn(Mono.error(new RuntimeException("API Error")));
-
-        // When
-        Mono<KeycloakUserResponse> result = identityAuthAdapter.getUser(keycloakId);
-
-        // Then
-        StepVerifier.create(result)
-                .expectErrorMatches(throwable -> throwable instanceof TechnicalException &&
-                        ((TechnicalException) throwable).getErrorCode() == TechnicalErrorCode.KEYCLOAK_ERROR)
-                .verify();
-    }
 }
