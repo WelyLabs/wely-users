@@ -9,6 +9,8 @@ import org.aspectj.lang.Signature;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThatCode;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -131,5 +133,18 @@ class InfrastructureErrorAspectTest {
         when(joinPoint.proceed()).thenReturn(lazy);
 
         assertThat(aspect.translatePersistenceFailures(joinPoint)).isInstanceOf(Mono.class);
+    }
+
+    @Test
+    @DisplayName("the pointcut declarations are what bind the advice to each adapter package")
+    void pointcutDeclarations_shouldExistForBothAdapterPackages() {
+        // Empty by construction: a @Pointcut method is a named selector, and Spring reads the
+        // annotation, never the body. Called here because the convention is that every public
+        // method has a test, and because deleting one silently unbinds the advice — which
+        // InfrastructureErrorAspectWiringTest is what actually catches.
+        InfrastructureErrorAspect aspect = new InfrastructureErrorAspect();
+
+        assertThatCode(aspect::persistenceAdapterMethod).doesNotThrowAnyException();
+        assertThatCode(aspect::identityAdapterMethod).doesNotThrowAnyException();
     }
 }

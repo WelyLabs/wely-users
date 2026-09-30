@@ -6,7 +6,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import jakarta.validation.Valid;
+import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
+import jakarta.validation.constraints.NotBlank;
 import reactor.core.publisher.Mono;
 
 class GlobalErrorHandlerTest {
@@ -35,13 +40,56 @@ class GlobalErrorHandlerTest {
         Mono<Void> genericError() {
             return Mono.error(new IllegalStateException("connection string is postgres://user:hunter2@host"));
         }
+
+        /**
+         * Binding a validated body is what raises WebExchangeBindException. A validated
+         * @RequestParam raises HandlerMethodValidationException instead, which this handler
+         * does not claim to cover.
+         */
+        @PostMapping("/validated")
+        Mono<Void> validated(@Valid @RequestBody UpdateRequest body) {
+            return Mono.empty();
+        }
+    }
+
+    record UpdateRequest(@NotBlank String userName) {
     }
 
     @BeforeEach
     void setUp() {
         client = WebTestClient.bindToController(new TestController())
                 .controllerAdvice(new GlobalErrorHandler())
+                .validator(new LocalValidatorFactoryBean())
                 .build();
+    }
+
+    @Test
+    @DisplayName("a validation failure answers 400 and names the offending fields")
+    void handleValidationException_shouldListTheFieldsThatFailed() {
+        client.post().uri("/validated")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"userName\":\"\"}")
+                .exchange()
+                .expectStatus().isBadRequest()
+                .expectHeader().contentType(MediaType.APPLICATION_PROBLEM_JSON)
+                .expectBody()
+                .jsonPath("$.title").isEqualTo("Invalid request")
+                .jsonPath("$.code").isEqualTo("USR-VAL-001")
+                .jsonPath("$.errors.userName").exists();
+    }
+
+    @Test
+    @DisplayName("a validation failure says which fields, not why the framework thinks so")
+    void handleValidationException_shouldNotLeakTheFrameworkMessage() {
+        // The detail stays generic for the same reason as the catch-all handler: framework
+        // messages carry type names and binding internals that a client has no use for.
+        client.post().uri("/validated")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"userName\":\"\"}")
+                .exchange()
+                .expectStatus().isBadRequest()
+                .expectBody()
+                .jsonPath("$.detail").isEqualTo("One or more fields are invalid.");
     }
 
     @Test
