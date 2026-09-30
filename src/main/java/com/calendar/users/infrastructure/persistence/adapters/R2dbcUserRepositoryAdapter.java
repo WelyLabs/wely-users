@@ -23,12 +23,12 @@ import java.util.UUID;
  * business rule rather than an incident.
  */
 @Component
-public class JpaUserRepositoryAdapter implements UserRepository {
+public class R2dbcUserRepositoryAdapter implements UserRepository {
 
     private final UserR2dbcRepository userR2dbcRepository;
     private final UserEntityMapper userEntityMapper;
 
-    public JpaUserRepositoryAdapter(UserR2dbcRepository userR2dbcRepository,
+    public R2dbcUserRepositoryAdapter(UserR2dbcRepository userR2dbcRepository,
                                     UserEntityMapper userEntityMapper) {
         this.userR2dbcRepository = userR2dbcRepository;
         this.userEntityMapper = userEntityMapper;

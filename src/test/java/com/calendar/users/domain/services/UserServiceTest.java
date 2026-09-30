@@ -6,7 +6,7 @@ import com.calendar.users.domain.ports.UserEventPublisher;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
-import com.calendar.users.infrastructure.identity.models.KeycloakUserResponse;
+import com.calendar.users.domain.models.IdentityUser;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -95,7 +95,7 @@ class UserServiceTest {
                 // Given
                 String kcId = "kc-123";
                 UUID newId = UUID.randomUUID();
-                KeycloakUserResponse kcResponse = new KeycloakUserResponse("username", "First", "Last", "email", true);
+                IdentityUser kcResponse = new IdentityUser("username", "First", "Last");
 
                 when(userRepository.findIdByKeycloakId(kcId)).thenReturn(Mono.empty());
                 when(identityProvider.getUser(kcId)).thenReturn(Mono.just(kcResponse));
@@ -122,7 +122,7 @@ class UserServiceTest {
         void resolveInternalUserId_ShouldRetryHashtag_WhenConflict() {
                 // Given
                 String kcId = "kc-123";
-                KeycloakUserResponse kcResponse = new KeycloakUserResponse("username", "First", "Last", "email", true);
+                IdentityUser kcResponse = new IdentityUser("username", "First", "Last");
 
                 when(userRepository.findIdByKeycloakId(kcId)).thenReturn(Mono.empty());
                 when(identityProvider.getUser(kcId)).thenReturn(Mono.just(kcResponse));
@@ -153,8 +153,7 @@ class UserServiceTest {
         void resolveInternalUserId_ShouldGiveUp_WhenEveryHashtagAttemptIsTaken() {
                 // Avant, generateUniqueHashtag se rappelait sans borne : un pseudo saturé
                 // bouclait indéfiniment contre la base.
-                KeycloakUserResponse keycloakUser =
-                                new KeycloakUserResponse("username", "first", "last", "a@b.c", true);
+                IdentityUser keycloakUser = new IdentityUser("username", "first", "last");
 
                 when(userRepository.findIdByKeycloakId("kc-1")).thenReturn(Mono.empty());
                 when(identityProvider.getUser("kc-1")).thenReturn(Mono.just(keycloakUser));

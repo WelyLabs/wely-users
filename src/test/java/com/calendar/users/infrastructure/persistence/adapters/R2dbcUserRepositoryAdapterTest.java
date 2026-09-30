@@ -36,7 +36,7 @@ import static org.mockito.Mockito.*;
  * <p>What stayed: the unique-constraint case, which is a business rule rather than an
  * incident, and is still translated inside the adapter.
  */
-class JpaUserRepositoryAdapterTest {
+class R2dbcUserRepositoryAdapterTest {
 
         @Mock
         private UserR2dbcRepository userR2dbcRepository;
@@ -45,7 +45,7 @@ class JpaUserRepositoryAdapterTest {
         private UserEntityMapper userEntityMapper;
 
         @InjectMocks
-        private JpaUserRepositoryAdapter adapter;
+        private R2dbcUserRepositoryAdapter adapter;
 
         @Test
         void save_ShouldReturnBusinessUser_WhenSuccess() {

@@ -1,49 +1,78 @@
 package com.calendar.users.infrastructure.identity.adapters;
 
-import com.calendar.users.exception.TechnicalErrorCode;
-import com.calendar.users.exception.TechnicalException;
+import com.calendar.users.domain.models.IdentityUser;
 import com.calendar.users.infrastructure.identity.api.KeycloakAdminApi;
+import com.calendar.users.infrastructure.identity.mappers.IdentityUserMapper;
 import com.calendar.users.infrastructure.identity.models.KeycloakUserResponse;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-@ExtendWith(MockitoExtension.class)
 /**
- * Failure translation moved to {@code InfrastructureErrorAspect}, under KEYCLOAK_ERROR
- * rather than DATABASE_ERROR — an unreachable Keycloak is a different incident.
+ * This adapter is where the vendor stops.
+ *
+ * <p>Failure translation is no longer here: it moved to
+ * {@code InfrastructureErrorAspect}, under KEYCLOAK_ERROR rather than DATABASE_ERROR — an
+ * unreachable Keycloak is a different incident. See
+ * {@code InfrastructureErrorAspectWiringTest}.
  */
+@ExtendWith(MockitoExtension.class)
 class IdentityAuthAdapterTest {
 
-    @Mock
-    private KeycloakAdminApi keycloakAdminApi;
+    @Mock private KeycloakAdminApi keycloakAdminApi;
+    @Mock private IdentityUserMapper identityUserMapper;
 
-    @InjectMocks
-    private IdentityAuthAdapter identityAuthAdapter;
+    private IdentityAuthAdapter adapter;
 
-    @Test
-    void getUser_ShouldReturnKeycloakUserResponse() {
-        // Given
-        String keycloakId = "user-123";
-        KeycloakUserResponse expectedResponse = new KeycloakUserResponse("testuser", "First", "Last",
-                "test@example.com", true);
-        when(keycloakAdminApi.getUser(keycloakId)).thenReturn(Mono.just(expectedResponse));
-
-        // When
-        Mono<KeycloakUserResponse> result = identityAuthAdapter.getUser(keycloakId);
-
-        // Then
-        StepVerifier.create(result)
-                .expectNext(expectedResponse)
-                .verifyComplete();
+    @BeforeEach
+    void setUp() {
+        adapter = new IdentityAuthAdapter(keycloakAdminApi, identityUserMapper);
     }
 
+    @Test
+    @DisplayName("le payload Keycloak est traduit en modèle de domaine")
+    void getUser_shouldReturnTheDomainModel() {
+        KeycloakUserResponse wirePayload =
+                new KeycloakUserResponse("testuser", "First", "Last", "a@b.c", true);
+        IdentityUser domainUser = new IdentityUser("testuser", "First", "Last");
+
+        when(keycloakAdminApi.getUser("kc-1")).thenReturn(Mono.just(wirePayload));
+        when(identityUserMapper.toIdentityUser(wirePayload)).thenReturn(domainUser);
+
+        StepVerifier.create(adapter.getUser("kc-1"))
+                .expectNext(domainUser)
+                .verifyComplete();
+
+        verify(identityUserMapper).toIdentityUser(wirePayload);
+    }
+
+    @Test
+    @DisplayName("le type Keycloak ne franchit pas la frontière du port")
+    void getUser_shouldNotLeakTheVendorTypeThroughThePort() throws Exception {
+        // Le port déclarait Mono<KeycloakUserResponse> : le domaine ne compilait pas sans
+        // le client Keycloak au classpath, et changer de fournisseur d'identité aurait
+        // imposé de modifier le domaine.
+        var portMethod = com.calendar.users.domain.ports.IdentityProvider.class
+                .getMethod("getUser", String.class);
+
+        assertThat(portMethod.getGenericReturnType().getTypeName())
+                .contains("IdentityUser")
+                .doesNotContain("Keycloak");
+    }
+
+    @Test
+    void getUser_shouldStayEmptyWhenTheProviderKnowsNoSuchSubject() {
+        when(keycloakAdminApi.getUser("unknown")).thenReturn(Mono.empty());
+
+        StepVerifier.create(adapter.getUser("unknown")).verifyComplete();
+    }
 }
