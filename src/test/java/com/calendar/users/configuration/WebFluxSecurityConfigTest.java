@@ -149,6 +149,28 @@ class WebFluxSecurityConfigTest {
     }
 
     @Test
+    @DisplayName("les probes de santé répondent sans token, sinon le kubelet voit 401")
+    void apiHttpSecurity_shouldExposeHealthProbesAnonymously() {
+        // Le kubelet ne porte pas de JWT. Si ces chemins exigeaient une authentification,
+        // la liveness échouerait en boucle et Kubernetes redémarrerait des pods sains.
+        client().get().uri("/actuator/health/liveness")
+                .exchange()
+                .expectStatus().isOk();
+
+        client().get().uri("/actuator/health/readiness")
+                .exchange()
+                .expectStatus().isOk();
+    }
+
+    @Test
+    @DisplayName("le reste d'actuator n'est pas ouvert pour autant")
+    void apiHttpSecurity_shouldNotExposeTheRestOfActuator() {
+        client().get().uri("/actuator/env")
+                .exchange()
+                .expectStatus().isUnauthorized();
+    }
+
+    @Test
     void apiHttpSecurity_shouldBeTheOnlyChainDeclared() {
         // Une seconde chaîne plus permissive annulerait silencieusement celle-ci.
         assertThat(context.getBeansOfType(

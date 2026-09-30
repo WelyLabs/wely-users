@@ -45,6 +45,9 @@ public class WebFluxSecurityConfig {
                 .authorizeExchange((authorize) -> authorize
                         .pathMatchers(HttpMethod.GET, "/user-service/profile/resolve/**").permitAll()
                         .pathMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        // Probes Kubernetes : le kubelet n'a pas de token. Seuls les deux
+                        // groupes de santé sont ouverts, pas /actuator dans son ensemble.
+                        .pathMatchers("/actuator/health/liveness", "/actuator/health/readiness").permitAll()
                         .anyExchange().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()))
                 .build();
