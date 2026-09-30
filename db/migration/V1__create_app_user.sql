@@ -1,7 +1,8 @@
-DROP SCHEMA public CASCADE;
-CREATE SCHEMA public;
-GRANT ALL ON SCHEMA public TO CURRENT_USER;
-GRANT ALL ON SCHEMA public TO PUBLIC;
+-- Baseline schema for calendar-users-api.
+--
+-- This file lives outside src/main/resources on purpose: anything on the
+-- classpath risks being picked up by Spring's SQL init and run against a live
+-- database. Apply it deliberately, or hand it to Flyway/Liquibase.
 
 CREATE TABLE IF NOT EXISTS app_user (
                                         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

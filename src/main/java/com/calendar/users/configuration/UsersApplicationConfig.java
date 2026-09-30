@@ -1,6 +1,5 @@
 package com.calendar.users.configuration;
 
-import com.calendar.users.domain.ports.FileStorage;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.UserEventPublisher;
 import com.calendar.users.domain.ports.UserRepository;
@@ -14,9 +13,8 @@ public class UsersApplicationConfig {
     @Bean
     public UserService userService(
             UserRepository userRepository,
-            FileStorage fileStorage,
             IdentityProvider identityProvider,
             UserEventPublisher userEventPublisher) {
-        return new UserService(userRepository, fileStorage, identityProvider, userEventPublisher);
+        return new UserService(userRepository, identityProvider, userEventPublisher);
     }
 }

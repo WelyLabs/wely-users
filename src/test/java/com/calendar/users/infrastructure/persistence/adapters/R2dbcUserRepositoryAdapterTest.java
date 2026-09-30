@@ -24,7 +24,19 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-class JpaUserRepositoryAdapterTest {
+/**
+ * The {@code *_ShouldMapError} cases that used to live here are gone: logging a failure and
+ * mapping it to a {@code TechnicalException} moved into {@code InfrastructureErrorAspect}.
+ * That behaviour is carried by the Spring proxy, so it is out of reach of a plain unit test
+ * of the adapter — the trade-off of the aspect.
+ *
+ * <p>The coverage moved to {@code InfrastructureErrorAspectTest} for the logic and
+ * {@code InfrastructureErrorAspectWiringTest} for proof the pointcuts match.
+ *
+ * <p>What stayed: the unique-constraint case, which is a business rule rather than an
+ * incident, and is still translated inside the adapter.
+ */
+class R2dbcUserRepositoryAdapterTest {
 
         @Mock
         private UserR2dbcRepository userR2dbcRepository;
@@ -33,7 +45,7 @@ class JpaUserRepositoryAdapterTest {
         private UserEntityMapper userEntityMapper;
 
         @InjectMocks
-        private JpaUserRepositoryAdapter adapter;
+        private R2dbcUserRepositoryAdapter adapter;
 
         @Test
         void save_ShouldReturnBusinessUser_WhenSuccess() {
@@ -79,25 +91,6 @@ class JpaUserRepositoryAdapterTest {
                                 .verify();
         }
 
-        @Test
-        void save_ShouldMapTechnicalError() {
-                // Given
-                BusinessUser user = new BusinessUser(UUID.randomUUID(), "user", 1, "F", "L", "url",
-                                LocalDateTime.now());
-                UserEntity entity = new UserEntity();
-                when(userEntityMapper.toUserEntity(user)).thenReturn(entity);
-                when(userR2dbcRepository.save(entity)).thenReturn(Mono.error(new RuntimeException("Generic Error")));
-
-                // When
-                Mono<BusinessUser> result = adapter.save(user, "kc-123");
-
-                // Then
-                StepVerifier.create(result)
-                                .expectErrorMatches(throwable -> throwable instanceof TechnicalException &&
-                                                ((TechnicalException) throwable)
-                                                                .getErrorCode() == TechnicalErrorCode.DATABASE_ERROR)
-                                .verify();
-        }
 
         @Test
         void findIdByKeycloakId_ShouldReturnId() {
@@ -114,20 +107,6 @@ class JpaUserRepositoryAdapterTest {
                                 .verifyComplete();
         }
 
-        @Test
-        void findIdByKeycloakId_ShouldMapError() {
-                // Given
-                when(userR2dbcRepository.findIdByKeycloakId(any()))
-                                .thenReturn(Mono.error(new RuntimeException("DB Error")));
-
-                // When
-                Mono<UUID> result = adapter.findIdByKeycloakId("kc-123");
-
-                // Then
-                StepVerifier.create(result)
-                                .expectError(TechnicalException.class)
-                                .verify();
-        }
 
         @Test
         void existsByUserNameAndHashtag_ShouldReturnBoolean() {
@@ -143,20 +122,6 @@ class JpaUserRepositoryAdapterTest {
                                 .verifyComplete();
         }
 
-        @Test
-        void existsByUserNameAndHashtag_ShouldMapError() {
-                // Given
-                when(userR2dbcRepository.existsByUserNameAndHashtag(anyString(), anyInt()))
-                                .thenReturn(Mono.error(new RuntimeException("DB Error")));
-
-                // When
-                Mono<Boolean> result = adapter.existsByUserNameAndHashtag("user", 1234);
-
-                // Then
-                StepVerifier.create(result)
-                                .expectError(TechnicalException.class)
-                                .verify();
-        }
 
         @Test
         void getBusinessUserByUserId_ShouldReturnUser() {
@@ -177,32 +142,5 @@ class JpaUserRepositoryAdapterTest {
                                 .verifyComplete();
         }
 
-        @Test
-        void getBusinessUserByUserId_ShouldMapError() {
-                // Given
-                when(userR2dbcRepository.findById(any(UUID.class)))
-                                .thenReturn(Mono.error(new RuntimeException("DB Error")));
 
-                // When
-                Mono<BusinessUser> result = adapter.getBusinessUserByUserId(UUID.randomUUID());
-
-                // Then
-                StepVerifier.create(result)
-                                .expectError(TechnicalException.class)
-                                .verify();
-        }
-
-        @Test
-        void updateProfilePicUrl_ShouldReturnInteger() {
-                // Given
-                when(userR2dbcRepository.updateProfilePicUrlByKeycloakId("url", 123L)).thenReturn(Mono.just(1));
-
-                // When
-                Mono<Integer> result = adapter.updateProfilePicUrl("url", 123L);
-
-                // Then
-                StepVerifier.create(result)
-                                .expectNext(1)
-                                .verifyComplete();
-        }
 }

@@ -15,6 +15,9 @@ import org.springframework.security.oauth2.jwt.*;
 import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.web.server.WebFilter;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+
 @Configuration
 @EnableWebFluxSecurity
 public class WebFluxSecurityConfig {
@@ -25,8 +28,13 @@ public class WebFluxSecurityConfig {
     @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri}")
     private String internalJwkSetUri;
 
-    // @Value("${app.internal-secret}")
-    private final String internalSecret = "mon-secret-local-123";
+    /**
+     * Shared secret guarding the internal resolve endpoint, which Keycloak's
+     * protocol mapper calls while minting a token — before any JWT exists.
+     * Injected from the environment; the application fails to start if unset.
+     */
+    @Value("${app.internal-secret}")
+    private String internalSecret;
 
     @Bean
     public SecurityWebFilterChain apiHttpSecurity(ServerHttpSecurity http) {
@@ -37,6 +45,9 @@ public class WebFluxSecurityConfig {
                 .authorizeExchange((authorize) -> authorize
                         .pathMatchers(HttpMethod.GET, "/user-service/profile/resolve/**").permitAll()
                         .pathMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        // Kubernetes probes: the kubelet carries no token. Only the two
+                        // health groups are opened, not /actuator as a whole.
+                        .pathMatchers("/actuator/health/liveness", "/actuator/health/readiness").permitAll()
                         .anyExchange().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()))
                 .build();
@@ -65,12 +76,26 @@ public class WebFluxSecurityConfig {
             if (path.startsWith("/user-service/profile/resolve/")) {
                 String headerSecret = exchange.getRequest().getHeaders().getFirst("X-Internal-Secret");
 
-                if (!internalSecret.equals(headerSecret)) {
+                if (!secretMatches(headerSecret)) {
                     exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
                     return exchange.getResponse().setComplete();
                 }
             }
             return chain.filter(exchange);
         };
+    }
+
+    /**
+     * Constant-time comparison: a plain {@code equals} returns as soon as two
+     * bytes differ, which leaks the length of the matching prefix to a caller
+     * timing the responses.
+     */
+    private boolean secretMatches(String candidate) {
+        if (candidate == null) {
+            return false;
+        }
+        return MessageDigest.isEqual(
+                candidate.getBytes(StandardCharsets.UTF_8),
+                internalSecret.getBytes(StandardCharsets.UTF_8));
     }
 }

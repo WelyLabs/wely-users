@@ -1,19 +1,17 @@
 package com.calendar.users.domain.services;
 
 import com.calendar.users.domain.models.BusinessUser;
-import com.calendar.users.domain.ports.FileStorage;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.UserEventPublisher;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
-import com.calendar.users.infrastructure.identity.models.KeycloakUserResponse;
+import com.calendar.users.domain.models.IdentityUser;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.codec.multipart.FilePart;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
@@ -26,160 +24,149 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class UserServiceTest {
 
-    @Mock
-    private UserRepository userRepository;
-    @Mock
-    private FileStorage fileStorage;
-    @Mock
-    private IdentityProvider identityProvider;
-    @Mock
-    private UserEventPublisher userEventPublisher;
+        @Mock
+        private UserRepository userRepository;
+        @Mock
+        private IdentityProvider identityProvider;
+        @Mock
+        private UserEventPublisher userEventPublisher;
 
-    @InjectMocks
-    private UserService userService;
+        @InjectMocks
+        private UserService userService;
 
-    @Test
-    void readProfile_ShouldReturnUser_WhenExists() {
-        // Given
-        UUID userId = UUID.randomUUID();
-        BusinessUser user = new BusinessUser(userId, "user", 1, "F", "L", "url", LocalDateTime.now());
-        when(userRepository.getBusinessUserByUserId(userId)).thenReturn(Mono.just(user));
+        @Test
+        void readProfile_ShouldReturnUser_WhenExists() {
+                // Given
+                UUID userId = UUID.randomUUID();
+                BusinessUser user = new BusinessUser(userId, "user", 1, "F", "L", "url", LocalDateTime.now());
+                when(userRepository.getBusinessUserByUserId(userId)).thenReturn(Mono.just(user));
 
-        // When
-        Mono<BusinessUser> result = userService.readProfile(userId);
+                // When
+                Mono<BusinessUser> result = userService.readProfile(userId);
 
-        // Then
-        StepVerifier.create(result)
-                .expectNext(user)
-                .verifyComplete();
-    }
+                // Then
+                StepVerifier.create(result)
+                                .expectNext(user)
+                                .verifyComplete();
+        }
 
-    @Test
-    void readProfile_ShouldError_WhenNotFound() {
-        // Given
-        UUID userId = UUID.randomUUID();
-        when(userRepository.getBusinessUserByUserId(userId)).thenReturn(Mono.empty());
+        @Test
+        void readProfile_ShouldError_WhenNotFound() {
+                // Given
+                UUID userId = UUID.randomUUID();
+                when(userRepository.getBusinessUserByUserId(userId)).thenReturn(Mono.empty());
 
-        // When
-        Mono<BusinessUser> result = userService.readProfile(userId);
+                // When
+                Mono<BusinessUser> result = userService.readProfile(userId);
 
-        // Then
-        StepVerifier.create(result)
-                .expectErrorMatches(throwable -> throwable instanceof BusinessException &&
-                        ((BusinessException) throwable).getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
-                .verify();
-    }
+                // Then
+                StepVerifier.create(result)
+                                .expectErrorMatches(throwable -> throwable instanceof BusinessException &&
+                                                ((BusinessException) throwable)
+                                                                .getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
+                                .verify();
+        }
 
-    @Test
-    void resolveInternalUserId_ShouldReturnExisingId_WhenFoundInRepo() {
-        // Given
-        String kcId = "kc-123";
-        UUID internalId = UUID.randomUUID();
-        when(userRepository.findIdByKeycloakId(kcId)).thenReturn(Mono.just(internalId));
-        // Eager evaluation of switchIfEmpty requires this stubbing
-        when(identityProvider.getUser(kcId)).thenReturn(Mono.empty());
+        @Test
+        void resolveInternalUserId_ShouldReturnExisingId_WhenFoundInRepo() {
+                // Given
+                String kcId = "kc-123";
+                UUID internalId = UUID.randomUUID();
+                when(userRepository.findIdByKeycloakId(kcId)).thenReturn(Mono.just(internalId));
 
-        // When
-        Mono<UUID> result = userService.resolveInternalUserId(kcId);
+                // When
+                Mono<UUID> result = userService.resolveInternalUserId(kcId);
 
-        // Then
-        StepVerifier.create(result)
-                .expectNext(internalId)
-                .verifyComplete();
-    }
+                // Then
+                StepVerifier.create(result)
+                                .expectNext(internalId)
+                                .verifyComplete();
 
-    @Test
-    void resolveInternalUserId_ShouldCreateUser_WhenNotFoundInRepo() {
-        // Given
-        String kcId = "kc-123";
-        UUID newId = UUID.randomUUID();
-        KeycloakUserResponse kcResponse = new KeycloakUserResponse("username", "First", "Last", "email", true);
+                // The provisioning path sits behind a Mono.defer, so a user already
+                // known does not reach Keycloak at all. switchIfEmpty used to assemble
+                // the chain eagerly, and this test had to stub getUser to survive.
+                verify(identityProvider, never()).getUser(anyString());
+                verify(userRepository, never()).save(any(), anyString());
+        }
 
-        when(userRepository.findIdByKeycloakId(kcId)).thenReturn(Mono.empty());
-        when(identityProvider.getUser(kcId)).thenReturn(Mono.just(kcResponse));
-        when(userRepository.existsByUserNameAndHashtag(anyString(), anyInt())).thenReturn(Mono.just(false));
+        @Test
+        void resolveInternalUserId_ShouldCreateUser_WhenNotFoundInRepo() {
+                // Given
+                String kcId = "kc-123";
+                UUID newId = UUID.randomUUID();
+                IdentityUser kcResponse = new IdentityUser("username", "First", "Last");
 
-        BusinessUser savedUser = new BusinessUser(newId, "username", 1111, "First", "Last", null, LocalDateTime.now());
-        when(userRepository.save(any(BusinessUser.class), eq(kcId))).thenReturn(Mono.just(savedUser));
-        when(userEventPublisher.publishUserCreatedEvent(savedUser)).thenReturn(Mono.just(newId));
+                when(userRepository.findIdByKeycloakId(kcId)).thenReturn(Mono.empty());
+                when(identityProvider.getUser(kcId)).thenReturn(Mono.just(kcResponse));
+                when(userRepository.existsByUserNameAndHashtag(anyString(), anyInt())).thenReturn(Mono.just(false));
 
-        // When
-        Mono<UUID> result = userService.resolveInternalUserId(kcId);
+                BusinessUser savedUser = new BusinessUser(newId, "username", 1111, "First", "Last", null,
+                                LocalDateTime.now());
+                when(userRepository.save(any(BusinessUser.class), eq(kcId))).thenReturn(Mono.just(savedUser));
+                when(userEventPublisher.publishUserCreatedEvent(savedUser)).thenReturn(Mono.just(newId));
 
-        // Then
-        StepVerifier.create(result)
-                .expectNext(newId)
-                .verifyComplete();
+                // When
+                Mono<UUID> result = userService.resolveInternalUserId(kcId);
 
-        verify(userRepository).save(any(BusinessUser.class), eq(kcId));
-        verify(userEventPublisher).publishUserCreatedEvent(any(BusinessUser.class));
-    }
+                // Then
+                StepVerifier.create(result)
+                                .expectNext(newId)
+                                .verifyComplete();
 
-    @Test
-    void resolveInternalUserId_ShouldRetryHashtag_WhenConflict() {
-        // Given
-        String kcId = "kc-123";
-        KeycloakUserResponse kcResponse = new KeycloakUserResponse("username", "First", "Last", "email", true);
+                verify(userRepository).save(any(BusinessUser.class), eq(kcId));
+                verify(userEventPublisher).publishUserCreatedEvent(any(BusinessUser.class));
+        }
 
-        when(userRepository.findIdByKeycloakId(kcId)).thenReturn(Mono.empty());
-        when(identityProvider.getUser(kcId)).thenReturn(Mono.just(kcResponse));
+        @Test
+        void resolveInternalUserId_ShouldRetryHashtag_WhenConflict() {
+                // Given
+                String kcId = "kc-123";
+                IdentityUser kcResponse = new IdentityUser("username", "First", "Last");
 
-        // First attempt: conflict, Second: success
-        when(userRepository.existsByUserNameAndHashtag(eq("username"), anyInt()))
-                .thenReturn(Mono.just(true))
-                .thenReturn(Mono.just(false));
+                when(userRepository.findIdByKeycloakId(kcId)).thenReturn(Mono.empty());
+                when(identityProvider.getUser(kcId)).thenReturn(Mono.just(kcResponse));
 
-        UUID newId = UUID.randomUUID();
-        BusinessUser savedUser = new BusinessUser(newId, "username", 1111, "First", "Last", null, LocalDateTime.now());
-        when(userRepository.save(any(BusinessUser.class), eq(kcId))).thenReturn(Mono.just(savedUser));
-        when(userEventPublisher.publishUserCreatedEvent(savedUser)).thenReturn(Mono.just(newId));
+                // First attempt: conflict, Second: success
+                when(userRepository.existsByUserNameAndHashtag(eq("username"), anyInt()))
+                                .thenReturn(Mono.just(true))
+                                .thenReturn(Mono.just(false));
 
-        // When
-        Mono<UUID> result = userService.resolveInternalUserId(kcId);
+                UUID newId = UUID.randomUUID();
+                BusinessUser savedUser = new BusinessUser(newId, "username", 1111, "First", "Last", null,
+                                LocalDateTime.now());
+                when(userRepository.save(any(BusinessUser.class), eq(kcId))).thenReturn(Mono.just(savedUser));
+                when(userEventPublisher.publishUserCreatedEvent(savedUser)).thenReturn(Mono.just(newId));
 
-        // Then
-        StepVerifier.create(result)
-                .expectNext(newId)
-                .verifyComplete();
+                // When
+                Mono<UUID> result = userService.resolveInternalUserId(kcId);
 
-        verify(userRepository, times(2)).existsByUserNameAndHashtag(eq("username"), anyInt());
-    }
+                // Then
+                StepVerifier.create(result)
+                                .expectNext(newId)
+                                .verifyComplete();
 
-    @Test
-    void updateProfilePicture_ShouldReturnUrl_WhenSuccess() {
-        // Given
-        Long userId = 123L;
-        FilePart filePart = mock(FilePart.class);
-        String url = "http://s3.url";
+                verify(userRepository, times(2)).existsByUserNameAndHashtag(eq("username"), anyInt());
+        }
 
-        when(fileStorage.storeObject(filePart, "123")).thenReturn(Mono.just(url));
-        when(userRepository.updateProfilePicUrl(url, userId)).thenReturn(Mono.just(1));
+        @Test
+        void resolveInternalUserId_ShouldGiveUp_WhenEveryHashtagAttemptIsTaken() {
+                // generateUniqueHashtag used to recurse without a limit, so a saturated
+                // username looped forever against the database.
+                IdentityUser keycloakUser = new IdentityUser("username", "first", "last");
 
-        // When
-        Mono<String> result = userService.updateProfilePicture(userId, Mono.just(filePart));
+                when(userRepository.findIdByKeycloakId("kc-1")).thenReturn(Mono.empty());
+                when(identityProvider.getUser("kc-1")).thenReturn(Mono.just(keycloakUser));
+                when(userRepository.existsByUserNameAndHashtag(eq("username"), anyInt()))
+                                .thenReturn(Mono.just(true));
 
-        // Then
-        StepVerifier.create(result)
-                .expectNext(url)
-                .verifyComplete();
-    }
+                StepVerifier.create(userService.resolveInternalUserId("kc-1"))
+                                .expectErrorMatches(e -> e instanceof BusinessException
+                                                && ((BusinessException) e).getErrorCode()
+                                                                == BusinessErrorCode.HASHTAG_UNAVAILABLE)
+                                .verify();
 
-    @Test
-    void updateProfilePicture_ShouldError_WhenNoRecordUpdated() {
-        // Given
-        Long userId = 123L;
-        FilePart filePart = mock(FilePart.class);
-        String url = "http://s3.url";
-
-        when(fileStorage.storeObject(filePart, "123")).thenReturn(Mono.just(url));
-        when(userRepository.updateProfilePicUrl(url, userId)).thenReturn(Mono.just(0));
-
-        // When
-        Mono<String> result = userService.updateProfilePicture(userId, Mono.just(filePart));
-
-        // Then
-        StepVerifier.create(result)
-                .expectError(Exception.class)
-                .verify();
-    }
+                // Bounded: ten attempts, then it gives up. No save is attempted.
+                verify(userRepository, times(10)).existsByUserNameAndHashtag(eq("username"), anyInt());
+                verify(userRepository, never()).save(any(), anyString());
+        }
 }

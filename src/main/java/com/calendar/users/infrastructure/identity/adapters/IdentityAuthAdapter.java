@@ -1,29 +1,35 @@
 package com.calendar.users.infrastructure.identity.adapters;
 
+import com.calendar.users.domain.models.IdentityUser;
 import com.calendar.users.domain.ports.IdentityProvider;
-import com.calendar.users.exception.TechnicalErrorCode;
-import com.calendar.users.exception.TechnicalException;
 import com.calendar.users.infrastructure.identity.api.KeycloakAdminApi;
-import com.calendar.users.infrastructure.identity.models.KeycloakUserResponse;
-import lombok.extern.slf4j.Slf4j;
+import com.calendar.users.infrastructure.identity.mappers.IdentityUserMapper;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
-@Slf4j
+/**
+ * Reads users from Keycloak's Admin API and hands the domain its own model.
+ *
+ * <p>This class is where the vendor stops: {@code KeycloakUserResponse} does not travel
+ * past it. Failures are logged and mapped to {@code TechnicalException(KEYCLOAK_ERROR)} by
+ * {@link com.calendar.users.infrastructure.observability.InfrastructureErrorAspect}, under
+ * its own error code — an unreachable Keycloak is a different incident from a database
+ * timeout and should not surface as one.
+ */
 @Component
 public class IdentityAuthAdapter implements IdentityProvider {
 
     private final KeycloakAdminApi keycloakAdminApi;
+    private final IdentityUserMapper identityUserMapper;
 
-    public IdentityAuthAdapter(KeycloakAdminApi keycloakAdminApi) {
+    public IdentityAuthAdapter(KeycloakAdminApi keycloakAdminApi,
+                               IdentityUserMapper identityUserMapper) {
         this.keycloakAdminApi = keycloakAdminApi;
+        this.identityUserMapper = identityUserMapper;
     }
 
-    public Mono<KeycloakUserResponse> getUser(String keycloakId) {
-        return keycloakAdminApi.getUser(keycloakId)
-                .onErrorMap(e -> {
-                    log.error("Erreur Keycloak : {}", e.getMessage());
-                    return new TechnicalException(TechnicalErrorCode.KEYCLOAK_ERROR);
-                });
+    @Override
+    public Mono<IdentityUser> getUser(String subjectId) {
+        return keycloakAdminApi.getUser(subjectId).map(identityUserMapper::toIdentityUser);
     }
 }

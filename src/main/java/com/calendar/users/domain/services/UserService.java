@@ -1,13 +1,12 @@
 package com.calendar.users.domain.services;
 
 import com.calendar.users.domain.models.BusinessUser;
-import com.calendar.users.domain.ports.FileStorage;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.UserEventPublisher;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
-import org.springframework.http.codec.multipart.FilePart;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
@@ -16,14 +15,17 @@ import java.util.concurrent.ThreadLocalRandom;
 
 public class UserService {
 
+    private static final int HASHTAG_MIN = 1000;
+    private static final int HASHTAG_MAX_EXCLUSIVE = 10_000;
+    private static final int MAX_HASHTAG_ATTEMPTS = 10;
+
     private final UserRepository userRepository;
-    private final FileStorage fileStorage;
     private final IdentityProvider identityProvider;
     private final UserEventPublisher userEventPublisher;
 
-    public UserService(UserRepository userRepository, FileStorage fileStorage, IdentityProvider identityProvider, UserEventPublisher userEventPublisher) {
+    public UserService(UserRepository userRepository, IdentityProvider identityProvider,
+            UserEventPublisher userEventPublisher) {
         this.userRepository = userRepository;
-        this.fileStorage = fileStorage;
         this.identityProvider = identityProvider;
         this.userEventPublisher = userEventPublisher;
     }
@@ -33,56 +35,56 @@ public class UserService {
                 .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
     }
 
+    /**
+     * Translates a Keycloak subject into the internal business id, provisioning the
+     * user on first sight.
+     *
+     * <p>Called by the Keycloak protocol mapper while a token is being minted, so the
+     * common path — the user already exists — must stay a single query. Hence the
+     * {@link Mono#defer}: passing the provisioning chain directly to
+     * {@code switchIfEmpty} assembles it on every call, which means asking the identity
+     * provider for a user that was already found.
+     */
     public Mono<UUID> resolveInternalUserId(String keycloakId) {
         return userRepository.findIdByKeycloakId(keycloakId)
-                .switchIfEmpty(
-                        identityProvider.getUser(keycloakId)
-                                .flatMap(keycloakUserResponse ->
-                                        generateUniqueHashtag(keycloakUserResponse.username())
-                                                .flatMap(hashtag -> {
-                                                    BusinessUser newUser = new BusinessUser(
-                                                            null,
-                                                            keycloakUserResponse.username(),
-                                                            hashtag,
-                                                            keycloakUserResponse.firstName(),
-                                                            keycloakUserResponse.lastName(),
-                                                            null,
-                                                            LocalDateTime.now()
-                                                    );
-
-                                                    return userRepository.save(newUser, keycloakId)
-                                                            .flatMap(userEventPublisher::publishUserCreatedEvent);
-                                                })
-                                )
-                );
+                .switchIfEmpty(Mono.defer(() -> provisionUser(keycloakId)));
     }
 
-    // todo : transférer cette logique dans un service dédié
-    public Mono<String> updateProfilePicture(Long userId, Mono<FilePart> filePartMono) {
-        return filePartMono.flatMap(filePart ->
-                    fileStorage.storeObject(filePart, userId.toString())
-                        .flatMap(profilePicUrl ->
-                                userRepository.updateProfilePicUrl(profilePicUrl, userId)
-                                        .flatMap(update ->
-                                            update > 0 ? Mono.just(profilePicUrl) :  Mono.error(new Exception())
-                                        )
-                        ));
+    private Mono<UUID> provisionUser(String keycloakId) {
+        return identityProvider.getUser(keycloakId)
+                .flatMap(identityUser -> generateUniqueHashtag(identityUser.username())
+                        .map(hashtag -> new BusinessUser(
+                                null,
+                                identityUser.username(),
+                                hashtag,
+                                identityUser.firstName(),
+                                identityUser.lastName(),
+                                null,
+                                LocalDateTime.now()))
+                        .flatMap(newUser -> userRepository.save(newUser, keycloakId))
+                        .flatMap(userEventPublisher::publishUserCreatedEvent));
     }
 
-    private Mono<Integer> generateUniqueHashtag(String username) {
-        // 1. On génère un candidat au hasard (ex: entre 1000 et 9999)
-        int candidate = ThreadLocalRandom.current().nextInt(1000, 10000);
-
-        // 2. On vérifie en base s'il est déjà pris pour ce pseudo
-        return userRepository.existsByUserNameAndHashtag(username, candidate)
-                .flatMap(exists -> {
-                    if (exists) {
-                        // S'il existe, on relance récursivement la génération
-                        return generateUniqueHashtag(username);
-                    } else {
-                        // S'il est libre, on le renvoie
-                        return Mono.just(candidate);
-                    }
-                });
+    /**
+     * Draws a hashtag that is free for this username, so the pair forms the public
+     * handle {@code Name#1234}.
+     *
+     * <p>Random draw rather than a shared counter, which would serialise every
+     * signup. Bounded to {@code MAX_HASHTAG_ATTEMPTS}: the previous version recursed
+     * without a limit, so a saturated username looped forever against the database.
+     * {@code concatMap} keeps the draws lazy — the first free candidate stops the
+     * sequence.
+     *
+     * <p>Uniqueness is ultimately enforced by the {@code unique_user_identity}
+     * constraint; this only avoids hitting it on the common path.
+     */
+    private Mono<Integer> generateUniqueHashtag(String userName) {
+        return Flux.range(0, MAX_HASHTAG_ATTEMPTS)
+                .map(attempt -> ThreadLocalRandom.current().nextInt(HASHTAG_MIN, HASHTAG_MAX_EXCLUSIVE))
+                .concatMap(candidate -> userRepository.existsByUserNameAndHashtag(userName, candidate)
+                        .filter(taken -> !taken)
+                        .map(free -> candidate))
+                .next()
+                .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.HASHTAG_UNAVAILABLE)));
     }
 }
