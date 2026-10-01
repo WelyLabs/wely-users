@@ -16,7 +16,7 @@ import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 @Configuration
 public class KeycloakClientConfig {
 
-    private static final String CLIENT_REGISTRATION_ID = "calendar-users-api-client";
+    private static final String CLIENT_REGISTRATION_ID = "wely-users-api-client";
 
     @Bean
     public ReactiveOAuth2AuthorizedClientManager authorizedClientManager(
@@ -29,7 +29,7 @@ public class KeycloakClientConfig {
 
     @Bean
     public WebClient keycloakAdminWebClient(
-            @Value("${keycloak.realm.calendar-app.base-url}") String baseUrl,
+            @Value("${keycloak.realm.wely-realm.base-url}") String baseUrl,
             ReactiveOAuth2AuthorizedClientManager authorizedClientManager) {
 
         var oauth = new ServerOAuth2AuthorizedClientExchangeFilterFunction(authorizedClientManager);

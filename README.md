@@ -249,7 +249,7 @@ client peut tester et un `timestamp` :
 | `KEYCLOAK_INTERNAL_JWK_SET_URI` | JWKS **interne** au cluster — récupération des clés |
 | `KEYCLOAK_INTERNAL_TOKEN_URI` | Endpoint token interne (`client_credentials`) |
 | `KEYCLOAK_BASE_URL` | Base de l'Admin API Keycloak |
-| `KEYCLOAK_CLIENT_SECRET` | Secret du client `calendar-users-api-client` |
+| `KEYCLOAK_CLIENT_SECRET` | Secret du client `wely-users-api-client` |
 | `KAFKA_BOOTSTRAP_SERVER` | Brokers Kafka |
 | `KAFKA_KEY` / `KAFKA_SECRET` | Identifiants SASL |
 
