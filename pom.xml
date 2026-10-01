@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>4.0.0</version>
+		<version>4.0.1</version>
 		<relativePath/>
 	</parent>
 	<groupId>com.calendar</groupId>
@@ -40,6 +40,7 @@
 		<sonar.sources>src/main/java</sonar.sources>
 		<sonar.tests>src/test/java</sonar.tests>
 		<sonar.java.source>25</sonar.java.source>
+		<springdoc.version>3.0.1</springdoc.version>
 		<testcontainers.version>1.20.4</testcontainers.version>
 	</properties>
     <dependencyManagement>
@@ -62,6 +63,15 @@
         </dependencies>
     </dependencyManagement>
 	<dependencies>
+		<!-- OpenAPI, served at /swagger-ui.html and /v3/api-docs. Left on unconditionally:
+		     this Service is ClusterIP and the gateway routes /api/v1/<service>/** and nothing
+		     else, so the network topology keeps these paths internal. The gateway itself is
+		     the one process a tunnel reaches, and gates its own behind SPRINGDOC_ENABLED. -->
+		<dependency>
+			<groupId>org.springdoc</groupId>
+			<artifactId>springdoc-openapi-starter-webflux-ui</artifactId>
+			<version>${springdoc.version}</version>
+		</dependency>
 		<!-- Expose /actuator/health/{liveness,readiness} for the Kubernetes probes. -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

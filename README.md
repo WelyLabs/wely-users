@@ -131,6 +131,23 @@ Toutes les routes sont préfixées par `/user-service` et exposées via la gatew
 
 `/profile/resolve/**` est le seul endpoint exempté de l'authentification JWT : il est appelé par Keycloak *pendant* l'émission du token, donc avant qu'un token existe. Il est protégé par un secret partagé vérifié dans un `WebFilter` dédié.
 
+### OpenAPI
+
+La spécification est générée par `springdoc-openapi` et servie sans jeton :
+
+| | |
+|---|---|
+| Spec JSON | `http://localhost:8082/v3/api-docs` |
+| Swagger UI | `http://localhost:8082/swagger-ui.html` |
+
+Ces deux chemins ne sont **pas** routés par la gateway, et le Service est en `ClusterIP` : rien
+hors du cluster ne peut les atteindre. La documentation reste donc active en permanence — c'est
+la topologie réseau qui la protège, pas un drapeau.
+
+> Le préfixe de chemin du service est appliqué par package (`…application.rest`) et non par
+> annotation. Sélectionner sur `@RestController` attrapait aussi le contrôleur de springdoc, ce
+> qui déplaçait la spec en `/user-service/v3/api-docs` derrière l'authentification.
+
 ### Modèle
 
 ```java
@@ -182,18 +199,44 @@ Consommé par [`wely-social`](https://github.com/WelyLabs/wely-social), qui cré
 
 ## Gestion des erreurs
 
-Deux hiérarchies distinctes, traduites en réponses HTTP par un `@ControllerAdvice`.
+Deux hiérarchies distinctes — métier et technique — traduites par `GlobalErrorHandler`.
 
 | Code | HTTP | Signification |
 |---|---|---|
-| `USR_BUS_001` | 404 | Utilisateur introuvable |
-| `USR_BUS_002` | 409 | Utilisateur déjà existant |
-| `USR_TEC_001` | 500 | Keycloak injoignable |
-| `USR_TEC_002` | 500 | Base de données injoignable |
-| `USR_TEC_003` | 500 | Kafka injoignable |
+| `USR-BUS-001` | 404 | Utilisateur introuvable |
+| `USR-BUS-002` | 409 | Utilisateur déjà existant pour cette identité |
+| `USR-BUS-003` | 409 | Plus aucun hashtag disponible pour ce pseudo |
+| `USR-VAL-001` | 400 | Validation du corps de requête, détail par champ |
+| `USR-REQ-000` | *repris* | Chemin inconnu, méthode non autorisée |
+| `USR-TEC-001` | 502 | Keycloak injoignable |
+| `USR-TEC-002` | 502 | Base de données injoignable |
+| `USR-TEC-003` | 502 | Kafka injoignable |
 
-Les adaptateurs traduisent les exceptions techniques (`DataIntegrityViolationException`, erreurs WebClient) à la frontière : le domaine ne voit jamais d'exception d'infrastructure.
+**502 et non 500 pour les erreurs techniques** : la requête était valide et le service tourne —
+c'est une dépendance qui est tombée, et 502 le dit précisément.
 
+Les adaptateurs traduisent les exceptions d'infrastructure (`DataIntegrityViolationException`,
+erreurs WebClient) à la frontière : le domaine ne voit jamais d'exception technique.
+
+Toutes les réponses d'erreur sont des `ProblemDetail` (RFC 7807), avec un `code` stable qu'un
+client peut tester et un `timestamp` :
+
+```json
+{
+  "type": "https://welylabs.app/problems/usr-bus-001",
+  "title": "User not found",
+  "status": 404,
+  "detail": "No user matches the given identifier.",
+  "instance": "/user-service/profile/8f2c…",
+  "code": "USR-BUS-001",
+  "timestamp": "2026-09-30T19:23:43.598673Z"
+}
+```
+
+> `USR-REQ-000` rend le statut d'origine d'une `ResponseStatusException` — 404 sur un
+> chemin inconnu, 405 sur une méthode non autorisée. Sans lui, le handler `Exception.class`
+> les avalait toutes et **tout chemin inconnu répondait 500**. C'est le genre de défaut qu'un
+> test de route nominale ne voit jamais.
 ---
 
 ## Configuration

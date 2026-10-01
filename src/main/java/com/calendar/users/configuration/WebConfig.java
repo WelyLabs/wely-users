@@ -1,7 +1,6 @@
 package com.calendar.users.configuration;
 
 import org.springframework.context.annotation.Configuration;
-import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.method.HandlerTypePredicate;
 import org.springframework.web.reactive.config.EnableWebFlux;
 import org.springframework.web.reactive.config.PathMatchConfigurer;
@@ -13,6 +12,11 @@ public class WebConfig implements WebFluxConfigurer {
 
     @Override
     public void configurePathMatching(PathMatchConfigurer configurer) {
-        configurer.addPathPrefix("/user-service", HandlerTypePredicate.forAnnotation(RestController.class));
+        // Scoped to this service's own controllers by package, not by the @RestController
+        // annotation: that predicate also matched springdoc's OpenApiWebfluxResource, which
+        // moved the specification to /user-service/v3/api-docs and left /v3/api-docs a 404.
+        configurer.addPathPrefix(
+                "/user-service",
+                HandlerTypePredicate.forBasePackage("com.calendar.users.application.rest"));
     }
 }
