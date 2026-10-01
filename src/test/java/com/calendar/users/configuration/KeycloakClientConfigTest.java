@@ -30,7 +30,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class KeycloakClientConfigTest {
 
-    private static final String BASE_URL = "http://wely-auth-service:8080/admin/realms/calendar-app";
+    private static final String BASE_URL = "http://wely-auth-service:8080/admin/realms/wely-realm";
 
     private final KeycloakClientConfig config = new KeycloakClientConfig();
 
