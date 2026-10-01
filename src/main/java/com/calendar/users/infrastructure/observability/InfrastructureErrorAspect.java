@@ -1,5 +1,6 @@
 package com.calendar.users.infrastructure.observability;
 
+import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
 import com.calendar.users.exception.TechnicalErrorCode;
 import com.calendar.users.exception.TechnicalException;
@@ -9,6 +10,7 @@ import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.annotation.Pointcut;
 import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -86,11 +88,22 @@ public class InfrastructureErrorAspect {
      * Domain failures pass through: a {@link BusinessException} is the adapter stating a
      * business outcome, and an already-translated {@link TechnicalException} must not be
      * wrapped twice.
+     *
+     * <p>A 404 from the dependency is also a business outcome, not an incident. Keycloak
+     * answering "no such user" was being reported as USR-TEC-001, "identity provider
+     * unavailable", at 502 — which says the platform is broken when the caller simply asked
+     * for someone who does not exist. It also fills the incident logs with failures that are
+     * nothing of the sort.
      */
     private Throwable translate(String dependency, TechnicalErrorCode code, String operation,
                                 Throwable error) {
         if (error instanceof BusinessException || error instanceof TechnicalException) {
             return error;
+        }
+
+        if (error instanceof WebClientResponseException.NotFound) {
+            log.debug("{} has no record for {}", dependency, operation);
+            return new BusinessException(BusinessErrorCode.USER_NOT_FOUND);
         }
 
         log.error("{} failure in {}: {}", dependency, operation, error.getMessage(), error);
