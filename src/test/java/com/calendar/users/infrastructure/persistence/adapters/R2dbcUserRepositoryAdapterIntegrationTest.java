@@ -1,5 +1,6 @@
 package com.calendar.users.infrastructure.persistence.adapters;
 
+import com.calendar.users.EphemeralDatabaseCheck;
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
@@ -68,6 +69,10 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
             databaseClient.sql(ddl).then().block();
             schemaApplied = true;
         }
+
+        // Before any DELETE. See EphemeralDatabaseCheck: this fixture empties app_user, and
+        // that is exactly how the dev users were lost.
+        EphemeralDatabaseCheck.verifyThrowaway(databaseClient);
 
         // DELETE, not DROP: dropping a table takes its constraints with it, and the unique
         // constraint is the subject of half this class. The same mistake cost wely-chat a run
