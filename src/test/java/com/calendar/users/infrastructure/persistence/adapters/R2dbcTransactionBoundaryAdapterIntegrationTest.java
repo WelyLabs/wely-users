@@ -4,6 +4,8 @@ import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.ports.TransactionBoundary;
 import com.calendar.users.domain.ports.UserEventPublisher;
 import com.calendar.users.domain.ports.UserRepository;
+import com.calendar.users.exception.TechnicalErrorCode;
+import com.calendar.users.exception.TechnicalException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -123,9 +125,19 @@ class R2dbcTransactionBoundaryAdapterIntegrationTest {
     void atomically_shouldRollBackBothWrites() {
         // Without the boundary this is exactly the state the outbox exists to prevent,
         // inverted: the user committed and the event lost. Here nothing survives.
+        //
+        // The error that comes back is not the one thrown. atomically is a public method of
+        // this package, so InfrastructureErrorAspect advises it too and maps anything that
+        // is neither a BusinessException nor a TechnicalException to USR-TEC-002. Worth
+        // knowing before debugging a rollback: the cause is in the log line the aspect
+        // writes, not in what the caller sees.
         StepVerifier.create(transactionBoundary.atomically(
                         provision().then(Mono.error(new IllegalStateException("something later failed")))))
-                .expectError(IllegalStateException.class)
+                .expectErrorSatisfies(error -> {
+                    assertThat(error).isInstanceOf(TechnicalException.class);
+                    assertThat(((TechnicalException) error).getErrorCode())
+                            .isEqualTo(TechnicalErrorCode.DATABASE_ERROR);
+                })
                 .verify();
 
         assertThat(count("app_user")).isZero();
