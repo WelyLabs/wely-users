@@ -1,6 +1,7 @@
 package com.calendar.users.configuration;
 
 import com.calendar.users.domain.ports.IdentityProvider;
+import com.calendar.users.domain.ports.TransactionBoundary;
 import com.calendar.users.domain.ports.UserEventPublisher;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.domain.services.UserService;
@@ -14,7 +15,8 @@ public class UsersApplicationConfig {
     public UserService userService(
             UserRepository userRepository,
             IdentityProvider identityProvider,
-            UserEventPublisher userEventPublisher) {
-        return new UserService(userRepository, identityProvider, userEventPublisher);
+            UserEventPublisher userEventPublisher,
+            TransactionBoundary transactionBoundary) {
+        return new UserService(userRepository, identityProvider, userEventPublisher, transactionBoundary);
     }
 }

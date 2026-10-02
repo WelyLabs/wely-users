@@ -2,6 +2,7 @@ package com.calendar.users.domain.services;
 
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.ports.IdentityProvider;
+import com.calendar.users.domain.ports.TransactionBoundary;
 import com.calendar.users.domain.ports.UserEventPublisher;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
@@ -22,12 +23,14 @@ public class UserService {
     private final UserRepository userRepository;
     private final IdentityProvider identityProvider;
     private final UserEventPublisher userEventPublisher;
+    private final TransactionBoundary transactionBoundary;
 
     public UserService(UserRepository userRepository, IdentityProvider identityProvider,
-            UserEventPublisher userEventPublisher) {
+            UserEventPublisher userEventPublisher, TransactionBoundary transactionBoundary) {
         this.userRepository = userRepository;
         this.identityProvider = identityProvider;
         this.userEventPublisher = userEventPublisher;
+        this.transactionBoundary = transactionBoundary;
     }
 
     public Mono<BusinessUser> readProfile(UUID userId) {
@@ -50,6 +53,24 @@ public class UserService {
                 .switchIfEmpty(Mono.defer(() -> provisionUser(keycloakId)));
     }
 
+    /**
+     * Creates the user and records the creation event as one unit.
+     *
+     * <p>Saving and publishing used to be two steps in a row, which left a window: a user
+     * could be in PostgreSQL while {@code USER_CREATED} never reached Kafka, and nothing
+     * in the system would notice. The account existed and the social graph had no node
+     * for it — permanently, since nothing retries.
+     *
+     * <p>Both writes now go to the same database inside one transaction, so they commit
+     * together or not at all. The publisher no longer talks to the broker: it appends to
+     * the outbox, and a relay carries the row to Kafka afterwards. See
+     * {@code OutboxUserEventPublisherAdapter}.
+     *
+     * <p>What stays outside the boundary matters as much as what is inside. Fetching the
+     * identity and drawing a free hashtag are reads and a network call; holding a
+     * database transaction across them would tie up a connection for a Keycloak round
+     * trip on every signup.
+     */
     private Mono<UUID> provisionUser(String keycloakId) {
         return identityProvider.getUser(keycloakId)
                 .flatMap(identityUser -> generateUniqueHashtag(identityUser.username())
@@ -61,8 +82,9 @@ public class UserService {
                                 identityUser.lastName(),
                                 null,
                                 LocalDateTime.now()))
-                        .flatMap(newUser -> userRepository.save(newUser, keycloakId))
-                        .flatMap(userEventPublisher::publishUserCreatedEvent));
+                        .flatMap(newUser -> transactionBoundary.atomically(
+                                userRepository.save(newUser, keycloakId)
+                                        .flatMap(userEventPublisher::publishUserCreatedEvent))));
     }
 
     /**
