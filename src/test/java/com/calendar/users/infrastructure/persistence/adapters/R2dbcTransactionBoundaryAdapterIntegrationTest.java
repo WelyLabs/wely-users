@@ -1,5 +1,6 @@
 package com.calendar.users.infrastructure.persistence.adapters;
 
+import com.calendar.users.EphemeralDatabaseCheck;
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.ports.TransactionBoundary;
 import com.calendar.users.domain.ports.UserEventPublisher;
@@ -75,6 +76,10 @@ class R2dbcTransactionBoundaryAdapterIntegrationTest {
             databaseClient.sql(Files.readString(Path.of("db/migration/V2__create_outbox_event.sql"))).then().block();
             schemaApplied = true;
         }
+
+        // Before any DELETE. See EphemeralDatabaseCheck: this fixture empties app_user, and
+        // that is exactly how the dev users were lost.
+        EphemeralDatabaseCheck.verifyThrowaway(databaseClient);
 
         databaseClient.sql("DELETE FROM app_user").then().block();
         databaseClient.sql("DELETE FROM outbox_event").then().block();

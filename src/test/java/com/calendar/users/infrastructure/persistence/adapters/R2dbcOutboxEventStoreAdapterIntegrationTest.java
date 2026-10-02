@@ -1,5 +1,6 @@
 package com.calendar.users.infrastructure.persistence.adapters;
 
+import com.calendar.users.EphemeralDatabaseCheck;
 import com.calendar.users.infrastructure.persistence.models.entities.OutboxEventRow;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -76,6 +77,10 @@ class R2dbcOutboxEventStoreAdapterIntegrationTest {
                     .then().block();
             schemaApplied = true;
         }
+
+        // Before any DELETE. See EphemeralDatabaseCheck: this fixture empties its table,
+        // and it has already been pointed at a deployed database once.
+        EphemeralDatabaseCheck.verifyThrowaway(databaseClient);
 
         databaseClient.sql("DELETE FROM outbox_event").then().block();
     }
