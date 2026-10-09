@@ -43,18 +43,16 @@ Architecture hexagonale. Le domaine déclare trois ports ; l'infrastructure four
                   │   ports/                             │
                   │     UserRepository ──────────┐       │
                   │     IdentityProvider ────────┼─┐     │
-                  │     UserEventPublisher ──────┼─┼─┐   │
-                  │     TransactionBoundary ─────┼─┼─┼─┐ │
-                  └──────────────────────────────┼─┼─┼─┼─┘
-                                                 │ │ │ │
-                  ┌──────────────────────────────▼─▼─▼─▼─┐
+                  └──────────────────────────────┼─┼─────┘
+                                                 │ │
+                  ┌──────────────────────────────▼─▼─────┐
                   │           infrastructure/            │
                   │                                      │
-                  │  persistence/  R2dbcUserRepositoryAdapter
+                  │  persistence/  R2dbcUserRepositoryAdapter (@Transactional)
                   │                → UserR2dbcRepository │
-                  │                OutboxUserEventPublisherAdapter
-                  │                → R2dbcOutboxEventStoreAdapter
-                  │                R2dbcTransactionBoundaryAdapter
+                  │                → UserCreatedOutboxWriter
+                  │                  → R2dbcOutboxEventStoreAdapter
+                  │                    → OutboxEventR2dbcRepository
                   │  identity/     IdentityAuthAdapter   │
                   │                → KeycloakAdminApi    │
                   │  messaging/    OutboxRelay           │
@@ -65,21 +63,18 @@ Architecture hexagonale. Le domaine déclare trois ports ; l'infrastructure four
                        PostgreSQL  Keycloak    Kafka
 ```
 
-Les quatre ports sont fournis par l'infrastructure. `UserEventPublisher` est le plus intéressant : son adaptateur **n'appelle plus Kafka**, il insère une ligne en base. Le domaine n'a pas changé — c'est l'argument pour avoir un port.
+Les deux ports sont fournis par l'infrastructure. Le domaine se contente d'enregistrer un utilisateur : prévenir les autres services (`USER_CREATED`) est un **événement d'intégration**, une conséquence du découpage en microservices et non une règle métier. C'est donc l'adaptateur de persistance qui l'écrit, dans la même transaction que l'utilisateur.
 
 `UserService` est un **POJO sans annotation Spring**, instancié par `UsersApplicationConfig` :
 
 ```java
 @Bean
-public UserService userService(UserRepository repository,
-                               IdentityProvider identityProvider,
-                               UserEventPublisher publisher,
-                               TransactionBoundary transactionBoundary) {
-    return new UserService(repository, identityProvider, publisher, transactionBoundary);
+public UserService userService(UserRepository repository, IdentityProvider identityProvider) {
+    return new UserService(repository, identityProvider);
 }
 ```
 
-Il se teste donc sans contexte Spring, avec trois implémentations d'interfaces.
+Il se teste donc sans contexte Spring, avec deux implémentations d'interfaces.
 
 ---
 
@@ -242,9 +237,8 @@ Consommé par [`wely-social`](https://github.com/WelyLabs/wely-social), qui cré
 
 On ne rend pas les deux systèmes atomiques, on **ramène le deuxième dans le premier** :
 
-1. `UserService` demande à `TransactionBoundary` d'exécuter `save` + `publish` comme une seule unité.
-2. `OutboxUserEventPublisherAdapter` n'appelle pas Kafka — il insère une ligne dans `outbox_event`, dans la même transaction.
-3. `OutboxRelay`, hors du chemin de requête, lit les lignes non publiées, les envoie, et les marque.
+1. `R2dbcUserRepositoryAdapter.save`, annotée `@Transactional`, insère l'utilisateur puis, via `UserCreatedOutboxWriter`, une ligne dans `outbox_event` : les deux sont validées ensemble, ou aucune.
+2. `OutboxRelay`, hors du chemin de requête, lit les lignes non publiées, les envoie, et les marque.
 
 La seule chose à garantir n'est plus que deux systèmes réussissent ensemble, mais qu'**un seul finisse par réussir**.
 

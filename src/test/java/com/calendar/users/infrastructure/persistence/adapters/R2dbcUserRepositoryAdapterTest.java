@@ -23,19 +23,8 @@ import java.util.UUID;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+/** Unexpected database failures are mapped by InfrastructureErrorAspect, tested on its own. */
 @ExtendWith(MockitoExtension.class)
-/**
- * The {@code *_ShouldMapError} cases that used to live here are gone: logging a failure and
- * mapping it to a {@code TechnicalException} moved into {@code InfrastructureErrorAspect}.
- * That behaviour is carried by the Spring proxy, so it is out of reach of a plain unit test
- * of the adapter — the trade-off of the aspect.
- *
- * <p>The coverage moved to {@code InfrastructureErrorAspectTest} for the logic and
- * {@code InfrastructureErrorAspectWiringTest} for proof the pointcuts match.
- *
- * <p>What stayed: the unique-constraint case, which is a business rule rather than an
- * incident, and is still translated inside the adapter.
- */
 class R2dbcUserRepositoryAdapterTest {
 
         @Mock
@@ -43,6 +32,9 @@ class R2dbcUserRepositoryAdapterTest {
 
         @Mock
         private UserEntityMapper userEntityMapper;
+
+        @Mock
+        private UserCreatedOutboxWriter userCreatedOutboxWriter;
 
         @InjectMocks
         private R2dbcUserRepositoryAdapter adapter;
@@ -57,6 +49,7 @@ class R2dbcUserRepositoryAdapterTest {
                 when(userEntityMapper.toUserEntity(user)).thenReturn(entity);
                 when(userR2dbcRepository.save(entity)).thenReturn(Mono.just(entity));
                 when(userEntityMapper.toBusinessUser(entity)).thenReturn(user);
+                when(userCreatedOutboxWriter.write(user)).thenReturn(Mono.just(1L));
 
                 // When
                 Mono<BusinessUser> result = adapter.save(user, "kc-123");
@@ -67,6 +60,26 @@ class R2dbcUserRepositoryAdapterTest {
                                 .verifyComplete();
 
                 verify(entity).setKeycloakId("kc-123");
+                verify(userCreatedOutboxWriter).write(user);
+        }
+
+        @Test
+        void save_ShouldFail_WhenTheEventCannotBeWritten() {
+                // Given
+                BusinessUser user = new BusinessUser(UUID.randomUUID(), "user", 1, "F", "L", "url",
+                                LocalDateTime.now());
+                UserEntity entity = new UserEntity();
+
+                when(userEntityMapper.toUserEntity(user)).thenReturn(entity);
+                when(userR2dbcRepository.save(entity)).thenReturn(Mono.just(entity));
+                when(userEntityMapper.toBusinessUser(entity)).thenReturn(user);
+                when(userCreatedOutboxWriter.write(user))
+                                .thenReturn(Mono.error(new IllegalStateException("outbox down")));
+
+                // When / Then: the error reaches the caller, so the transaction rolls back
+                StepVerifier.create(adapter.save(user, "kc-123"))
+                                .expectError(IllegalStateException.class)
+                                .verify();
         }
 
         @Test
@@ -89,6 +102,8 @@ class R2dbcUserRepositoryAdapterTest {
                                                 ((BusinessException) throwable)
                                                                 .getErrorCode() == BusinessErrorCode.USER_ALREADY_EXISTS)
                                 .verify();
+
+                verify(userCreatedOutboxWriter, never()).write(any());
         }
 
 

@@ -71,8 +71,7 @@ class OutboxRelayTest {
 
     @BeforeEach
     void passTransactionsThrough() {
-        // The boundary itself is R2dbcTransactionBoundaryAdapter's subject, and a real one
-        // is exercised in R2dbcOutboxEventStoreAdapterIntegrationTest.
+        // A real transaction is exercised in R2dbcOutboxEventStoreAdapterIntegrationTest.
         when(transactionalOperator.transactional(any(Mono.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(outboxEventStore.purgePublishedBefore(any(Instant.class))).thenReturn(Mono.just(0L));

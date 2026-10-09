@@ -27,7 +27,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class OutboxUserEventPublisherAdapterTest {
+class UserCreatedOutboxWriterTest {
 
     @Mock
     private KafkaDataMapper kafkaDataMapper;
@@ -35,13 +35,11 @@ class OutboxUserEventPublisherAdapterTest {
     @Mock
     private R2dbcOutboxEventStoreAdapter outboxEventStore;
 
-    // A real mapper, not a mock. The bytes this adapter stores are the bytes the relay
-    // later puts on the wire, so what they look like is the contract — and a mocked
-    // serialiser would assert nothing about it.
+    // A real mapper: the stored JSON is what the relay sends to Kafka.
     private final ObjectMapper objectMapper = JsonMapper.builder().build();
 
-    private OutboxUserEventPublisherAdapter adapter() {
-        return new OutboxUserEventPublisherAdapter(kafkaDataMapper, objectMapper, outboxEventStore);
+    private UserCreatedOutboxWriter writer() {
+        return new UserCreatedOutboxWriter(kafkaDataMapper, objectMapper, outboxEventStore);
     }
 
     private static BusinessUser aUser(UUID id) {
@@ -49,21 +47,19 @@ class OutboxUserEventPublisherAdapterTest {
     }
 
     @Test
-    @DisplayName("the event is appended to the outbox, keyed on the user, and the id comes back")
-    void publishUserCreatedEvent_shouldAppendTheEvent() {
+    @DisplayName("the event is appended to the outbox, keyed on the user")
+    void write_shouldAppendTheEvent() {
         UUID userId = UUID.randomUUID();
         BusinessUser user = aUser(userId);
         when(kafkaDataMapper.toUserCreatedEventDTO(user))
                 .thenReturn(new UserCreatedEventDTO(userId, "alice", 1111, "pic"));
         when(outboxEventStore.append(any(UUID.class), anyString(), anyString())).thenReturn(Mono.just(42L));
 
-        StepVerifier.create(adapter().publishUserCreatedEvent(user))
-                .expectNext(userId)
+        StepVerifier.create(writer().write(user))
+                .expectNext(42L)
                 .verifyComplete();
 
         ArgumentCaptor<String> payload = ArgumentCaptor.captor();
-        // aggregate_id is the user id, because it becomes the Kafka partition key: that is
-        // what keeps several events about one user ordered relative to each other.
         verify(outboxEventStore).append(eq(userId), eq(OutboxEventType.USER_CREATED.name()), payload.capture());
 
         UserCreatedEventDTO roundTripped =
@@ -72,10 +68,8 @@ class OutboxUserEventPublisherAdapterTest {
     }
 
     @Test
-    @DisplayName("a failing insert fails the publish, so the whole provisioning rolls back")
-    void publishUserCreatedEvent_shouldPropagateAStoreFailure() {
-        // Swallowing this would be the bug the outbox exists to prevent, in a new place: the
-        // user would be committed with no event recorded alongside it.
+    @DisplayName("a failing insert fails the write, so the user is rolled back with it")
+    void write_shouldPropagateAStoreFailure() {
         UUID userId = UUID.randomUUID();
         BusinessUser user = aUser(userId);
         when(kafkaDataMapper.toUserCreatedEventDTO(user))
@@ -83,20 +77,17 @@ class OutboxUserEventPublisherAdapterTest {
         when(outboxEventStore.append(any(UUID.class), anyString(), anyString()))
                 .thenReturn(Mono.error(new IllegalStateException("connection reset by peer")));
 
-        StepVerifier.create(adapter().publishUserCreatedEvent(user))
+        StepVerifier.create(writer().write(user))
                 .expectError(IllegalStateException.class)
                 .verify();
     }
 
     @Test
-    @DisplayName("nothing is written until the publisher is subscribed")
-    void publishUserCreatedEvent_shouldBeLazy() {
-        // The adapter is called while the unit of work is being assembled, before the
-        // transaction boundary subscribes. Serialising or inserting at assembly time would
-        // put the insert outside the transaction.
+    @DisplayName("nothing is written until the result is subscribed")
+    void write_shouldBeLazy() {
         BusinessUser user = aUser(UUID.randomUUID());
 
-        adapter().publishUserCreatedEvent(user);
+        writer().write(user);
 
         verify(kafkaDataMapper, never()).toUserCreatedEventDTO(any());
         verify(outboxEventStore, never()).append(any(), anyString(), anyString());

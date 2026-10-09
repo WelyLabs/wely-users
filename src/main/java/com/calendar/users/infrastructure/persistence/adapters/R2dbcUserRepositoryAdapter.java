@@ -9,44 +9,43 @@ import com.calendar.users.infrastructure.persistence.models.entities.UserEntity;
 import com.calendar.users.infrastructure.persistence.repositories.UserR2dbcRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 import reactor.core.publisher.Mono;
 
 import java.util.UUID;
 
-/**
- * Persists users through R2DBC.
- *
- * <p>Generic failure handling — logging, and mapping anything unexpected to
- * {@code TechnicalException(DATABASE_ERROR)} — lives in
- * {@link com.calendar.users.infrastructure.observability.InfrastructureErrorAspect}, which
- * wraps each returned publisher. What remains here is the one translation that is a
- * business rule rather than an incident.
- */
+/** Persists users through R2DBC. Unexpected failures are mapped by {@code InfrastructureErrorAspect}. */
 @Component
 public class R2dbcUserRepositoryAdapter implements UserRepository {
 
     private final UserR2dbcRepository userR2dbcRepository;
     private final UserEntityMapper userEntityMapper;
+    private final UserCreatedOutboxWriter userCreatedOutboxWriter;
 
     public R2dbcUserRepositoryAdapter(UserR2dbcRepository userR2dbcRepository,
-                                    UserEntityMapper userEntityMapper) {
+                                      UserEntityMapper userEntityMapper,
+                                      UserCreatedOutboxWriter userCreatedOutboxWriter) {
         this.userR2dbcRepository = userR2dbcRepository;
         this.userEntityMapper = userEntityMapper;
+        this.userCreatedOutboxWriter = userCreatedOutboxWriter;
     }
 
+    /**
+     * Saves a new user and its USER_CREATED outbox event in one transaction:
+     * both rows are committed, or neither is.
+     */
     @Override
+    @Transactional
     public Mono<BusinessUser> save(BusinessUser businessUser, String keycloakId) {
         UserEntity userEntity = userEntityMapper.toUserEntity(businessUser);
         userEntity.setKeycloakId(keycloakId);
 
         return userR2dbcRepository.save(userEntity)
                 .map(userEntityMapper::toBusinessUser)
-                // Violating unique_user_identity is not a database incident: it means the
-                // (user_name, hashtag) pair is taken. Mapped here because it is specific to
-                // this operation, and applied before the aspect, which lets business
-                // failures through.
+                // A taken (user_name, hashtag) pair is a business error, not a database incident.
                 .onErrorMap(DataIntegrityViolationException.class,
-                        e -> new BusinessException(BusinessErrorCode.USER_ALREADY_EXISTS));
+                        e -> new BusinessException(BusinessErrorCode.USER_ALREADY_EXISTS))
+                .flatMap(saved -> userCreatedOutboxWriter.write(saved).thenReturn(saved));
     }
 
     @Override

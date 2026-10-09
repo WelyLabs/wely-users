@@ -65,8 +65,8 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     @BeforeEach
     void prepareSchema() throws Exception {
         if (!schemaApplied) {
-            String ddl = Files.readString(Path.of("db/migration/V1__create_app_user.sql"));
-            databaseClient.sql(ddl).then().block();
+            databaseClient.sql(Files.readString(Path.of("db/migration/V1__create_app_user.sql"))).then().block();
+            databaseClient.sql(Files.readString(Path.of("db/migration/V2__create_outbox_event.sql"))).then().block();
             schemaApplied = true;
         }
 
@@ -78,6 +78,14 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         // constraint is the subject of half this class. The same mistake cost wely-chat a run
         // where every test ran against an unindexed database.
         databaseClient.sql("DELETE FROM app_user").then().block();
+        databaseClient.sql("DELETE FROM outbox_event").then().block();
+    }
+
+    private Long count(String table) {
+        return databaseClient.sql("SELECT count(*) FROM " + table)
+                .map(row -> row.get(0, Long.class))
+                .one()
+                .block();
     }
 
     private static BusinessUser aUser(String userName, int hashtag) {
@@ -203,5 +211,50 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
                 .block();
 
         assertThat(stored).isEqualTo("keycloak-alice");
+    }
+
+    @Test
+    @DisplayName("saving a user also records its USER_CREATED event")
+    void save_shouldRecordTheUserCreatedEvent() {
+        BusinessUser saved = adapter.save(aUser("alice", 1111), "keycloak-alice").block();
+
+        assertThat(count("app_user")).isEqualTo(1L);
+        assertThat(count("outbox_event")).isEqualTo(1L);
+        UUID aggregateId = databaseClient.sql("SELECT aggregate_id FROM outbox_event WHERE type = 'USER_CREATED'")
+                .map(row -> row.get("aggregate_id", UUID.class))
+                .one()
+                .block();
+        assertThat(aggregateId).isEqualTo(saved.id());
+    }
+
+    @Test
+    @DisplayName("if the event cannot be recorded, the user is rolled back too")
+    void save_shouldRollBackTheUserWhenTheEventCannotBeStored() {
+        // A constraint that refuses every new outbox row makes the second insert fail.
+        databaseClient.sql("ALTER TABLE outbox_event ADD CONSTRAINT refuse_all CHECK (false) NOT VALID")
+                .then().block();
+        try {
+            StepVerifier.create(adapter.save(aUser("alice", 1111), "keycloak-alice"))
+                    .expectError()
+                    .verify();
+
+            assertThat(count("app_user")).isZero();
+            assertThat(count("outbox_event")).isZero();
+        } finally {
+            databaseClient.sql("ALTER TABLE outbox_event DROP CONSTRAINT refuse_all").then().block();
+        }
+    }
+
+    @Test
+    @DisplayName("a refused user leaves no event behind")
+    void save_shouldNotRecordAnEventForARefusedUser() {
+        adapter.save(aUser("alice", 1111), "keycloak-alice").block();
+
+        StepVerifier.create(adapter.save(aUser("alice", 1111), "keycloak-bob"))
+                .expectError(BusinessException.class)
+                .verify();
+
+        assertThat(count("app_user")).isEqualTo(1L);
+        assertThat(count("outbox_event")).isEqualTo(1L);
     }
 }
