@@ -4,7 +4,7 @@ import com.calendar.users.exception.TechnicalErrorCode;
 import com.calendar.users.exception.TechnicalException;
 import com.calendar.users.infrastructure.messaging.adapters.KafkaOutboxDispatcher;
 import com.calendar.users.infrastructure.persistence.adapters.R2dbcOutboxEventStoreAdapter;
-import com.calendar.users.infrastructure.persistence.models.entities.OutboxEventRow;
+import com.calendar.users.infrastructure.persistence.models.entities.OutboxEventEntity;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -93,8 +93,14 @@ class OutboxRelayTest {
         relay.start();
     }
 
-    private static OutboxEventRow row(long id, int attempts) {
-        return new OutboxEventRow(id, UUID.randomUUID(), "USER_CREATED", "{}", attempts);
+    private static OutboxEventEntity row(long id, int attempts) {
+        return OutboxEventEntity.builder()
+                .id(id)
+                .aggregateId(UUID.randomUUID())
+                .type("USER_CREATED")
+                .payload("{}")
+                .attempts(attempts)
+                .build();
     }
 
     @Test
@@ -103,7 +109,7 @@ class OutboxRelayTest {
         when(outboxEventStore.claimPending(anyInt(), anyInt()))
                 .thenReturn(Flux.just(row(1, 0), row(2, 0)))
                 .thenReturn(Flux.empty());
-        when(dispatcher.dispatch(any(OutboxEventRow.class))).thenReturn(Mono.empty());
+        when(dispatcher.dispatch(any(OutboxEventEntity.class))).thenReturn(Mono.empty());
 
         startRelay();
 
@@ -116,9 +122,9 @@ class OutboxRelayTest {
     void start_shouldCommitThePrefixAndStopAtTheFirstFailure() {
         // Sending past a failure would reorder events inside a Kafka partition, which is
         // the one ordering guarantee this design depends on.
-        OutboxEventRow first = row(1, 0);
-        OutboxEventRow failing = row(2, 0);
-        OutboxEventRow behind = row(3, 0);
+        OutboxEventEntity first = row(1, 0);
+        OutboxEventEntity failing = row(2, 0);
+        OutboxEventEntity behind = row(3, 0);
 
         when(outboxEventStore.claimPending(anyInt(), anyInt()))
                 .thenReturn(Flux.just(first, failing, behind))
@@ -147,7 +153,7 @@ class OutboxRelayTest {
         when(outboxEventStore.claimPending(anyInt(), anyInt()))
                 .thenReturn(Flux.just(row(7, 1)))
                 .thenReturn(Flux.empty());
-        when(dispatcher.dispatch(any(OutboxEventRow.class)))
+        when(dispatcher.dispatch(any(OutboxEventEntity.class)))
                 .thenReturn(Mono.error(new IllegalStateException("broker refused the message")));
 
         startRelay();

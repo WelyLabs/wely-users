@@ -1,7 +1,7 @@
 package com.calendar.users.infrastructure.persistence.adapters;
 
 import com.calendar.users.EphemeralDatabaseCheck;
-import com.calendar.users.infrastructure.persistence.models.entities.OutboxEventRow;
+import com.calendar.users.infrastructure.persistence.models.entities.OutboxEventEntity;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -89,7 +89,7 @@ class R2dbcOutboxEventStoreAdapterIntegrationTest {
         return adapter.append(UUID.randomUUID(), type, payload).block();
     }
 
-    private List<OutboxEventRow> claim(int batchSize, int maxAttempts) {
+    private List<OutboxEventEntity> claim(int batchSize, int maxAttempts) {
         return transactionalOperator.transactional(
                 adapter.claimPending(batchSize, maxAttempts).collectList()).block();
     }
@@ -103,13 +103,13 @@ class R2dbcOutboxEventStoreAdapterIntegrationTest {
 
         assertThat(id).isNotNull().isPositive();
 
-        List<OutboxEventRow> claimed = claim(10, 5);
+        List<OutboxEventEntity> claimed = claim(10, 5);
         assertThat(claimed).singleElement().satisfies(row -> {
-            assertThat(row.id()).isEqualTo(id);
-            assertThat(row.aggregateId()).isEqualTo(aggregateId);
-            assertThat(row.type()).isEqualTo("USER_CREATED");
-            assertThat(row.payload()).isEqualTo("{\"userId\":\"x\"}");
-            assertThat(row.attempts()).isZero();
+            assertThat(row.getId()).isEqualTo(id);
+            assertThat(row.getAggregateId()).isEqualTo(aggregateId);
+            assertThat(row.getType()).isEqualTo("USER_CREATED");
+            assertThat(row.getPayload()).isEqualTo("{\"userId\":\"x\"}");
+            assertThat(row.getAttempts()).isZero();
         });
     }
 
@@ -122,7 +122,7 @@ class R2dbcOutboxEventStoreAdapterIntegrationTest {
         long second = append("USER_CREATED", "{\"n\":2}");
         append("USER_CREATED", "{\"n\":3}");
 
-        assertThat(claim(2, 5)).extracting(OutboxEventRow::id).containsExactly(first, second);
+        assertThat(claim(2, 5)).extracting(OutboxEventEntity::getId).containsExactly(first, second);
     }
 
     @Test
@@ -142,7 +142,7 @@ class R2dbcOutboxEventStoreAdapterIntegrationTest {
         // A transaction that claims two rows and then refuses to finish, so its locks stay.
         Disposable firstClaim = transactionalOperator.transactional(
                         adapter.claimPending(2, 5)
-                                .doOnNext(row -> held.add(row.id()))
+                                .doOnNext(row -> held.add(row.getId()))
                                 .then(Mono.defer(keepOpen::asMono)))
                 .subscribe();
 
@@ -150,10 +150,10 @@ class R2dbcOutboxEventStoreAdapterIntegrationTest {
             await().atMost(Duration.ofSeconds(10)).until(() -> held.size() == 2);
             assertThat(held).containsExactly(one, two);
 
-            List<OutboxEventRow> second = transactionalOperator.transactional(
+            List<OutboxEventEntity> second = transactionalOperator.transactional(
                     adapter.claimPending(2, 5).collectList()).block(Duration.ofSeconds(10));
 
-            assertThat(second).extracting(OutboxEventRow::id).containsExactly(three, four);
+            assertThat(second).extracting(OutboxEventEntity::getId).containsExactly(three, four);
         } finally {
             keepOpen.tryEmitEmpty();
             firstClaim.dispose();
@@ -168,7 +168,7 @@ class R2dbcOutboxEventStoreAdapterIntegrationTest {
 
         assertThat(adapter.markPublished(List.of(first)).block()).isEqualTo(1L);
 
-        assertThat(claim(10, 5)).extracting(OutboxEventRow::id).containsExactly(second);
+        assertThat(claim(10, 5)).extracting(OutboxEventEntity::getId).containsExactly(second);
     }
 
     @Test
@@ -194,7 +194,7 @@ class R2dbcOutboxEventStoreAdapterIntegrationTest {
             adapter.recordFailure(poison, "could not be serialised").block();
         }
 
-        assertThat(claim(10, 3)).extracting(OutboxEventRow::id).containsExactly(behind);
+        assertThat(claim(10, 3)).extracting(OutboxEventEntity::getId).containsExactly(behind);
 
         Long stillThere = databaseClient
                 .sql("SELECT attempts FROM outbox_event WHERE id = :id")
@@ -220,7 +220,7 @@ class R2dbcOutboxEventStoreAdapterIntegrationTest {
 
         assertThat(lastError).isEqualTo("broker refused the message");
         assertThat(claim(10, 5)).singleElement()
-                .satisfies(row -> assertThat(row.attempts()).isEqualTo(1));
+                .satisfies(row -> assertThat(row.getAttempts()).isEqualTo(1));
     }
 
     @Test

@@ -3,7 +3,7 @@ package com.calendar.users.infrastructure.messaging.adapters;
 import com.calendar.users.exception.TechnicalErrorCode;
 import com.calendar.users.exception.TechnicalException;
 import com.calendar.users.infrastructure.messaging.models.UserCreatedEventDTO;
-import com.calendar.users.infrastructure.persistence.models.entities.OutboxEventRow;
+import com.calendar.users.infrastructure.persistence.models.entities.OutboxEventEntity;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -37,8 +37,14 @@ class KafkaOutboxDispatcherTest {
         return new KafkaOutboxDispatcher(objectMapper, streamBridge);
     }
 
-    private static OutboxEventRow aRow(UUID userId, String type, String payload) {
-        return new OutboxEventRow(1L, userId, type, payload, 0);
+    private static OutboxEventEntity aRow(UUID userId, String type, String payload) {
+        return OutboxEventEntity.builder()
+                .id(1L)
+                .aggregateId(userId)
+                .type(type)
+                .payload(payload)
+                .attempts(0)
+                .build();
     }
 
     private static String aPayload(UUID userId) {
