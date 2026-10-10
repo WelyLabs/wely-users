@@ -3,39 +3,33 @@ package com.calendar.users.infrastructure.persistence.adapters;
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
-import com.calendar.users.exception.TechnicalErrorCode;
-import com.calendar.users.exception.TechnicalException;
+import com.calendar.users.infrastructure.messaging.mappers.KafkaDataMapper;
+import com.calendar.users.infrastructure.messaging.models.OutboxEventType;
+import com.calendar.users.infrastructure.messaging.models.UserCreatedEventDTO;
 import com.calendar.users.infrastructure.persistence.mappers.UserEntityMapper;
 import com.calendar.users.infrastructure.persistence.models.entities.UserEntity;
 import com.calendar.users.infrastructure.persistence.repositories.UserR2dbcRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
+import org.junit.jupiter.api.BeforeEach;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+/** Unexpected database failures are mapped by InfrastructureErrorAspect, tested on its own. */
 @ExtendWith(MockitoExtension.class)
-/**
- * The {@code *_ShouldMapError} cases that used to live here are gone: logging a failure and
- * mapping it to a {@code TechnicalException} moved into {@code InfrastructureErrorAspect}.
- * That behaviour is carried by the Spring proxy, so it is out of reach of a plain unit test
- * of the adapter — the trade-off of the aspect.
- *
- * <p>The coverage moved to {@code InfrastructureErrorAspectTest} for the logic and
- * {@code InfrastructureErrorAspectWiringTest} for proof the pointcuts match.
- *
- * <p>What stayed: the unique-constraint case, which is a business rule rather than an
- * incident, and is still translated inside the adapter.
- */
 class R2dbcUserRepositoryAdapterTest {
 
         @Mock
@@ -44,8 +38,22 @@ class R2dbcUserRepositoryAdapterTest {
         @Mock
         private UserEntityMapper userEntityMapper;
 
-        @InjectMocks
+        @Mock
+        private R2dbcOutboxEventStoreAdapter outboxEventStore;
+
+        @Mock
+        private KafkaDataMapper kafkaDataMapper;
+
+        // A real mapper: the stored JSON is what the relay sends to Kafka.
+        private final ObjectMapper objectMapper = JsonMapper.builder().build();
+
         private R2dbcUserRepositoryAdapter adapter;
+
+        @BeforeEach
+        void setUp() {
+                adapter = new R2dbcUserRepositoryAdapter(userR2dbcRepository, userEntityMapper,
+                                outboxEventStore, kafkaDataMapper, objectMapper);
+        }
 
         @Test
         void save_ShouldReturnBusinessUser_WhenSuccess() {
@@ -57,6 +65,9 @@ class R2dbcUserRepositoryAdapterTest {
                 when(userEntityMapper.toUserEntity(user)).thenReturn(entity);
                 when(userR2dbcRepository.save(entity)).thenReturn(Mono.just(entity));
                 when(userEntityMapper.toBusinessUser(entity)).thenReturn(user);
+                when(kafkaDataMapper.toUserCreatedEventDTO(user))
+                                .thenReturn(new UserCreatedEventDTO(id, "user", 1, "url"));
+                when(outboxEventStore.append(any(UUID.class), anyString(), anyString())).thenReturn(Mono.just(1L));
 
                 // When
                 Mono<BusinessUser> result = adapter.save(user, "kc-123");
@@ -67,6 +78,31 @@ class R2dbcUserRepositoryAdapterTest {
                                 .verifyComplete();
 
                 verify(entity).setKeycloakId("kc-123");
+                ArgumentCaptor<String> payload = ArgumentCaptor.captor();
+                verify(outboxEventStore).append(eq(id), eq(OutboxEventType.USER_CREATED.name()), payload.capture());
+                assertThat(objectMapper.readValue(payload.getValue(), UserCreatedEventDTO.class))
+                                .isEqualTo(new UserCreatedEventDTO(id, "user", 1, "url"));
+        }
+
+        @Test
+        void save_ShouldFail_WhenTheEventCannotBeWritten() {
+                // Given
+                BusinessUser user = new BusinessUser(UUID.randomUUID(), "user", 1, "F", "L", "url",
+                                LocalDateTime.now());
+                UserEntity entity = new UserEntity();
+
+                when(userEntityMapper.toUserEntity(user)).thenReturn(entity);
+                when(userR2dbcRepository.save(entity)).thenReturn(Mono.just(entity));
+                when(userEntityMapper.toBusinessUser(entity)).thenReturn(user);
+                when(kafkaDataMapper.toUserCreatedEventDTO(user))
+                                .thenReturn(new UserCreatedEventDTO(user.id(), "user", 1, "url"));
+                when(outboxEventStore.append(any(UUID.class), anyString(), anyString()))
+                                .thenReturn(Mono.error(new IllegalStateException("outbox down")));
+
+                // When / Then: the error reaches the caller, so the transaction rolls back
+                StepVerifier.create(adapter.save(user, "kc-123"))
+                                .expectError(IllegalStateException.class)
+                                .verify();
         }
 
         @Test
@@ -89,6 +125,8 @@ class R2dbcUserRepositoryAdapterTest {
                                                 ((BusinessException) throwable)
                                                                 .getErrorCode() == BusinessErrorCode.USER_ALREADY_EXISTS)
                                 .verify();
+
+                verify(outboxEventStore, never()).append(any(), anyString(), anyString());
         }
 
 

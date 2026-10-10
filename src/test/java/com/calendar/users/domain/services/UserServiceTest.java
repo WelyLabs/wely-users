@@ -2,7 +2,6 @@ package com.calendar.users.domain.services;
 
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.ports.IdentityProvider;
-import com.calendar.users.domain.ports.UserEventPublisher;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
@@ -28,8 +27,6 @@ class UserServiceTest {
         private UserRepository userRepository;
         @Mock
         private IdentityProvider identityProvider;
-        @Mock
-        private UserEventPublisher userEventPublisher;
 
         @InjectMocks
         private UserService userService;
@@ -103,7 +100,6 @@ class UserServiceTest {
                 BusinessUser savedUser = new BusinessUser(newId, "username", 1111, "First", "Last", null,
                                 LocalDateTime.now());
                 when(userRepository.save(any(BusinessUser.class), eq(kcId))).thenReturn(Mono.just(savedUser));
-                when(userEventPublisher.publishUserCreatedEvent(savedUser)).thenReturn(Mono.just(newId));
 
                 // When
                 Mono<UUID> result = userService.resolveInternalUserId(kcId);
@@ -114,7 +110,6 @@ class UserServiceTest {
                                 .verifyComplete();
 
                 verify(userRepository).save(any(BusinessUser.class), eq(kcId));
-                verify(userEventPublisher).publishUserCreatedEvent(any(BusinessUser.class));
         }
 
         @Test
@@ -135,7 +130,6 @@ class UserServiceTest {
                 BusinessUser savedUser = new BusinessUser(newId, "username", 1111, "First", "Last", null,
                                 LocalDateTime.now());
                 when(userRepository.save(any(BusinessUser.class), eq(kcId))).thenReturn(Mono.just(savedUser));
-                when(userEventPublisher.publishUserCreatedEvent(savedUser)).thenReturn(Mono.just(newId));
 
                 // When
                 Mono<UUID> result = userService.resolveInternalUserId(kcId);
@@ -167,6 +161,19 @@ class UserServiceTest {
 
                 // Bounded: ten attempts, then it gives up. No save is attempted.
                 verify(userRepository, times(10)).existsByUserNameAndHashtag(eq("username"), anyInt());
+                verify(userRepository, never()).save(any(), anyString());
+        }
+
+        @Test
+        void resolveInternalUserId_ShouldNotSave_WhenTheIdentityProviderFails() {
+                when(userRepository.findIdByKeycloakId("kc-1")).thenReturn(Mono.empty());
+                when(identityProvider.getUser("kc-1"))
+                                .thenReturn(Mono.error(new IllegalStateException("keycloak down")));
+
+                StepVerifier.create(userService.resolveInternalUserId("kc-1"))
+                                .expectError(IllegalStateException.class)
+                                .verify();
+
                 verify(userRepository, never()).save(any(), anyString());
         }
 }

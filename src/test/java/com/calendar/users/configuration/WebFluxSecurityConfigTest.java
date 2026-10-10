@@ -2,7 +2,6 @@ package com.calendar.users.configuration;
 
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.ports.IdentityProvider;
-import com.calendar.users.domain.ports.UserEventPublisher;
 import com.calendar.users.domain.ports.UserRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -55,7 +54,6 @@ class WebFluxSecurityConfigTest {
     // request reaches an absent PostgreSQL and Keycloak, and the test times out.
     @MockitoBean private UserRepository userRepository;
     @MockitoBean private IdentityProvider identityProvider;
-    @MockitoBean private UserEventPublisher userEventPublisher;
 
     private WebTestClient client() {
         return WebTestClient.bindToApplicationContext(context)

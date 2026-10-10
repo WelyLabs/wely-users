@@ -1,7 +1,6 @@
 package com.calendar.users;
 
 import com.calendar.users.domain.ports.IdentityProvider;
-import com.calendar.users.domain.ports.UserEventPublisher;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.domain.services.UserService;
 import org.junit.jupiter.api.Test;
@@ -35,7 +34,7 @@ class UsersApplicationTest {
         assertThat(context.getBean(UserService.class)).isNotNull();
         assertThat(context.getBean(UserRepository.class)).isNotNull();
         assertThat(context.getBean(IdentityProvider.class)).isNotNull();
-        assertThat(context.getBean(UserEventPublisher.class)).isNotNull();
+        assertThat(context.getBean(UserRepository.class)).isNotNull();
     }
 
     @Test
