@@ -176,4 +176,82 @@ class UserServiceTest {
 
                 verify(userRepository, never()).save(any(), anyString());
         }
+
+        @Test
+        void provisionUser_ShouldCreateTheUser_FromTheGivenIdentity() {
+                String kcId = "kc-new";
+                UUID newId = UUID.randomUUID();
+                when(userRepository.findIdByKeycloakId(kcId)).thenReturn(Mono.empty());
+                when(userRepository.existsByUserNameAndHashtag(eq("léa"), anyInt())).thenReturn(Mono.just(false));
+                when(userRepository.save(any(BusinessUser.class), eq(kcId))).thenAnswer(invocation -> {
+                        BusinessUser toSave = invocation.getArgument(0);
+                        return Mono.just(new BusinessUser(newId, toSave.userName(), toSave.hashtag(),
+                                        toSave.firstName(), toSave.lastName(), null, toSave.joinedDate()));
+                });
+
+                StepVerifier.create(userService.provisionUser(kcId, new IdentityUser("léa", "Léa", "Martin")))
+                                .expectNext(newId)
+                                .verifyComplete();
+
+                // The identity comes from the caller: Keycloak is not queried.
+                verify(identityProvider, never()).getUser(anyString());
+                verify(userRepository).save(argThat(user -> user.userName().equals("léa")
+                                && user.firstName().equals("Léa") && user.lastName().equals("Martin")), eq(kcId));
+        }
+
+        @Test
+        void provisionUser_ShouldReturnTheExistingId_WhenTheKeycloakIdIsKnown() {
+                UUID existingId = UUID.randomUUID();
+                when(userRepository.findIdByKeycloakId("kc-1")).thenReturn(Mono.just(existingId));
+
+                StepVerifier.create(userService.provisionUser("kc-1", new IdentityUser("léa", "Léa", "Martin")))
+                                .expectNext(existingId)
+                                .verifyComplete();
+
+                verify(userRepository, never()).save(any(), anyString());
+        }
+
+        @Test
+        void provisionUser_ShouldReturnTheWinnersId_WhenAConcurrentCallCreatedItFirst() {
+                UUID winnerId = UUID.randomUUID();
+                when(userRepository.findIdByKeycloakId("kc-1"))
+                                .thenReturn(Mono.empty())
+                                .thenReturn(Mono.just(winnerId));
+                when(userRepository.existsByUserNameAndHashtag(eq("léa"), anyInt())).thenReturn(Mono.just(false));
+                when(userRepository.save(any(BusinessUser.class), eq("kc-1")))
+                                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_ALREADY_EXISTS)));
+
+                StepVerifier.create(userService.provisionUser("kc-1", new IdentityUser("léa", "Léa", "Martin")))
+                                .expectNext(winnerId)
+                                .verifyComplete();
+        }
+
+        @Test
+        void provisionUser_ShouldFail_WhenTheConflictIsNotOnTheKeycloakId() {
+                // USER_ALREADY_EXISTS without a row for this Keycloak id: the pseudo and hashtag were taken.
+                when(userRepository.findIdByKeycloakId("kc-1")).thenReturn(Mono.empty());
+                when(userRepository.existsByUserNameAndHashtag(eq("léa"), anyInt())).thenReturn(Mono.just(false));
+                when(userRepository.save(any(BusinessUser.class), eq("kc-1")))
+                                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_ALREADY_EXISTS)));
+
+                StepVerifier.create(userService.provisionUser("kc-1", new IdentityUser("léa", "Léa", "Martin")))
+                                .expectErrorMatches(e -> e instanceof BusinessException
+                                                && ((BusinessException) e).getErrorCode()
+                                                                == BusinessErrorCode.USER_ALREADY_EXISTS)
+                                .verify();
+        }
+
+        @Test
+        void provisionUser_ShouldPropagateAnyOtherFailure() {
+                when(userRepository.findIdByKeycloakId("kc-1")).thenReturn(Mono.empty());
+                when(userRepository.existsByUserNameAndHashtag(eq("léa"), anyInt())).thenReturn(Mono.just(false));
+                when(userRepository.save(any(BusinessUser.class), eq("kc-1")))
+                                .thenReturn(Mono.error(new IllegalStateException("database down")));
+
+                StepVerifier.create(userService.provisionUser("kc-1", new IdentityUser("léa", "Léa", "Martin")))
+                                .expectError(IllegalStateException.class)
+                                .verify();
+
+                verify(userRepository, times(1)).findIdByKeycloakId("kc-1");
+        }
 }

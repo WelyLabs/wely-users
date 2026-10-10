@@ -139,9 +139,10 @@ Toutes les routes sont préfixées par `/user-service` et exposées via la gatew
 | Méthode | Route | Auth | Description |
 |---|---|---|---|
 | `GET` | `/profile` | JWT | Profil de l'utilisateur courant (identité lue dans le claim `businessId`) |
+| `POST` | `/profile/provision` | `X-Internal-Secret` | **Interne.** Crée l'utilisateur à l'inscription, depuis l'étape d'inscription de Keycloak. Idempotent sur l'UUID Keycloak |
 | `GET` | `/profile/resolve/{keycloakId}` | `X-Internal-Secret` | **Interne.** Résout un UUID Keycloak en `businessId`, en créant l'utilisateur si besoin |
 
-`/profile/resolve/**` est le seul endpoint exempté de l'authentification JWT : il est appelé par Keycloak *pendant* l'émission du token, donc avant qu'un token existe. Il est protégé par un secret partagé vérifié dans un `WebFilter` dédié.
+`/profile/provision` et `/profile/resolve/**` sont les seuls endpoints exemptés de l'authentification JWT : Keycloak les appelle pendant l'inscription et pendant l'émission du token, donc avant qu'un token existe. Il est protégé par un secret partagé vérifié dans un `WebFilter` dédié.
 
 ### OpenAPI
 

@@ -1,6 +1,9 @@
 package com.calendar.users.application.rest;
 
+import com.calendar.users.application.dtos.ProvisionUserRequest;
+import com.calendar.users.application.mappers.ProvisionUserRequestMapperImpl;
 import com.calendar.users.domain.models.BusinessUser;
+import com.calendar.users.domain.models.IdentityUser;
 import com.calendar.users.domain.services.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,7 +37,7 @@ class ProfileControllerTest {
     void setUp() {
         mockJwt = mock(Jwt.class);
 
-        webTestClient = WebTestClient.bindToController(new ProfileController(userService))
+        webTestClient = WebTestClient.bindToController(new ProfileController(userService, new ProvisionUserRequestMapperImpl()))
                 .argumentResolvers(configurer -> configurer.addCustomResolver(new HandlerMethodArgumentResolver() {
                     @Override
                     public boolean supportsParameter(MethodParameter parameter) {
@@ -84,4 +87,28 @@ class ProfileControllerTest {
                 .jsonPath("$.userName").isEqualTo("user");
     }
 
+
+    @Test
+    void provisionUser_ShouldReturnTheBusinessId() {
+        UUID businessId = UUID.randomUUID();
+        when(userService.provisionUser("kc-1", new IdentityUser("léa", "Léa", "Martin")))
+                .thenReturn(Mono.just(businessId));
+
+        webTestClient.post()
+                .uri("/profile/provision")
+                .bodyValue(new ProvisionUserRequest("kc-1", "léa", "Léa", "Martin"))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(String.class)
+                .isEqualTo(businessId.toString());
+    }
+
+    @Test
+    void provisionUser_ShouldRejectARequestWithoutUsername() {
+        webTestClient.post()
+                .uri("/profile/provision")
+                .bodyValue(new ProvisionUserRequest("kc-1", " ", "Léa", "Martin"))
+                .exchange()
+                .expectStatus().isBadRequest();
+    }
 }

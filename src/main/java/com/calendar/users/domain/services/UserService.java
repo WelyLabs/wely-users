@@ -1,6 +1,7 @@
 package com.calendar.users.domain.services;
 
 import com.calendar.users.domain.models.BusinessUser;
+import com.calendar.users.domain.models.IdentityUser;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
@@ -37,23 +38,40 @@ public class UserService {
      */
     public Mono<UUID> resolveInternalUserId(String keycloakId) {
         return userRepository.findIdByKeycloakId(keycloakId)
-                .switchIfEmpty(Mono.defer(() -> provisionUser(keycloakId)));
+                .switchIfEmpty(Mono.defer(() -> identityProvider.getUser(keycloakId)
+                        .flatMap(identityUser -> createUser(keycloakId, identityUser))));
     }
 
-    /** Creates the user from its Keycloak identity, with a free hashtag. */
-    private Mono<UUID> provisionUser(String keycloakId) {
-        return identityProvider.getUser(keycloakId)
-                .flatMap(identityUser -> generateUniqueHashtag(identityUser.username())
-                        .map(hashtag -> new BusinessUser(
-                                null,
-                                identityUser.username(),
-                                hashtag,
-                                identityUser.firstName(),
-                                identityUser.lastName(),
-                                null,
-                                LocalDateTime.now()))
-                        .flatMap(newUser -> userRepository.save(newUser, keycloakId))
-                        .map(BusinessUser::id));
+    /**
+     * Creates the user at registration, from the identity Keycloak sends.
+     * Idempotent: a Keycloak id that already has a user returns it, so a retried call is harmless.
+     */
+    public Mono<UUID> provisionUser(String keycloakId, IdentityUser identityUser) {
+        return userRepository.findIdByKeycloakId(keycloakId)
+                .switchIfEmpty(Mono.defer(() -> createUser(keycloakId, identityUser)))
+                // Two concurrent calls for one id: the loser hits the keycloak_id constraint.
+                .onErrorResume(UserService::isAlreadyExists,
+                        e -> userRepository.findIdByKeycloakId(keycloakId).switchIfEmpty(Mono.error(e)));
+    }
+
+    /** Creates the user with a free hashtag. */
+    private Mono<UUID> createUser(String keycloakId, IdentityUser identityUser) {
+        return generateUniqueHashtag(identityUser.username())
+                .map(hashtag -> new BusinessUser(
+                        null,
+                        identityUser.username(),
+                        hashtag,
+                        identityUser.firstName(),
+                        identityUser.lastName(),
+                        null,
+                        LocalDateTime.now()))
+                .flatMap(newUser -> userRepository.save(newUser, keycloakId))
+                .map(BusinessUser::id);
+    }
+
+    private static boolean isAlreadyExists(Throwable error) {
+        return error instanceof BusinessException businessException
+                && businessException.getErrorCode() == BusinessErrorCode.USER_ALREADY_EXISTS;
     }
 
     /**
