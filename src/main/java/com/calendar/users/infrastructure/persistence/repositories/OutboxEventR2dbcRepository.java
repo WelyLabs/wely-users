@@ -17,7 +17,7 @@ public interface OutboxEventR2dbcRepository extends ReactiveCrudRepository<Outbo
 
     /**
      * Locks the next unpublished events. SKIP LOCKED lets two relays take different rows
-     * instead of both sending the same ones.
+     * instead of both sending the same ones. A derived query can lock, but not skip locked rows.
      */
     @Query("""
             SELECT *
@@ -30,15 +30,15 @@ public interface OutboxEventR2dbcRepository extends ReactiveCrudRepository<Outbo
             """)
     Flux<OutboxEventEntity> claimPending(int batchSize, int maxAttempts);
 
+    // Derived queries cannot update: hence @Query here and below.
     @Modifying
     @Query("UPDATE outbox_event SET published_at = now() WHERE id IN (:ids)")
     Mono<Long> markPublished(Collection<Long> ids);
 
+    // The database increments, so two concurrent failures cannot overwrite each other's count.
     @Modifying
     @Query("UPDATE outbox_event SET attempts = attempts + 1, last_error = :error WHERE id = :id")
     Mono<Long> recordFailure(long id, String error);
 
-    @Modifying
-    @Query("DELETE FROM outbox_event WHERE published_at IS NOT NULL AND published_at < :cutoff")
-    Mono<Long> deletePublishedBefore(OffsetDateTime cutoff);
+    Mono<Long> deleteByPublishedAtBefore(OffsetDateTime cutoff);
 }

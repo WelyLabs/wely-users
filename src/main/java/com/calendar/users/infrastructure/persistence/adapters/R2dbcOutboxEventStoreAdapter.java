@@ -51,7 +51,7 @@ public class R2dbcOutboxEventStoreAdapter {
     }
 
     public Mono<Long> purgePublishedBefore(Instant cutoff) {
-        return outboxEventRepository.deletePublishedBefore(OffsetDateTime.ofInstant(cutoff, ZoneOffset.UTC));
+        return outboxEventRepository.deleteByPublishedAtBefore(OffsetDateTime.ofInstant(cutoff, ZoneOffset.UTC));
     }
 
     private String truncate(String error) {
