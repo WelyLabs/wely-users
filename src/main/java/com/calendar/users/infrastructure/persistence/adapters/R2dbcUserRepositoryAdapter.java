@@ -4,6 +4,8 @@ import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
+import com.calendar.users.infrastructure.messaging.mappers.KafkaDataMapper;
+import com.calendar.users.infrastructure.messaging.models.OutboxEventType;
 import com.calendar.users.infrastructure.persistence.mappers.UserEntityMapper;
 import com.calendar.users.infrastructure.persistence.models.entities.UserEntity;
 import com.calendar.users.infrastructure.persistence.repositories.UserR2dbcRepository;
@@ -11,6 +13,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import reactor.core.publisher.Mono;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.UUID;
 
@@ -20,14 +23,20 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
 
     private final UserR2dbcRepository userR2dbcRepository;
     private final UserEntityMapper userEntityMapper;
-    private final UserCreatedOutboxWriter userCreatedOutboxWriter;
+    private final R2dbcOutboxEventStoreAdapter outboxEventStore;
+    private final KafkaDataMapper kafkaDataMapper;
+    private final ObjectMapper objectMapper;
 
     public R2dbcUserRepositoryAdapter(UserR2dbcRepository userR2dbcRepository,
                                       UserEntityMapper userEntityMapper,
-                                      UserCreatedOutboxWriter userCreatedOutboxWriter) {
+                                      R2dbcOutboxEventStoreAdapter outboxEventStore,
+                                      KafkaDataMapper kafkaDataMapper,
+                                      ObjectMapper objectMapper) {
         this.userR2dbcRepository = userR2dbcRepository;
         this.userEntityMapper = userEntityMapper;
-        this.userCreatedOutboxWriter = userCreatedOutboxWriter;
+        this.outboxEventStore = outboxEventStore;
+        this.kafkaDataMapper = kafkaDataMapper;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -45,7 +54,13 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
                 // A taken (user_name, hashtag) pair is a business error, not a database incident.
                 .onErrorMap(DataIntegrityViolationException.class,
                         e -> new BusinessException(BusinessErrorCode.USER_ALREADY_EXISTS))
-                .flatMap(saved -> userCreatedOutboxWriter.write(saved).thenReturn(saved));
+                .flatMap(saved -> appendUserCreatedEvent(saved).thenReturn(saved));
+    }
+
+    /** Writes USER_CREATED to the outbox; {@code OutboxRelay} sends it to Kafka. */
+    private Mono<Long> appendUserCreatedEvent(BusinessUser user) {
+        return Mono.fromCallable(() -> objectMapper.writeValueAsString(kafkaDataMapper.toUserCreatedEventDTO(user)))
+                .flatMap(payload -> outboxEventStore.append(user.id(), OutboxEventType.USER_CREATED.name(), payload));
     }
 
     @Override

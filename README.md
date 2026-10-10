@@ -50,9 +50,8 @@ Architecture hexagonale. Le domaine déclare trois ports ; l'infrastructure four
                   │                                      │
                   │  persistence/  R2dbcUserRepositoryAdapter (@Transactional)
                   │                → UserR2dbcRepository │
-                  │                → UserCreatedOutboxWriter
-                  │                  → R2dbcOutboxEventStoreAdapter
-                  │                    → OutboxEventR2dbcRepository
+                  │                → R2dbcOutboxEventStoreAdapter
+                  │                  → OutboxEventR2dbcRepository
                   │  identity/     IdentityAuthAdapter   │
                   │                → KeycloakAdminApi    │
                   │  messaging/    OutboxRelay           │
@@ -237,7 +236,7 @@ Consommé par [`wely-social`](https://github.com/WelyLabs/wely-social), qui cré
 
 On ne rend pas les deux systèmes atomiques, on **ramène le deuxième dans le premier** :
 
-1. `R2dbcUserRepositoryAdapter.save`, annotée `@Transactional`, insère l'utilisateur puis, via `UserCreatedOutboxWriter`, une ligne dans `outbox_event` : les deux sont validées ensemble, ou aucune.
+1. `R2dbcUserRepositoryAdapter.save`, annotée `@Transactional`, insère l'utilisateur puis l'événement `USER_CREATED` dans `outbox_event` : les deux sont validées ensemble, ou aucune.
 2. `OutboxRelay`, hors du chemin de requête, lit les lignes non publiées, les envoie, et les marque.
 
 La seule chose à garantir n'est plus que deux systèmes réussissent ensemble, mais qu'**un seul finisse par réussir**.

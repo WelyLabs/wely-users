@@ -14,34 +14,34 @@ import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Checks, in a real Spring context, how the outbox writer and the user adapter are wired. */
+/** Checks, in a real Spring context, how the user adapter and the outbox are wired. */
 @SpringBootTest
 @ActiveProfiles("test")
-class UserCreatedOutboxWriterWiringTest {
-
-    @Autowired
-    private UserCreatedOutboxWriter userCreatedOutboxWriter;
+class R2dbcUserRepositoryAdapterWiringTest {
 
     @Autowired
     private UserRepository userRepository;
 
     @Autowired
+    private R2dbcOutboxEventStoreAdapter outboxEventStore;
+
+    @Autowired
     private ApplicationContext context;
 
     @Test
-    @DisplayName("the writer is advised, so a failed insert surfaces as a database error")
-    void userCreatedOutboxWriter_shouldBeAdvisedByTheAspect() {
-        assertThat(AopUtils.isAopProxy(userCreatedOutboxWriter)).isTrue();
-    }
-
-    @Test
     @DisplayName("the user adapter is proxied and its save is transactional")
-    void userRepository_shouldSaveInATransaction() throws NoSuchMethodException {
+    void save_shouldRunInATransaction() throws NoSuchMethodException {
         assertThat(AopUtils.isAopProxy(userRepository)).isTrue();
         assertThat(R2dbcUserRepositoryAdapter.class
                 .getMethod("save", BusinessUser.class, String.class)
                 .isAnnotationPresent(Transactional.class))
                 .isTrue();
+    }
+
+    @Test
+    @DisplayName("the outbox store is advised, so a failed insert surfaces as a database error")
+    void outboxEventStore_shouldBeAdvisedByTheAspect() {
+        assertThat(AopUtils.isAopProxy(outboxEventStore)).isTrue();
     }
 
     @Test
