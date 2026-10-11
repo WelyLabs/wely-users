@@ -29,8 +29,8 @@ public class WebFluxSecurityConfig {
     private String internalJwkSetUri;
 
     /**
-     * Shared secret guarding the internal resolve endpoint, which Keycloak's
-     * protocol mapper calls while minting a token — before any JWT exists.
+     * Shared secret guarding the two internal endpoints Keycloak calls before any JWT
+     * exists: provision, from the registration form, and resolve, while minting a token.
      * Injected from the environment; the application fails to start if unset.
      */
     @Value("${app.internal-secret}")
@@ -43,7 +43,9 @@ public class WebFluxSecurityConfig {
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .addFilterAt(internalSecretWebFilter(), SecurityWebFiltersOrder.AUTHENTICATION)
                 .authorizeExchange((authorize) -> authorize
+                        // Both guarded by the internal secret below, not by a user token.
                         .pathMatchers(HttpMethod.GET, "/user-service/profile/resolve/**").permitAll()
+                        .pathMatchers(HttpMethod.POST, "/user-service/profile/provision").permitAll()
                         .pathMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         // Kubernetes probes: the kubelet carries no token. Only the two
                         // health groups are opened, not /actuator as a whole.
@@ -78,7 +80,7 @@ public class WebFluxSecurityConfig {
                 return chain.filter(exchange);
             }
 
-            if (path.startsWith("/user-service/profile/resolve/")) {
+            if (path.startsWith("/user-service/profile/resolve/") || path.equals("/user-service/profile/provision")) {
                 String headerSecret = exchange.getRequest().getHeaders().getFirst("X-Internal-Secret");
 
                 if (!secretMatches(headerSecret)) {

@@ -19,6 +19,9 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.reactive.server.SecurityMockServerConfigurers.mockJwt;
 import static org.springframework.security.test.web.reactive.server.SecurityMockServerConfigurers.springSecurity;
@@ -40,6 +43,9 @@ class WebFluxSecurityConfigTest {
     private static final String VALID_SECRET = "test-internal-secret";
     private static final String SECRET_HEADER = "X-Internal-Secret";
     private static final String RESOLVE_PATH = "/user-service/profile/resolve/keycloak-abc";
+    private static final String PROVISION_PATH = "/user-service/profile/provision";
+    private static final String PROVISION_BODY =
+            "{\"keycloakId\":\"keycloak-abc\",\"username\":\"lea\",\"firstName\":\"Léa\",\"lastName\":\"M\"}";
 
     @Autowired
     private ApplicationContext context;
@@ -122,6 +128,33 @@ class WebFluxSecurityConfigTest {
                 .header(SECRET_HEADER, VALID_SECRET)
                 .exchange()
                 .expectStatus().isUnauthorized();
+    }
+
+    @Test
+    @DisplayName("provisioning without the secret answers 401, even with a well-formed body")
+    void internalSecretFilter_shouldGuardProvisioning() {
+        client().post().uri(PROVISION_PATH)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue(PROVISION_BODY)
+                .exchange()
+                .expectStatus().isUnauthorized();
+
+        verify(userRepository, never()).save(any(), anyString());
+    }
+
+    @Test
+    @DisplayName("with the right secret, provisioning is reached without a JWT")
+    void internalSecretFilter_shouldAcceptProvisioningWithTheValidSecret() {
+        UUID businessId = UUID.randomUUID();
+        when(userRepository.findIdByKeycloakId("keycloak-abc")).thenReturn(Mono.just(businessId));
+
+        client().post().uri(PROVISION_PATH)
+                .header(SECRET_HEADER, VALID_SECRET)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue(PROVISION_BODY)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(String.class).isEqualTo(businessId.toString());
     }
 
     // --- the filter chain -------------------------------------------------

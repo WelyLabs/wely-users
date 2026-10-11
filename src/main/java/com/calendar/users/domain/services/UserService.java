@@ -1,7 +1,7 @@
 package com.calendar.users.domain.services;
 
 import com.calendar.users.domain.models.BusinessUser;
-import com.calendar.users.domain.ports.IdentityProvider;
+import com.calendar.users.domain.models.IdentityUser;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
@@ -19,11 +19,9 @@ public class UserService {
     private static final int MAX_HASHTAG_ATTEMPTS = 10;
 
     private final UserRepository userRepository;
-    private final IdentityProvider identityProvider;
 
-    public UserService(UserRepository userRepository, IdentityProvider identityProvider) {
+    public UserService(UserRepository userRepository) {
         this.userRepository = userRepository;
-        this.identityProvider = identityProvider;
     }
 
     public Mono<BusinessUser> readProfile(UUID userId) {
@@ -31,29 +29,42 @@ public class UserService {
                 .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
     }
 
-    /**
-     * Translates a Keycloak id into the internal user id, creating the user on first sight.
-     * The provisioning is deferred so that an existing user costs a single query.
-     */
-    public Mono<UUID> resolveInternalUserId(String keycloakId) {
+    /** Read at every login by Keycloak's mapper. Users are created at registration, never here. */
+    public Mono<UUID> findBusinessIdByKeycloakId(String keycloakId) {
         return userRepository.findIdByKeycloakId(keycloakId)
-                .switchIfEmpty(Mono.defer(() -> provisionUser(keycloakId)));
+                .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
     }
 
-    /** Creates the user from its Keycloak identity, with a free hashtag. */
-    private Mono<UUID> provisionUser(String keycloakId) {
-        return identityProvider.getUser(keycloakId)
-                .flatMap(identityUser -> generateUniqueHashtag(identityUser.username())
-                        .map(hashtag -> new BusinessUser(
-                                null,
-                                identityUser.username(),
-                                hashtag,
-                                identityUser.firstName(),
-                                identityUser.lastName(),
-                                null,
-                                LocalDateTime.now()))
-                        .flatMap(newUser -> userRepository.save(newUser, keycloakId))
-                        .map(BusinessUser::id));
+    /**
+     * Creates the user at registration, from the identity Keycloak sends.
+     * Idempotent: a Keycloak id that already has a user returns it, so a retried call is harmless.
+     */
+    public Mono<UUID> provisionUser(String keycloakId, IdentityUser identityUser) {
+        return userRepository.findIdByKeycloakId(keycloakId)
+                .switchIfEmpty(Mono.defer(() -> createUser(keycloakId, identityUser)))
+                // Two concurrent calls for one id: the loser hits the keycloak_id constraint.
+                .onErrorResume(UserService::isAlreadyExists,
+                        e -> userRepository.findIdByKeycloakId(keycloakId).switchIfEmpty(Mono.error(e)));
+    }
+
+    /** Creates the user with a free hashtag. */
+    private Mono<UUID> createUser(String keycloakId, IdentityUser identityUser) {
+        return generateUniqueHashtag(identityUser.username())
+                .map(hashtag -> new BusinessUser(
+                        null,
+                        identityUser.username(),
+                        hashtag,
+                        identityUser.firstName(),
+                        identityUser.lastName(),
+                        null,
+                        LocalDateTime.now()))
+                .flatMap(newUser -> userRepository.save(newUser, keycloakId))
+                .map(BusinessUser::id);
+    }
+
+    private static boolean isAlreadyExists(Throwable error) {
+        return error instanceof BusinessException businessException
+                && businessException.getErrorCode() == BusinessErrorCode.USER_ALREADY_EXISTS;
     }
 
     /**
