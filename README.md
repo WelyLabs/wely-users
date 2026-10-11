@@ -2,7 +2,7 @@
 
 Service de gestion des profils utilisateurs et **pont entre l'identité Keycloak et l'identité métier** de la plateforme [Wely Calendar](https://github.com/WelyLabs/wely-platform).
 
-C'est le seul service qui écrit dans PostgreSQL, le seul qui appelle l'Admin API Keycloak, et le producteur de l'événement `USER_CREATED` dont dépend le graphe social. Cet événement part par un **outbox transactionnel** : il est écrit en base dans la même transaction que l'utilisateur, puis relayé vers Kafka.
+C'est le seul service qui écrit dans PostgreSQL, le seul qui détient un accès à l'Admin API Keycloak (gardé pour les futures modifications de compte, inutilisé à l'inscription), et le producteur de l'événement `USER_CREATED` dont dépend le graphe social. Cet événement part par un **outbox transactionnel** : il est écrit en base dans la même transaction que l'utilisateur, puis relayé vers Kafka.
 
 ---
 
@@ -14,7 +14,7 @@ C'est le seul service qui écrit dans PostgreSQL, le seul qui appelle l'Admin AP
 | **Préfixe** | `/user-service` (exposé via la gateway sur `/api/v1/user-service/**`) |
 | **Base** | PostgreSQL via R2DBC |
 | **Produit** | `USER_CREATED` sur Kafka |
-| **Dépend de** | Keycloak (Admin API, `client_credentials`) |
+| **Dépend de** | Keycloak, qui l'appelle à l'inscription et à chaque token ; client Admin API (`client_credentials`) configuré pour les futures modifications de compte |
 
 ---
 
@@ -77,28 +77,28 @@ Il se teste donc sans contexte Spring, avec deux implémentations d'interfaces.
 
 ---
 
-## Le cœur du service : `resolveInternalUserId`
+## Le cœur du service : créer à l'inscription, lire à la connexion
 
-C'est l'opération qui justifie l'existence du service. Appelée par le [mapper Keycloak](https://github.com/WelyLabs/wely-identity) pendant l'émission d'un token, elle traduit un UUID Keycloak en identifiant métier — **et crée l'utilisateur s'il n'existe pas encore**.
+Deux opérations, appelées par Keycloak avant qu'un token existe, toutes deux protégées par `X-Internal-Secret` :
+
+- **`provisionUser`** crée l'utilisateur pendant l'inscription, depuis l'étape `BusinessUserRegistration` de [wely-identity](https://github.com/WelyLabs/wely-identity). Keycloak envoie l'identité dans la requête : pas d'appel à son API Admin. Si cette création échoue, Keycloak annule le compte.
+- **`findBusinessIdByKeycloakId`** est appelée par le mapper à chaque émission de token. Elle ne fait que lire : un UUID Keycloak inconnu répond 404, et la connexion est refusée.
 
 ```mermaid
 sequenceDiagram
-    participant M as BusinessIdMapper (Keycloak)
+    participant KC as Keycloak (inscription)
     participant C as ProfileController
     participant S as UserService
     participant DB as PostgreSQL
-    participant KC as Keycloak Admin API
     participant R as OutboxRelay
     participant K as Kafka
 
-    M->>C: GET /profile/resolve/{keycloakId}
-    C->>S: resolveInternalUserId(keycloakId)
+    KC->>C: POST /profile/provision {keycloakId, username, firstName, lastName}
+    C->>S: provisionUser(keycloakId, identité)
     S->>DB: findIdByKeycloakId
-    alt utilisateur connu
+    alt déjà créé (appel rejoué)
         DB-->>S: UUID
-    else première connexion
-        S->>KC: getUser(keycloakId)
-        KC-->>S: username, firstName, lastName
+    else nouvel utilisateur
         S->>S: generateUniqueHashtag(username)
         loop tant que le couple est pris
             S->>DB: existsByUserNameAndHashtag
@@ -109,16 +109,18 @@ sequenceDiagram
             S->>DB: INSERT outbox_event (USER_CREATED)
         end
     end
-    S-->>M: businessId
+    S-->>KC: businessId
 
     R->>DB: SELECT … FOR UPDATE SKIP LOCKED
     R->>K: publie USER_CREATED
     R->>DB: UPDATE published_at
 ```
 
-La publication **ne fait plus partie de la requête**. Keycloak attend l'identifiant métier, pas un aller-retour vers le broker ; et un Kafka indisponible fait grossir une file au lieu de perdre un événement.
+`provisionUser` est **idempotente** sur l'UUID Keycloak : un appel rejoué renvoie l'utilisateur existant, et de deux appels simultanés, celui qui bute sur la contrainte `keycloak_id` renvoie l'identifiant du gagnant.
 
-Le provisioning est **paresseux** : pas de webhook Keycloak, pas de batch de synchronisation. L'utilisateur est matérialisé au moment où son premier token est émis.
+La publication **ne fait pas partie de la requête** : Keycloak attend l'identifiant métier, pas un aller-retour vers le broker, et un Kafka indisponible fait grossir une file au lieu de perdre un événement.
+
+Créer l'utilisateur à l'inscription plutôt qu'à la première émission de token sépare l'écriture de la lecture : jusqu'au 2026-10-10, la création se faisait pendant l'émission du token, dans un délai de 3 s, et une première connexion à froid finissait sur une page blanche.
 
 ### Le hashtag
 
@@ -140,7 +142,7 @@ Toutes les routes sont préfixées par `/user-service` et exposées via la gatew
 |---|---|---|---|
 | `GET` | `/profile` | JWT | Profil de l'utilisateur courant (identité lue dans le claim `businessId`) |
 | `POST` | `/profile/provision` | `X-Internal-Secret` | **Interne.** Crée l'utilisateur à l'inscription, depuis l'étape d'inscription de Keycloak. Idempotent sur l'UUID Keycloak |
-| `GET` | `/profile/resolve/{keycloakId}` | `X-Internal-Secret` | **Interne.** Résout un UUID Keycloak en `businessId`, en créant l'utilisateur si besoin |
+| `GET` | `/profile/resolve/{keycloakId}` | `X-Internal-Secret` | **Interne.** Lit le `businessId` d'un UUID Keycloak ; 404 s'il est inconnu |
 
 `/profile/provision` et `/profile/resolve/**` sont les seuls endpoints exemptés de l'authentification JWT : Keycloak les appelle pendant l'inscription et pendant l'émission du token, donc avant qu'un token existe. Il est protégé par un secret partagé vérifié dans un `WebFilter` dédié.
 

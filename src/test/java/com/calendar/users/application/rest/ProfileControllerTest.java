@@ -54,11 +54,11 @@ class ProfileControllerTest {
     }
 
     @Test
-    void resolveInternalUserId_ShouldReturnInternalId() {
+    void findBusinessIdByKeycloakId_ShouldReturnTheBusinessId() {
         // Given
         String kcId = "kc-123";
         UUID internalId = UUID.randomUUID();
-        when(userService.resolveInternalUserId(kcId)).thenReturn(Mono.just(internalId));
+        when(userService.findBusinessIdByKeycloakId(kcId)).thenReturn(Mono.just(internalId));
 
         // When & Then
         webTestClient.get()

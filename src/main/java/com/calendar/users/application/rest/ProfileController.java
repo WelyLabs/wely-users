@@ -36,9 +36,9 @@ public class ProfileController {
     }
 
     @GetMapping("resolve/{keycloakId}")
-    public Mono<String> resolveInternalUserId(
+    public Mono<String> findBusinessIdByKeycloakId(
             @NotNull @PathVariable String keycloakId) {
-        return userService.resolveInternalUserId(keycloakId).map(String::valueOf);
+        return userService.findBusinessIdByKeycloakId(keycloakId).map(String::valueOf);
     }
 
     @GetMapping

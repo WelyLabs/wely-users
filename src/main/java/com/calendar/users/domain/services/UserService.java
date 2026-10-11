@@ -2,7 +2,6 @@ package com.calendar.users.domain.services;
 
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.models.IdentityUser;
-import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
@@ -20,11 +19,9 @@ public class UserService {
     private static final int MAX_HASHTAG_ATTEMPTS = 10;
 
     private final UserRepository userRepository;
-    private final IdentityProvider identityProvider;
 
-    public UserService(UserRepository userRepository, IdentityProvider identityProvider) {
+    public UserService(UserRepository userRepository) {
         this.userRepository = userRepository;
-        this.identityProvider = identityProvider;
     }
 
     public Mono<BusinessUser> readProfile(UUID userId) {
@@ -32,14 +29,10 @@ public class UserService {
                 .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
     }
 
-    /**
-     * Translates a Keycloak id into the internal user id, creating the user on first sight.
-     * The provisioning is deferred so that an existing user costs a single query.
-     */
-    public Mono<UUID> resolveInternalUserId(String keycloakId) {
+    /** Read at every login by Keycloak's mapper. Users are created at registration, never here. */
+    public Mono<UUID> findBusinessIdByKeycloakId(String keycloakId) {
         return userRepository.findIdByKeycloakId(keycloakId)
-                .switchIfEmpty(Mono.defer(() -> identityProvider.getUser(keycloakId)
-                        .flatMap(identityUser -> createUser(keycloakId, identityUser))));
+                .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
     }
 
     /**
