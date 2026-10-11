@@ -1,7 +1,11 @@
 package com.calendar.users.domain.services;
 
 import com.calendar.users.domain.models.BusinessUser;
+import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.UserRepository;
+import com.calendar.users.domain.models.IdentityToCheck;
+import com.calendar.users.domain.models.OrphanSweep;
+import reactor.core.publisher.Flux;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
 import com.calendar.users.domain.models.IdentityUser;
@@ -24,6 +28,9 @@ class UserServiceTest {
 
         @Mock
         private UserRepository userRepository;
+
+        @Mock
+        private IdentityProvider identityProvider;
 
         @InjectMocks
         private UserService userService;
@@ -194,5 +201,71 @@ class UserServiceTest {
                                 .verify();
 
                 verify(userRepository, times(1)).findIdByKeycloakId("kc-1");
+        }
+
+        private static final LocalDateTime CUTOFF = LocalDateTime.of(2026, 10, 11, 1, 0);
+
+        @Test
+        void removeOrphans_ShouldConfirmAUserKeycloakKnows() {
+                UUID userId = UUID.randomUUID();
+                when(userRepository.findIdentitiesToCheck(CUTOFF, 100))
+                                .thenReturn(Flux.just(new IdentityToCheck(userId, "kc-1")));
+                when(identityProvider.getUser("kc-1")).thenReturn(Mono.just(new IdentityUser("léa", "Léa", "M")));
+                when(userRepository.markIdentityChecked(userId)).thenReturn(Mono.empty());
+
+                StepVerifier.create(userService.removeOrphans(CUTOFF, 100))
+                                .expectNext(new OrphanSweep(1, 0, 0))
+                                .verifyComplete();
+
+                verify(userRepository, never()).deleteOrphan(any());
+        }
+
+        @Test
+        void removeOrphans_ShouldDeleteAUserKeycloakDoesNotKnow() {
+                UUID notFound = UUID.randomUUID();
+                UUID empty = UUID.randomUUID();
+                when(userRepository.findIdentitiesToCheck(CUTOFF, 100)).thenReturn(Flux.just(
+                                new IdentityToCheck(notFound, "kc-404"), new IdentityToCheck(empty, "kc-empty")));
+                when(identityProvider.getUser("kc-404"))
+                                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
+                when(identityProvider.getUser("kc-empty")).thenReturn(Mono.empty());
+                when(userRepository.deleteOrphan(any())).thenReturn(Mono.empty());
+
+                StepVerifier.create(userService.removeOrphans(CUTOFF, 100))
+                                .expectNext(new OrphanSweep(0, 2, 0))
+                                .verifyComplete();
+
+                verify(userRepository).deleteOrphan(notFound);
+                verify(userRepository).deleteOrphan(empty);
+                verify(userRepository, never()).markIdentityChecked(any());
+        }
+
+        @Test
+        void removeOrphans_ShouldNeitherDeleteNorConfirm_WhenKeycloakIsDown_AndKeepGoing() {
+                // An outage is not proof of absence: deleting here would wipe real users.
+                UUID down = UUID.randomUUID();
+                UUID fine = UUID.randomUUID();
+                when(userRepository.findIdentitiesToCheck(CUTOFF, 100)).thenReturn(Flux.just(
+                                new IdentityToCheck(down, "kc-down"), new IdentityToCheck(fine, "kc-fine")));
+                when(identityProvider.getUser("kc-down"))
+                                .thenReturn(Mono.error(new IllegalStateException("keycloak unreachable")));
+                when(identityProvider.getUser("kc-fine")).thenReturn(Mono.just(new IdentityUser("x", "X", "Y")));
+                when(userRepository.markIdentityChecked(fine)).thenReturn(Mono.empty());
+
+                StepVerifier.create(userService.removeOrphans(CUTOFF, 100))
+                                .expectNext(new OrphanSweep(1, 0, 1))
+                                .verifyComplete();
+
+                verify(userRepository, never()).deleteOrphan(any());
+                verify(userRepository, never()).markIdentityChecked(down);
+        }
+
+        @Test
+        void removeOrphans_ShouldReturnAnEmptySweep_WhenNothingIsToCheck() {
+                when(userRepository.findIdentitiesToCheck(CUTOFF, 100)).thenReturn(Flux.empty());
+
+                StepVerifier.create(userService.removeOrphans(CUTOFF, 100))
+                                .expectNext(OrphanSweep.EMPTY)
+                                .verifyComplete();
         }
 }

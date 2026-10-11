@@ -6,6 +6,9 @@ import com.calendar.users.exception.BusinessException;
 import com.calendar.users.infrastructure.messaging.mappers.KafkaDataMapper;
 import com.calendar.users.infrastructure.messaging.models.OutboxEventType;
 import com.calendar.users.infrastructure.messaging.models.UserCreatedEventDTO;
+import com.calendar.users.infrastructure.persistence.models.IdentityToCheckRow;
+import com.calendar.users.domain.models.IdentityToCheck;
+import reactor.core.publisher.Flux;
 import com.calendar.users.infrastructure.persistence.mappers.UserEntityMapper;
 import com.calendar.users.infrastructure.persistence.models.entities.UserEntity;
 import com.calendar.users.infrastructure.persistence.repositories.UserR2dbcRepository;
@@ -181,4 +184,52 @@ class R2dbcUserRepositoryAdapterTest {
         }
 
 
+
+        @Test
+        void findIdentitiesToCheck_ShouldMapTheRows() {
+                UUID id = UUID.randomUUID();
+                LocalDateTime cutoff = LocalDateTime.now();
+                when(userR2dbcRepository.findIdentitiesToCheck(cutoff, 10))
+                                .thenReturn(Flux.just(new IdentityToCheckRow(id, "kc-1")));
+
+                StepVerifier.create(adapter.findIdentitiesToCheck(cutoff, 10))
+                                .expectNext(new IdentityToCheck(id, "kc-1"))
+                                .verifyComplete();
+        }
+
+        @Test
+        void markIdentityChecked_ShouldUpdateTheRow() {
+                UUID id = UUID.randomUUID();
+                when(userR2dbcRepository.markIdentityChecked(id)).thenReturn(Mono.just(1L));
+
+                StepVerifier.create(adapter.markIdentityChecked(id)).verifyComplete();
+
+                verify(userR2dbcRepository).markIdentityChecked(id);
+        }
+
+        @Test
+        void deleteOrphan_ShouldDeleteTheUserThenWriteUserDeleted() {
+                UUID id = UUID.randomUUID();
+                when(userR2dbcRepository.deleteById(id)).thenReturn(Mono.empty());
+                when(outboxEventStore.append(any(UUID.class), anyString(), anyString())).thenReturn(Mono.just(1L));
+
+                StepVerifier.create(adapter.deleteOrphan(id)).verifyComplete();
+
+                ArgumentCaptor<String> payload = ArgumentCaptor.captor();
+                verify(outboxEventStore).append(eq(id), eq(OutboxEventType.USER_DELETED.name()), payload.capture());
+                assertThat(payload.getValue()).isEqualTo("{\"userId\":\"" + id + "\"}");
+        }
+
+        @Test
+        void deleteOrphan_ShouldFail_WhenTheEventCannotBeWritten() {
+                // The error reaches the caller, so the transaction rolls the deletion back.
+                UUID id = UUID.randomUUID();
+                when(userR2dbcRepository.deleteById(id)).thenReturn(Mono.empty());
+                when(outboxEventStore.append(any(UUID.class), anyString(), anyString()))
+                                .thenReturn(Mono.error(new IllegalStateException("outbox down")));
+
+                StepVerifier.create(adapter.deleteOrphan(id))
+                                .expectError(IllegalStateException.class)
+                                .verify();
+        }
 }

@@ -67,6 +67,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         if (!schemaApplied) {
             databaseClient.sql(Files.readString(Path.of("db/migration/V1__create_app_user.sql"))).then().block();
             databaseClient.sql(Files.readString(Path.of("db/migration/V2__create_outbox_event.sql"))).then().block();
+            databaseClient.sql(Files.readString(Path.of("db/migration/V3__add_identity_checked_at.sql"))).then().block();
             schemaApplied = true;
         }
 
@@ -256,5 +257,54 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
 
         assertThat(count("app_user")).isEqualTo(1L);
         assertThat(count("outbox_event")).isEqualTo(1L);
+    }
+
+    private BusinessUser savedAgo(String userName, int hashtag, String keycloakId, long minutesAgo) {
+        return adapter.save(new BusinessUser(null, userName, hashtag, "First", "Last", null,
+                LocalDateTime.now().minusMinutes(minutesAgo)), keycloakId).block();
+    }
+
+    @Test
+    @DisplayName("only unchecked users older than the cutoff are returned, oldest first")
+    void findIdentitiesToCheck_shouldSkipRecentAndCheckedUsers() {
+        BusinessUser older = savedAgo("older", 1111, "kc-older", 60);
+        BusinessUser old = savedAgo("old", 2222, "kc-old", 30);
+        savedAgo("recent", 3333, "kc-recent", 1);
+        BusinessUser checked = savedAgo("checked", 4444, "kc-checked", 90);
+        adapter.markIdentityChecked(checked.id()).block();
+
+        StepVerifier.create(adapter.findIdentitiesToCheck(LocalDateTime.now().minusMinutes(15), 10))
+                .assertNext(identity -> {
+                    assertThat(identity.userId()).isEqualTo(older.id());
+                    assertThat(identity.keycloakId()).isEqualTo("kc-older");
+                })
+                .assertNext(identity -> assertThat(identity.userId()).isEqualTo(old.id()))
+                .verifyComplete();
+    }
+
+    @Test
+    @DisplayName("the limit bounds one pass")
+    void findIdentitiesToCheck_shouldHonourTheLimit() {
+        savedAgo("a", 1111, "kc-a", 60);
+        savedAgo("b", 2222, "kc-b", 50);
+
+        StepVerifier.create(adapter.findIdentitiesToCheck(LocalDateTime.now(), 1))
+                .expectNextCount(1)
+                .verifyComplete();
+    }
+
+    @Test
+    @DisplayName("deleting an orphan removes the user and writes USER_DELETED, together")
+    void deleteOrphan_shouldDeleteTheUserAndWriteTheEvent() {
+        BusinessUser orphan = savedAgo("orphan", 1111, "kc-orphan", 60);
+
+        adapter.deleteOrphan(orphan.id()).block();
+
+        assertThat(count("app_user")).isZero();
+        String payload = databaseClient.sql("SELECT payload FROM outbox_event WHERE type = 'USER_DELETED'")
+                .map(row -> row.get(0, String.class))
+                .one()
+                .block();
+        assertThat(payload).isEqualTo("{\"userId\":\"" + orphan.id() + "\"}");
     }
 }

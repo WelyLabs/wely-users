@@ -1,20 +1,24 @@
 package com.calendar.users.infrastructure.persistence.adapters;
 
 import com.calendar.users.domain.models.BusinessUser;
+import com.calendar.users.domain.models.IdentityToCheck;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
 import com.calendar.users.infrastructure.messaging.mappers.KafkaDataMapper;
 import com.calendar.users.infrastructure.messaging.models.OutboxEventType;
+import com.calendar.users.infrastructure.messaging.models.UserDeletedEventDTO;
 import com.calendar.users.infrastructure.persistence.mappers.UserEntityMapper;
 import com.calendar.users.infrastructure.persistence.models.entities.UserEntity;
 import com.calendar.users.infrastructure.persistence.repositories.UserR2dbcRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 /** Persists users through R2DBC. Unexpected failures are mapped by {@code InfrastructureErrorAspect}. */
@@ -57,10 +61,34 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
                 .flatMap(saved -> appendUserCreatedEvent(saved).thenReturn(saved));
     }
 
+    @Override
+    public Flux<IdentityToCheck> findIdentitiesToCheck(LocalDateTime createdBefore, int limit) {
+        return userR2dbcRepository.findIdentitiesToCheck(createdBefore, limit)
+                .map(row -> new IdentityToCheck(row.id(), row.keycloakId()));
+    }
+
+    @Override
+    public Mono<Void> markIdentityChecked(UUID userId) {
+        return userR2dbcRepository.markIdentityChecked(userId).then();
+    }
+
+    /** Deletes the user and writes USER_DELETED in one transaction, like save does for USER_CREATED. */
+    @Override
+    @Transactional
+    public Mono<Void> deleteOrphan(UUID userId) {
+        return userR2dbcRepository.deleteById(userId)
+                .then(appendEvent(userId, OutboxEventType.USER_DELETED, new UserDeletedEventDTO(userId)))
+                .then();
+    }
+
     /** Writes USER_CREATED to the outbox; {@code OutboxRelay} sends it to Kafka. */
     private Mono<Long> appendUserCreatedEvent(BusinessUser user) {
-        return Mono.fromCallable(() -> objectMapper.writeValueAsString(kafkaDataMapper.toUserCreatedEventDTO(user)))
-                .flatMap(payload -> outboxEventStore.append(user.id(), OutboxEventType.USER_CREATED.name(), payload));
+        return appendEvent(user.id(), OutboxEventType.USER_CREATED, kafkaDataMapper.toUserCreatedEventDTO(user));
+    }
+
+    private Mono<Long> appendEvent(UUID userId, OutboxEventType type, Object event) {
+        return Mono.fromCallable(() -> objectMapper.writeValueAsString(event))
+                .flatMap(payload -> outboxEventStore.append(userId, type.name(), payload));
     }
 
     @Override

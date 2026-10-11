@@ -122,6 +122,16 @@ La publication **ne fait pas partie de la requête** : Keycloak attend l'identif
 
 Créer l'utilisateur à l'inscription plutôt qu'à la première émission de token sépare l'écriture de la lecture : jusqu'au 2026-10-10, la création se faisait pendant l'émission du token, dans un délai de 3 s, et une première connexion à froid finissait sur une page blanche.
 
+### Les utilisateurs orphelins
+
+Si `wely-users` crée l'utilisateur mais que Keycloak annule quand même le compte (réponse arrivée après le délai de 10 s, ou échec de Keycloak juste après), il reste un utilisateur sans compte. **`OrphanUserReaper`**, une boucle de fond comme le relais de l'outbox, s'en charge toutes les heures :
+
+- il lit les utilisateurs de plus de 15 min dont le compte n'a jamais été confirmé (`identity_checked_at` nul) ;
+- il demande chacun à l'API Admin de Keycloak : un compte trouvé est marqué confirmé, et n'est plus jamais revérifié ; un compte inconnu (404) fait **supprimer** l'utilisateur, avec un `USER_DELETED` écrit dans l'outbox dans la même transaction ;
+- une panne de Keycloak n'est pas une preuve d'absence : l'utilisateur reste à vérifier au passage suivant.
+
+`wely-social` consomme `USER_DELETED` et supprime le nœud. Les amis fictifs de la démo n'ont pas de compte Keycloak : le jeu de données les marque confirmés.
+
 ### Le hashtag
 
 Un utilisateur est identifié publiquement par `Pseudo#1234`, à la manière de Discord. Le hashtag est tiré au hasard entre 1000 et 9999 et retiré tant que le couple `(user_name, hashtag)` est déjà pris. L'unicité est **garantie par la base**, pas par le code :
@@ -206,7 +216,7 @@ CREATE TABLE outbox_event (
 CREATE INDEX idx_outbox_event_pending ON outbox_event (id) WHERE published_at IS NULL;
 ```
 
-Les deux tables sont décrites dans `db/migration/`, **volontairement hors du classpath** pour qu'aucune initialisation Spring ne les exécute à l'insu de qui que ce soit. `V2__create_outbox_event.sql` doit être appliqué **avant** de déployer la version qui écrit dedans : l'insertion fait partie du provisioning, donc une table absente casse l'inscription au lieu de la dégrader.
+Les deux tables sont décrites dans `db/migration/`, **volontairement hors du classpath** pour qu'aucune initialisation Spring ne les exécute à l'insu de qui que ce soit. `V2__create_outbox_event.sql` doit être appliqué **avant** de déployer la version qui écrit dedans : l'insertion fait partie du provisioning, donc une table absente casse l'inscription au lieu de la dégrader. `V3__add_identity_checked_at.sql` doit l'être avant la version qui nettoie les orphelins, et avant le jeu de données de démo qui remplit la colonne.
 
 ---
 
