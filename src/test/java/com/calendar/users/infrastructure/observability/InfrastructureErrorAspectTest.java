@@ -16,6 +16,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -147,4 +150,40 @@ class InfrastructureErrorAspectTest {
         assertThatCode(aspect::persistenceAdapterMethod).doesNotThrowAnyException();
         assertThatCode(aspect::identityAdapterMethod).doesNotThrowAnyException();
     }
+    @Test
+    @DisplayName("a 404 from the dependency is a business outcome, not an incident")
+    void translate_shouldMapNotFoundToUserNotFound() throws Throwable {
+        // Keycloak answering "no such user" was surfacing as USR-TEC-001 at 502 — the platform
+        // declaring itself broken because the caller asked for someone who does not exist.
+        WebClientResponseException notFound = WebClientResponseException.create(
+                HttpStatus.NOT_FOUND.value(), "Not Found", HttpHeaders.EMPTY, new byte[0], null);
+        when(joinPoint.proceed()).thenReturn(Mono.error(notFound));
+
+        Object result = aspect.translateIdentityFailures(joinPoint);
+
+        StepVerifier.create((Mono<?>) result)
+                .expectErrorSatisfies(error -> assertThat(error)
+                        .isInstanceOf(BusinessException.class)
+                        .extracting(e -> ((BusinessException) e).getErrorCode())
+                        .isEqualTo(BusinessErrorCode.USER_NOT_FOUND))
+                .verify();
+    }
+
+    @Test
+    @DisplayName("any other dependency failure stays a technical incident")
+    void translate_shouldKeepOtherFailuresTechnical() throws Throwable {
+        WebClientResponseException serverError = WebClientResponseException.create(
+                HttpStatus.INTERNAL_SERVER_ERROR.value(), "Boom", HttpHeaders.EMPTY, new byte[0], null);
+        when(joinPoint.proceed()).thenReturn(Mono.error(serverError));
+
+        Object result = aspect.translateIdentityFailures(joinPoint);
+
+        StepVerifier.create((Mono<?>) result)
+                .expectErrorSatisfies(error -> assertThat(error)
+                        .isInstanceOf(TechnicalException.class)
+                        .extracting(e -> ((TechnicalException) e).getErrorCode())
+                        .isEqualTo(TechnicalErrorCode.KEYCLOAK_ERROR))
+                .verify();
+    }
+
 }
