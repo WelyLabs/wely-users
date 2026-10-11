@@ -1,7 +1,10 @@
 package com.calendar.users.domain.services;
 
 import com.calendar.users.domain.models.BusinessUser;
+import com.calendar.users.domain.models.IdentityToCheck;
 import com.calendar.users.domain.models.IdentityUser;
+import com.calendar.users.domain.models.OrphanSweep;
+import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
@@ -19,9 +22,11 @@ public class UserService {
     private static final int MAX_HASHTAG_ATTEMPTS = 10;
 
     private final UserRepository userRepository;
+    private final IdentityProvider identityProvider;
 
-    public UserService(UserRepository userRepository) {
+    public UserService(UserRepository userRepository, IdentityProvider identityProvider) {
         this.userRepository = userRepository;
+        this.identityProvider = identityProvider;
     }
 
     public Mono<BusinessUser> readProfile(UUID userId) {
@@ -60,6 +65,34 @@ public class UserService {
                         LocalDateTime.now()))
                 .flatMap(newUser -> userRepository.save(newUser, keycloakId))
                 .map(BusinessUser::id);
+    }
+
+    /**
+     * Checks users whose Keycloak account was never confirmed, oldest first. A user Keycloak does
+     * not know is left by a registration Keycloak cancelled after wely-users had created it: it is
+     * deleted. Each user is checked once; one failure does not stop the others.
+     */
+    public Mono<OrphanSweep> removeOrphans(LocalDateTime createdBefore, int limit) {
+        return userRepository.findIdentitiesToCheck(createdBefore, limit)
+                .concatMap(this::checkIdentity)
+                .reduce(OrphanSweep.EMPTY, OrphanSweep::plus);
+    }
+
+    private Mono<OrphanSweep> checkIdentity(IdentityToCheck identity) {
+        return identityProvider.getUser(identity.keycloakId())
+                .map(found -> true)
+                .defaultIfEmpty(false)
+                .onErrorResume(UserService::isUserNotFound, e -> Mono.just(false))
+                .flatMap(exists -> exists
+                        ? userRepository.markIdentityChecked(identity.userId()).thenReturn(new OrphanSweep(1, 0, 0))
+                        : userRepository.deleteOrphan(identity.userId()).thenReturn(new OrphanSweep(0, 1, 0)))
+                // Keycloak or the database is down: left unchecked, retried on the next pass.
+                .onErrorResume(e -> Mono.just(new OrphanSweep(0, 0, 1)));
+    }
+
+    private static boolean isUserNotFound(Throwable error) {
+        return error instanceof BusinessException businessException
+                && businessException.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND;
     }
 
     private static boolean isAlreadyExists(Throwable error) {

@@ -2,6 +2,7 @@ package com.calendar.users.infrastructure.persistence.adapters;
 
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.ports.UserRepository;
+import com.calendar.users.infrastructure.identity.reaper.OrphanUserReaper;
 import com.calendar.users.infrastructure.messaging.relay.OutboxRelay;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -49,5 +50,12 @@ class R2dbcUserRepositoryAdapterWiringTest {
     void outboxRelay_shouldBeAbsentWhenDisabled() {
         // app.outbox.relay.enabled=false in application-test.properties.
         assertThat(context.getBeanNamesForType(OutboxRelay.class)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("the orphan reaper does not start when it is switched off")
+    void orphanUserReaper_shouldBeAbsentWhenDisabled() {
+        // app.orphan-reaper.enabled=false in application-test.properties.
+        assertThat(context.getBeanNamesForType(OrphanUserReaper.class)).isEmpty();
     }
 }
