@@ -4,7 +4,7 @@ import com.calendar.users.domain.models.IdentityUser;
 import reactor.core.publisher.Mono;
 
 /**
- * Reads a user from whatever system owns authentication.
+ * Reads and updates a user in whatever system owns authentication.
  *
  * <p>Nothing here names Keycloak: the domain declares what it needs, and
  * {@code infrastructure.identity} adapts. An empty result means the provider has no such
@@ -13,4 +13,11 @@ import reactor.core.publisher.Mono;
 public interface IdentityProvider {
 
     Mono<IdentityUser> getUser(String subjectId);
+
+    /**
+     * Changes the subject's username and name, leaving everything else as it is. Fails with
+     * USERNAME_TAKEN if another subject has the username, PROFILE_INVALID if the provider refuses
+     * the values.
+     */
+    Mono<Void> updateProfile(String subjectId, IdentityUser profile);
 }

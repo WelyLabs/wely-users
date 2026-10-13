@@ -307,4 +307,43 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
                 .block();
         assertThat(payload).isEqualTo("{\"userId\":\"" + orphan.id() + "\"}");
     }
+
+    // --- updateProfile ---------------------------------------------------
+
+    private String outboxTypes() {
+        return databaseClient.sql("SELECT string_agg(type, ',' ORDER BY id) FROM outbox_event")
+                .map(row -> row.get(0, String.class))
+                .one()
+                .block();
+    }
+
+    @Test
+    @DisplayName("a profile update changes the names, keeps the rest, and writes USER_MODIFIED")
+    void updateProfile_shouldUpdateTheRowAndWriteTheEvent() {
+        BusinessUser saved = adapter.save(aUser("camille", 4321), "kc-camille").block();
+
+        BusinessUser updated = adapter.updateProfile(new BusinessUser(saved.id(), "camille_d", 4321, "Cam", "Dupont",
+                null, saved.joinedDate())).block();
+
+        assertThat(updated.userName()).isEqualTo("camille_d");
+        assertThat(updated.firstName()).isEqualTo("Cam");
+        assertThat(updated.hashtag()).isEqualTo(4321);
+        assertThat(outboxTypes()).isEqualTo("USER_CREATED,USER_MODIFIED");
+        StepVerifier.create(adapter.findKeycloakIdByUserId(saved.id())).expectNext("kc-camille").verifyComplete();
+    }
+
+    @Test
+    @DisplayName("taking someone else's (username, hashtag) is USERNAME_TAKEN, and writes no event")
+    void updateProfile_shouldRefuseATakenIdentity() {
+        adapter.save(aUser("lea", 4321), "kc-lea").block();
+        BusinessUser camille = adapter.save(aUser("camille", 4321), "kc-camille").block();
+
+        StepVerifier.create(adapter.updateProfile(new BusinessUser(camille.id(), "lea", 4321, "Cam", "Dupont",
+                        null, camille.joinedDate())))
+                .expectErrorMatches(error -> error instanceof BusinessException business
+                        && business.getErrorCode() == BusinessErrorCode.USERNAME_TAKEN)
+                .verify();
+
+        assertThat(outboxTypes()).isEqualTo("USER_CREATED,USER_CREATED");
+    }
 }

@@ -6,6 +6,7 @@ import com.calendar.users.exception.BusinessException;
 import com.calendar.users.infrastructure.messaging.mappers.KafkaDataMapper;
 import com.calendar.users.infrastructure.messaging.models.OutboxEventType;
 import com.calendar.users.infrastructure.messaging.models.UserCreatedEventDTO;
+import com.calendar.users.infrastructure.messaging.models.UserModifiedEventDTO;
 import com.calendar.users.infrastructure.persistence.models.IdentityToCheckRow;
 import com.calendar.users.domain.models.IdentityToCheck;
 import reactor.core.publisher.Flux;
@@ -231,5 +232,71 @@ class R2dbcUserRepositoryAdapterTest {
                 StepVerifier.create(adapter.deleteOrphan(id))
                                 .expectError(IllegalStateException.class)
                                 .verify();
+        }
+
+        // --- updateProfile ---------------------------------------------------
+
+        private static final UUID ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        private static final BusinessUser RENAMED =
+                        new BusinessUser(ID, "camille_d", 4321, "Cam", "Dupont", "pic.jpg", LocalDateTime.of(2026, 9, 1, 10, 0));
+
+        @Test
+        void updateProfile_ShouldUpdateTheNamesThenWriteUserModifiedWithTheWholeProfile() throws Exception {
+                UserEntity stored = mock(UserEntity.class);
+                UserModifiedEventDTO event = new UserModifiedEventDTO(ID, "camille_d", 4321, "Cam", "Dupont", "pic.jpg");
+                when(userR2dbcRepository.updateProfile(ID, "camille_d", "Cam", "Dupont")).thenReturn(Mono.just(1L));
+                when(userR2dbcRepository.findById(ID)).thenReturn(Mono.just(stored));
+                when(userEntityMapper.toBusinessUser(stored)).thenReturn(RENAMED);
+                when(kafkaDataMapper.toUserModifiedEventDTO(RENAMED)).thenReturn(event);
+                when(outboxEventStore.append(any(UUID.class), anyString(), anyString())).thenReturn(Mono.just(1L));
+
+                StepVerifier.create(adapter.updateProfile(RENAMED)).expectNext(RENAMED).verifyComplete();
+
+                ArgumentCaptor<String> payload = ArgumentCaptor.captor();
+                verify(outboxEventStore).append(eq(ID), eq(OutboxEventType.USER_MODIFIED.name()), payload.capture());
+                assertThat(objectMapper.readValue(payload.getValue(), UserModifiedEventDTO.class)).isEqualTo(event);
+        }
+
+        @Test
+        void updateProfile_ShouldMapAUniqueViolationToUsernameTaken() {
+                when(userR2dbcRepository.updateProfile(ID, "camille_d", "Cam", "Dupont"))
+                                .thenReturn(Mono.error(new DataIntegrityViolationException("unique_user_identity")));
+
+                StepVerifier.create(adapter.updateProfile(RENAMED))
+                                .expectErrorMatches(error -> error instanceof BusinessException business
+                                                && business.getErrorCode() == BusinessErrorCode.USERNAME_TAKEN)
+                                .verify();
+
+                verify(outboxEventStore, never()).append(any(), anyString(), anyString());
+        }
+
+        @Test
+        void updateProfile_ShouldFailAsNotFound_WhenNoRowWasUpdated() {
+                when(userR2dbcRepository.updateProfile(ID, "camille_d", "Cam", "Dupont")).thenReturn(Mono.just(0L));
+
+                StepVerifier.create(adapter.updateProfile(RENAMED))
+                                .expectErrorMatches(error -> error instanceof BusinessException business
+                                                && business.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
+                                .verify();
+        }
+
+        @Test
+        void updateProfile_ShouldFail_WhenTheEventCannotBeWritten() {
+                // The error reaches the caller, so the transaction rolls the update back.
+                UserEntity stored = mock(UserEntity.class);
+                when(userR2dbcRepository.updateProfile(ID, "camille_d", "Cam", "Dupont")).thenReturn(Mono.just(1L));
+                when(userR2dbcRepository.findById(ID)).thenReturn(Mono.just(stored));
+                when(userEntityMapper.toBusinessUser(stored)).thenReturn(RENAMED);
+                when(outboxEventStore.append(any(UUID.class), anyString(), anyString()))
+                                .thenReturn(Mono.error(new IllegalStateException("outbox down")));
+
+                StepVerifier.create(adapter.updateProfile(RENAMED)).expectError(IllegalStateException.class).verify();
+        }
+
+        @Test
+        void findKeycloakIdByUserId_ShouldReadTheColumn() {
+                when(userR2dbcRepository.findKeycloakIdById(ID)).thenReturn(Mono.just("kc-camille"));
+
+                StepVerifier.create(adapter.findKeycloakIdByUserId(ID)).expectNext("kc-camille").verifyComplete();
         }
 }

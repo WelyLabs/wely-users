@@ -1,6 +1,8 @@
 package com.calendar.users.infrastructure.identity.adapters;
 
 import com.calendar.users.domain.models.IdentityUser;
+import com.calendar.users.exception.BusinessErrorCode;
+import com.calendar.users.exception.BusinessException;
 import com.calendar.users.infrastructure.identity.api.KeycloakAdminApi;
 import com.calendar.users.infrastructure.identity.mappers.IdentityUserMapper;
 import com.calendar.users.infrastructure.identity.models.KeycloakUserResponse;
@@ -9,11 +11,19 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.ArgumentCaptor;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import java.util.Map;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -74,5 +84,69 @@ class IdentityAuthAdapterTest {
         when(keycloakAdminApi.getUser("unknown")).thenReturn(Mono.empty());
 
         StepVerifier.create(adapter.getUser("unknown")).verifyComplete();
+    }
+
+    // --- updateProfile -------------------------------------------------------
+
+    private static final IdentityUser RENAMED = new IdentityUser("camille_d", "Cam", "Dupont");
+
+    @SuppressWarnings("unchecked")
+    @Test
+    @DisplayName("an update writes back the whole representation, changing only the three fields")
+    void updateProfile_shouldKeepEveryOtherField() {
+        Map<String, Object> current = Map.of("id", "kc-1", "username", "camille", "firstName", "Camille",
+                "lastName", "Durand", "email", "camille@example.org", "attributes", Map.of("locale", "fr"));
+        when(keycloakAdminApi.getUserRepresentation("kc-1")).thenReturn(Mono.just(current));
+        when(keycloakAdminApi.updateUser(eq("kc-1"), any())).thenReturn(Mono.empty());
+
+        StepVerifier.create(adapter.updateProfile("kc-1", RENAMED)).verifyComplete();
+
+        ArgumentCaptor<Map<String, Object>> written = ArgumentCaptor.forClass(Map.class);
+        verify(keycloakAdminApi).updateUser(eq("kc-1"), written.capture());
+        assertThat(written.getValue())
+                .containsEntry("username", "camille_d")
+                .containsEntry("firstName", "Cam")
+                .containsEntry("lastName", "Dupont")
+                .containsEntry("email", "camille@example.org")
+                .containsEntry("attributes", Map.of("locale", "fr"));
+    }
+
+    @Test
+    @DisplayName("Keycloak's 409 is a taken username, which the user can fix")
+    void updateProfile_shouldMapAConflictToUsernameTaken() {
+        when(keycloakAdminApi.getUserRepresentation("kc-1")).thenReturn(Mono.just(Map.of("username", "camille")));
+        when(keycloakAdminApi.updateUser(eq("kc-1"), any())).thenReturn(Mono.error(
+                WebClientResponseException.create(HttpStatus.CONFLICT.value(), "Conflict", null, null, null)));
+
+        StepVerifier.create(adapter.updateProfile("kc-1", RENAMED))
+                .expectErrorMatches(error -> error instanceof BusinessException business
+                        && business.getErrorCode() == BusinessErrorCode.USERNAME_TAKEN)
+                .verify();
+    }
+
+    @Test
+    @DisplayName("Keycloak's 400 is a profile its rules refuse")
+    void updateProfile_shouldMapABadRequestToProfileInvalid() {
+        when(keycloakAdminApi.getUserRepresentation("kc-1")).thenReturn(Mono.just(Map.of("username", "camille")));
+        when(keycloakAdminApi.updateUser(eq("kc-1"), any())).thenReturn(Mono.error(
+                WebClientResponseException.create(HttpStatus.BAD_REQUEST.value(), "Bad Request", null, null, null)));
+
+        StepVerifier.create(adapter.updateProfile("kc-1", RENAMED))
+                .expectErrorMatches(error -> error instanceof BusinessException business
+                        && business.getErrorCode() == BusinessErrorCode.PROFILE_INVALID)
+                .verify();
+    }
+
+    @Test
+    @DisplayName("an outage is left to the aspect, which reports KEYCLOAK_ERROR")
+    void updateProfile_shouldLeaveOtherFailuresUntranslated() {
+        when(keycloakAdminApi.getUserRepresentation("kc-1")).thenReturn(Mono.error(
+                WebClientResponseException.create(HttpStatus.SERVICE_UNAVAILABLE.value(), "Unavailable", null, null, null)));
+
+        StepVerifier.create(adapter.updateProfile("kc-1", RENAMED))
+                .expectError(WebClientResponseException.ServiceUnavailable.class)
+                .verify();
+
+        verify(keycloakAdminApi, never()).updateUser(any(), any());
     }
 }

@@ -81,6 +81,29 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
                 .then();
     }
 
+    /**
+     * Updates the names and writes USER_MODIFIED in one transaction, joined by the caller's when
+     * there is one: {@code UserService.updateProfile} also calls Keycloak inside it.
+     */
+    @Override
+    @Transactional
+    public Mono<BusinessUser> updateProfile(BusinessUser businessUser) {
+        return userR2dbcRepository.updateProfile(businessUser.id(), businessUser.userName(),
+                        businessUser.firstName(), businessUser.lastName())
+                .onErrorMap(DataIntegrityViolationException.class,
+                        e -> new BusinessException(BusinessErrorCode.USERNAME_TAKEN))
+                .flatMap(updated -> updated == 0
+                        ? Mono.<BusinessUser>error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND))
+                        : getBusinessUserByUserId(businessUser.id()))
+                .flatMap(saved -> appendEvent(saved.id(), OutboxEventType.USER_MODIFIED,
+                        kafkaDataMapper.toUserModifiedEventDTO(saved)).thenReturn(saved));
+    }
+
+    @Override
+    public Mono<String> findKeycloakIdByUserId(UUID userId) {
+        return userR2dbcRepository.findKeycloakIdById(userId);
+    }
+
     /** Writes USER_CREATED to the outbox; {@code OutboxRelay} sends it to Kafka. */
     private Mono<Long> appendUserCreatedEvent(BusinessUser user) {
         return appendEvent(user.id(), OutboxEventType.USER_CREATED, kafkaDataMapper.toUserCreatedEventDTO(user));

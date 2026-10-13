@@ -2,6 +2,7 @@ package com.calendar.users.infrastructure.messaging.mappers;
 
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.infrastructure.messaging.models.UserCreatedEventDTO;
+import com.calendar.users.infrastructure.messaging.models.UserModifiedEventDTO;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 
@@ -41,5 +42,14 @@ class KafkaDataMapperTest {
     @Test
     void toUserCreatedEventDTO_WithNull_ShouldReturnNull() {
         assertNull(mapper.toUserCreatedEventDTO(null));
+    }
+
+    @Test
+    void toUserModifiedEventDTO_ShouldCarryTheWholeProfile() {
+        UUID id = UUID.randomUUID();
+        BusinessUser user = new BusinessUser(id, "camille_d", 4321, "Cam", "Dupont", "pic.jpg", LocalDateTime.now());
+
+        assertEquals(new UserModifiedEventDTO(id, "camille_d", 4321, "Cam", "Dupont", "pic.jpg"),
+                mapper.toUserModifiedEventDTO(user));
     }
 }

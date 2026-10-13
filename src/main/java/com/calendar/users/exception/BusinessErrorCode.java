@@ -32,7 +32,21 @@ public enum BusinessErrorCode {
             "USR-BUS-003",
             "No handle available",
             "Every hashtag tried for this username is taken; retry or pick another name.",
-            HttpStatus.CONFLICT);
+            HttpStatus.CONFLICT),
+
+    /** The username is someone else's. The client shows it on the field. */
+    USERNAME_TAKEN(
+            "USR-BUS-004",
+            "Username taken",
+            "Another user already has this username.",
+            HttpStatus.CONFLICT),
+
+    /** The identity provider refused the profile: a rule the form did not catch. */
+    PROFILE_INVALID(
+            "USR-BUS-005",
+            "Invalid profile",
+            "The profile does not meet the identity provider's rules.",
+            HttpStatus.BAD_REQUEST);
 
     private final String code;
     private final String title;

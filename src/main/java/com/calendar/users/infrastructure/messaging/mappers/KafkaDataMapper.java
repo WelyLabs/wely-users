@@ -2,6 +2,7 @@ package com.calendar.users.infrastructure.messaging.mappers;
 
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.infrastructure.messaging.models.UserCreatedEventDTO;
+import com.calendar.users.infrastructure.messaging.models.UserModifiedEventDTO;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
@@ -10,4 +11,7 @@ public interface KafkaDataMapper {
 
     @Mapping(target = "userId", source = "id")
     UserCreatedEventDTO toUserCreatedEventDTO(BusinessUser businessUser);
+
+    @Mapping(target = "userId", source = "id")
+    UserModifiedEventDTO toUserModifiedEventDTO(BusinessUser businessUser);
 }
