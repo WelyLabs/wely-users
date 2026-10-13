@@ -2,6 +2,12 @@ package com.calendar.users.domain.services;
 
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.ports.IdentityProvider;
+import com.calendar.users.domain.ports.PictureNormalizer;
+import com.calendar.users.domain.ports.PictureStorage;
+import com.calendar.users.domain.models.UserPicture;
+import java.util.Map;
+import java.util.Set;
+import org.mockito.ArgumentCaptor;
 import com.calendar.users.domain.models.ProfileUpdate;
 import org.mockito.InOrder;
 import com.calendar.users.domain.ports.UserRepository;
@@ -33,6 +39,12 @@ class UserServiceTest {
 
         @Mock
         private IdentityProvider identityProvider;
+
+        @Mock
+        private PictureStorage pictureStorage;
+
+        @Mock
+        private PictureNormalizer pictureNormalizer;
 
 
         @InjectMocks
@@ -376,5 +388,129 @@ class UserServiceTest {
 
                 verify(identityProvider, never()).updateProfile(any(), any());
                 verify(userRepository, never()).updateProfile(any());
+        }
+
+        // --- pictures --------------------------------------------------------
+
+        private static final byte[] UPLOAD = {1, 2, 3};
+        private static final byte[] JPEG = {(byte) 0xFF, (byte) 0xD8};
+
+        private BusinessUser camilleWithPicture(String reference) {
+                return new BusinessUser(USER_ID, "camille", 4321, "Camille", "Durand", reference, JOINED);
+        }
+
+        private void givenANormalizedPicture() {
+                when(pictureNormalizer.normalize(UPLOAD)).thenReturn(Mono.just(JPEG));
+                when(pictureNormalizer.contentType()).thenReturn("image/jpeg");
+                when(pictureStorage.put(anyString(), eq(JPEG), eq("image/jpeg"))).thenReturn(Mono.empty());
+        }
+
+        @Test
+        void updatePicture_ShouldStoreUnderAFreshKey_PointTheUserAtIt_ThenRemoveThePreviousUpload() {
+                when(userRepository.getBusinessUserByUserId(USER_ID))
+                                .thenReturn(Mono.just(camilleWithPicture("avatars/" + USER_ID + "/old.jpg")));
+                givenANormalizedPicture();
+                when(userRepository.updatePicture(eq(USER_ID), anyString())).thenReturn(Mono.just(CAMILLE));
+                when(pictureStorage.delete("avatars/" + USER_ID + "/old.jpg")).thenReturn(Mono.empty());
+                when(pictureStorage.signedUrl(anyString(), eq(UserService.PICTURE_URL_TTL))).thenReturn("https://media/signed");
+
+                StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD))
+                                .expectNext("https://media/signed")
+                                .verifyComplete();
+
+                ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+                InOrder order = inOrder(pictureStorage, userRepository);
+                order.verify(pictureStorage).put(key.capture(), eq(JPEG), eq("image/jpeg"));
+                order.verify(userRepository).updatePicture(USER_ID, key.getValue());
+                order.verify(pictureStorage).delete("avatars/" + USER_ID + "/old.jpg");
+                org.assertj.core.api.Assertions.assertThat(key.getValue())
+                                .matches("avatars/" + USER_ID + "/[0-9a-f-]{36}\\.jpg");
+        }
+
+        @Test
+        void updatePicture_ShouldLeaveAPathTheWebAppServes_WhenReplacingIt() {
+                when(userRepository.getBusinessUserByUserId(USER_ID))
+                                .thenReturn(Mono.just(camilleWithPicture("/demo/avatars/camille.svg")));
+                givenANormalizedPicture();
+                when(userRepository.updatePicture(eq(USER_ID), anyString())).thenReturn(Mono.just(CAMILLE));
+                when(pictureStorage.signedUrl(anyString(), any())).thenReturn("https://media/signed");
+
+                StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD)).expectNextCount(1).verifyComplete();
+
+                verify(pictureStorage, never()).delete(anyString());
+        }
+
+        @Test
+        void updatePicture_ShouldRemoveTheNewFile_WhenTheDatabaseRefuses() {
+                when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.just(camilleWithPicture(null)));
+                givenANormalizedPicture();
+                when(userRepository.updatePicture(eq(USER_ID), anyString()))
+                                .thenReturn(Mono.error(new IllegalStateException("database down")));
+                when(pictureStorage.delete(anyString())).thenReturn(Mono.empty());
+
+                StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD))
+                                .expectError(IllegalStateException.class)
+                                .verify();
+
+                ArgumentCaptor<String> stored = ArgumentCaptor.forClass(String.class);
+                verify(pictureStorage).put(stored.capture(), eq(JPEG), eq("image/jpeg"));
+                verify(pictureStorage).delete(stored.getValue());
+                verify(pictureStorage, never()).signedUrl(anyString(), any());
+        }
+
+        @Test
+        void updatePicture_ShouldStoreNothing_WhenTheUploadIsNotAnImage() {
+                when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.just(camilleWithPicture(null)));
+                when(pictureNormalizer.normalize(UPLOAD))
+                                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.PICTURE_INVALID)));
+
+                StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD))
+                                .expectErrorMatches(error -> error instanceof BusinessException business
+                                                && business.getErrorCode() == BusinessErrorCode.PICTURE_INVALID)
+                                .verify();
+
+                verify(pictureStorage, never()).put(anyString(), any(), anyString());
+                verify(userRepository, never()).updatePicture(any(), anyString());
+        }
+
+        @Test
+        void updatePicture_ShouldStillSucceed_WhenThePreviousFileCannotBeRemoved() {
+                when(userRepository.getBusinessUserByUserId(USER_ID))
+                                .thenReturn(Mono.just(camilleWithPicture("avatars/" + USER_ID + "/old.jpg")));
+                givenANormalizedPicture();
+                when(userRepository.updatePicture(eq(USER_ID), anyString())).thenReturn(Mono.just(CAMILLE));
+                when(pictureStorage.delete("avatars/" + USER_ID + "/old.jpg"))
+                                .thenReturn(Mono.error(new IllegalStateException("storage down")));
+                when(pictureStorage.signedUrl(anyString(), any())).thenReturn("https://media/signed");
+
+                StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD))
+                                .expectNext("https://media/signed")
+                                .verifyComplete();
+        }
+
+        @Test
+        void updatePicture_ShouldError_WhenTheUserDoesNotExist() {
+                when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.empty());
+
+                StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD))
+                                .expectErrorMatches(error -> error instanceof BusinessException business
+                                                && business.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
+                                .verify();
+
+                verify(pictureNormalizer, never()).normalize(any());
+        }
+
+        @Test
+        void pictureUrls_ShouldSignUploadsAndPassPathsThrough() {
+                UUID lea = UUID.fromString("22222222-2222-2222-2222-222222222222");
+                when(userRepository.findPictures(Set.of(USER_ID, lea))).thenReturn(Flux.just(
+                                new UserPicture(USER_ID, "avatars/" + USER_ID + "/a.jpg"),
+                                new UserPicture(lea, "/demo/avatars/lea.svg")));
+                when(pictureStorage.signedUrl("avatars/" + USER_ID + "/a.jpg", UserService.PICTURE_URL_TTL))
+                                .thenReturn("https://media/signed");
+
+                StepVerifier.create(userService.pictureUrls(Set.of(USER_ID, lea)))
+                                .expectNext(Map.of(USER_ID, "https://media/signed", lea, "/demo/avatars/lea.svg"))
+                                .verifyComplete();
         }
 }

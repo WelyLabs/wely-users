@@ -1,6 +1,7 @@
 package com.calendar.users.infrastructure.persistence.repositories;
 
 import com.calendar.users.infrastructure.persistence.models.IdentityToCheckRow;
+import com.calendar.users.infrastructure.persistence.models.UserPictureRow;
 import com.calendar.users.infrastructure.persistence.models.entities.UserEntity;
 import org.springframework.data.repository.reactive.ReactiveCrudRepository;
 import org.springframework.data.r2dbc.repository.Modifying;
@@ -10,6 +11,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.UUID;
 
 @Repository
@@ -43,4 +45,15 @@ public interface UserR2dbcRepository extends ReactiveCrudRepository<UserEntity, 
 
     @Query("SELECT keycloak_id FROM app_user WHERE id = :id")
     Mono<String> findKeycloakIdById(UUID id);
+
+    /**
+     * profile_pic_url holds a storage key for an upload ({@code avatars/...}), or a path the web app
+     * serves itself; the name predates the change and migrations here are applied by hand.
+     */
+    @Modifying
+    @Query("UPDATE app_user SET profile_pic_url = :reference WHERE id = :id")
+    Mono<Long> updatePicture(UUID id, String reference);
+
+    @Query("SELECT id, profile_pic_url FROM app_user WHERE id IN (:ids) AND profile_pic_url IS NOT NULL")
+    Flux<UserPictureRow> findPictures(Collection<UUID> ids);
 }

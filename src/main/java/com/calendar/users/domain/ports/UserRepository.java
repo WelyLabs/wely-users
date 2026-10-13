@@ -2,10 +2,12 @@ package com.calendar.users.domain.ports;
 
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.models.IdentityToCheck;
+import com.calendar.users.domain.models.UserPicture;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.UUID;
 
 public interface UserRepository {
@@ -35,5 +37,11 @@ public interface UserRepository {
 
     /** The identity provider's id for this user. */
     Mono<String> findKeycloakIdByUserId(UUID userId);
+
+    /** Points the user at a new picture and tells other services (USER_MODIFIED). */
+    Mono<BusinessUser> updatePicture(UUID userId, String reference);
+
+    /** The pictures of those of these users who have one. */
+    Flux<UserPicture> findPictures(Collection<UUID> userIds);
 
 }
