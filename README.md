@@ -14,7 +14,7 @@ C'est le seul service qui écrit dans PostgreSQL, le seul qui détient un accès
 | **Préfixe** | `/user-service` (exposé via la gateway sur `/api/v1/user-service/**`) |
 | **Base** | PostgreSQL via R2DBC |
 | **Produit** | `USER_CREATED` sur Kafka |
-| **Dépend de** | Keycloak, qui l'appelle à l'inscription et à chaque token ; client Admin API (`client_credentials`) configuré pour les futures modifications de compte |
+| **Dépend de** | Keycloak, qui l'appelle à l'inscription et à chaque token ; client Admin API (`client_credentials`) configuré pour les futures modifications de compte · `wely-media` pour les photos de profil |
 
 ---
 
@@ -43,7 +43,8 @@ Architecture hexagonale. Le domaine déclare trois ports ; l'infrastructure four
                   │   ports/                             │
                   │     UserRepository ──────────┐       │
                   │     IdentityProvider ────────┼─┐     │
-                  └──────────────────────────────┼─┼─────┘
+                  │     MediaStore ──────────────┼─┼─┐   │
+                  └──────────────────────────────┼─┼─┼───┘
                                                  │ │
                   ┌──────────────────────────────▼─▼─────┐
                   │           infrastructure/            │
@@ -54,6 +55,7 @@ Architecture hexagonale. Le domaine déclare trois ports ; l'infrastructure four
                   │                  → OutboxEventR2dbcRepository
                   │  identity/     IdentityAuthAdapter   │
                   │                → KeycloakAdminApi    │
+                  │  media/        MediaApiAdapter → wely-media
                   │  messaging/    OutboxRelay           │
                   │                → KafkaOutboxDispatcher
                   │                → StreamBridge        │
@@ -155,6 +157,8 @@ Toutes les routes sont préfixées par `/user-service` et exposées via la gatew
 | `PUT` | `/profile/about` | JWT | La remplace ; espaces nettoyés, doublons retirés (« Rando » et « rando »), refus au-delà des limites (`USR-BUS-008`, 400) plutôt que coupure |
 | `POST` | `/profile/provision` | `X-Internal-Secret` | **Interne.** Crée l'utilisateur à l'inscription, depuis l'étape d'inscription de Keycloak. Idempotent sur l'UUID Keycloak |
 | `GET` | `/profile/resolve/{keycloakId}` | `X-Internal-Secret` | **Interne.** Lit le `businessId` d'un UUID Keycloak ; 404 s'il est inconnu |
+| `POST` | `/profile/picture` | JWT | Remplace la photo de l'utilisateur courant (multipart `file`, 5 Mo au plus) et répond une URL signée |
+| `POST` | `/avatars` | JWT | URL des photos de 100 utilisateurs au plus, `{ userId: url }` ; les utilisateurs sans photo sont absents |
 
 `/profile/provision` et `/profile/resolve/**` sont les seuls endpoints exemptés de l'authentification JWT : Keycloak les appelle pendant l'inscription et pendant l'émission du token, donc avant qu'un token existe. Il est protégé par un secret partagé vérifié dans un `WebFilter` dédié.
 
@@ -174,6 +178,15 @@ la topologie réseau qui la protège, pas un drapeau.
 > Le préfixe de chemin du service est appliqué par package (`…application.rest`) et non par
 > annotation. Sélectionner sur `@RestController` attrapait aussi le contrôleur de springdoc, ce
 > qui déplaçait la spec en `/user-service/v3/api-docs` derrière l'authentification.
+
+### Photos de profil : via wely-media
+
+Le service ne parle plus au stockage objet : **les photos passent par `wely-media`**, un service interne qui les normalise (carré central de 512 px, ré-encodé en JPEG, métadonnées retirées), les stocke en privé et signe leurs URL. `wely-users` ne garde que la **clé** (`avatars/<userId>/<uuid>.jpg`) ; l'URL, valable une heure, est calculée à l'affichage. Chaque appel porte l'en-tête `X-Internal-Secret`.
+
+- **Envoi** : `store(clé, fichier, AVATAR)`, puis l'utilisateur est pointé sur la clé. Si la base refuse, le nouveau fichier est supprimé ; l'ancien n'est supprimé qu'ensuite, et son échec ne laisse qu'un fichier orphelin.
+- **Affichage** : les clés d'un écran sont signées en **un seul appel**. Les chemins servis par l'application web (avatars de démo) sont rendus tels quels.
+- **wely-media indisponible à la signature** : `/avatars` répond quand même, sans les photos stockées (les avatars de démo restent) ; l'envoi d'une photo enregistrée mais non signée répond `profilePicUrl: null`, et le front relit l'URL via `/avatars`.
+- Image refusée (`MED-BUS-001`) → `USR-BUS-006` ; trop lourde (`MED-BUS-002`) → `USR-BUS-007` ; toute autre erreur, connexion comprise → `USR-TEC-004`.
 
 ### Modèle
 
@@ -298,6 +311,7 @@ Deux hiérarchies distinctes — métier et technique — traduites par `GlobalE
 | `USR-TEC-001` | 502 | Keycloak injoignable |
 | `USR-TEC-002` | 502 | Base de données injoignable |
 | `USR-TEC-003` | 502 | Kafka injoignable |
+| `USR-TEC-004` | 502 | wely-media injoignable ou en erreur |
 
 **502 et non 500 pour les erreurs techniques** : la requête était valide et le service tourne —
 c'est une dépendance qui est tombée, et 502 le dit précisément.
@@ -340,6 +354,8 @@ client peut tester et un `timestamp` :
 | `KAFKA_BOOTSTRAP_SERVER` | Brokers Kafka |
 | `KAFKA_KEY` / `KAFKA_SECRET` | Identifiants SASL |
 | `OUTBOX_RELAY_ENABLED` | Démarre le relais (`true` par défaut) |
+| `MEDIA_API_URL` | URL de `wely-media` (`http://localhost:8085` en profil `dev`) |
+| `MEDIA_API_SECRET` | Secret partagé envoyé à `wely-media` dans `X-Internal-Secret` |
 
 Réglages de l'outbox, dans `application.properties` :
 

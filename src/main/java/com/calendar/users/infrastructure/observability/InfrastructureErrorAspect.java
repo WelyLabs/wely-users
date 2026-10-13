@@ -59,6 +59,7 @@ public class InfrastructureErrorAspect {
         // Pointcut declaration only.
     }
 
+    /** MediaApiAdapter translates wely-media's answers itself; this catches what it lets through. */
     @Pointcut("execution(public * com.calendar.users.infrastructure.media.adapters.*.*(..))")
     public void mediaAdapterMethod() {
         // Pointcut declaration only.
@@ -76,7 +77,7 @@ public class InfrastructureErrorAspect {
 
     @Around("mediaAdapterMethod()")
     public Object translateMediaFailures(ProceedingJoinPoint joinPoint) throws Throwable {
-        return wrap(joinPoint, "Object storage", TechnicalErrorCode.MEDIA_ERROR);
+        return wrap(joinPoint, "wely-media", TechnicalErrorCode.MEDIA_ERROR);
     }
 
     private Object wrap(ProceedingJoinPoint joinPoint, String dependency, TechnicalErrorCode code)
