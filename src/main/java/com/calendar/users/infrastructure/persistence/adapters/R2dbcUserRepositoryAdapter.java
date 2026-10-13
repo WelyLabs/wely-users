@@ -2,6 +2,7 @@ package com.calendar.users.infrastructure.persistence.adapters;
 
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.models.IdentityToCheck;
+import com.calendar.users.domain.models.UserPicture;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
@@ -19,6 +20,7 @@ import reactor.core.publisher.Mono;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.UUID;
 
 /** Persists users through R2DBC. Unexpected failures are mapped by {@code InfrastructureErrorAspect}. */
@@ -94,6 +96,28 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
                         : getBusinessUserByUserId(businessUser.id()))
                 .flatMap(saved -> appendEvent(saved.id(), OutboxEventType.USER_MODIFIED,
                         kafkaDataMapper.toUserModifiedEventDTO(saved)).thenReturn(saved));
+    }
+
+    /** The new picture and USER_MODIFIED in one transaction, as for a profile update. */
+    @Override
+    @Transactional
+    public Mono<BusinessUser> updatePicture(UUID userId, String reference) {
+        return userR2dbcRepository.updatePicture(userId, reference)
+                .flatMap(updated -> updated == 0
+                        ? Mono.<BusinessUser>error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND))
+                        : getBusinessUserByUserId(userId))
+                .flatMap(saved -> appendEvent(saved.id(), OutboxEventType.USER_MODIFIED,
+                        kafkaDataMapper.toUserModifiedEventDTO(saved)).thenReturn(saved));
+    }
+
+    @Override
+    public Flux<UserPicture> findPictures(Collection<UUID> userIds) {
+        if (userIds.isEmpty()) {
+            // IN () is not valid SQL.
+            return Flux.empty();
+        }
+        return userR2dbcRepository.findPictures(userIds)
+                .map(row -> new UserPicture(row.id(), row.profilePicUrl()));
     }
 
     @Override

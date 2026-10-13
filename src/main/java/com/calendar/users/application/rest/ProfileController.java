@@ -1,11 +1,18 @@
 package com.calendar.users.application.rest;
 
+import com.calendar.users.application.dtos.PictureResponse;
 import com.calendar.users.application.dtos.ProvisionUserRequest;
 import com.calendar.users.application.dtos.UpdateProfileRequest;
 import com.calendar.users.application.mappers.ProvisionUserRequestMapper;
 import com.calendar.users.application.mappers.UpdateProfileRequestMapper;
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.services.UserService;
+import com.calendar.users.exception.BusinessErrorCode;
+import com.calendar.users.exception.BusinessException;
+import org.springframework.core.io.buffer.DataBufferLimitException;
+import org.springframework.core.io.buffer.DataBufferUtils;
+import org.springframework.http.MediaType;
+import org.springframework.http.codec.multipart.FilePart;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.http.ResponseEntity;
@@ -52,6 +59,34 @@ public class ProfileController {
         UUID userId = UUID.fromString(jwt.getClaimAsString("businessId"));
 
         return userService.readProfile(userId).map(ResponseEntity::ok);
+    }
+
+    /** Pictures above this are refused before they are decoded. */
+    static final int MAX_PICTURE_BYTES = 5 * 1024 * 1024;
+
+    /**
+     * Replaces the caller's picture. The upload is read whole, up to the limit, then normalized:
+     * 413 USR-BUS-007 above 5 MB, 400 USR-BUS-006 for a file that is not an accepted image.
+     */
+    @PostMapping(value = "picture", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Mono<PictureResponse> updatePicture(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestPart("file") Mono<FilePart> file) {
+        UUID userId = UUID.fromString(jwt.getClaimAsString("businessId"));
+
+        return file
+                .flatMap(part -> DataBufferUtils.join(part.content(), MAX_PICTURE_BYTES))
+                .map(buffer -> {
+                    byte[] bytes = new byte[buffer.readableByteCount()];
+                    buffer.read(bytes);
+                    DataBufferUtils.release(buffer);
+                    return bytes;
+                })
+                .onErrorMap(DataBufferLimitException.class,
+                        e -> new BusinessException(BusinessErrorCode.PICTURE_TOO_LARGE))
+                .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.PICTURE_INVALID)))
+                .flatMap(bytes -> userService.updatePicture(userId, bytes))
+                .map(PictureResponse::new);
     }
 
     /** The caller's own profile only: whose it is comes from the token. 409 USR-BUS-004 if the username is taken. */

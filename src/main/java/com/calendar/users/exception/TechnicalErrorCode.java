@@ -31,6 +31,12 @@ public enum TechnicalErrorCode {
             "USR-TEC-003",
             "Event broker unavailable",
             "The event could not be published.",
+            HttpStatus.BAD_GATEWAY),
+
+    MEDIA_ERROR(
+            "USR-TEC-004",
+            "Picture storage unavailable",
+            "The picture could not be stored.",
             HttpStatus.BAD_GATEWAY);
 
     private final String code;

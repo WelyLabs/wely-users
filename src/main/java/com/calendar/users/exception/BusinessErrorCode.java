@@ -46,7 +46,19 @@ public enum BusinessErrorCode {
             "USR-BUS-005",
             "Invalid profile",
             "The profile does not meet the identity provider's rules.",
-            HttpStatus.BAD_REQUEST);
+            HttpStatus.BAD_REQUEST),
+
+    PICTURE_INVALID(
+            "USR-BUS-006",
+            "Invalid picture",
+            "The file is not a JPEG, PNG, GIF or BMP image, or is larger than 4000 by 4000 pixels.",
+            HttpStatus.BAD_REQUEST),
+
+    PICTURE_TOO_LARGE(
+            "USR-BUS-007",
+            "Picture too large",
+            "The picture must be smaller than 5 MB.",
+            HttpStatus.CONTENT_TOO_LARGE);
 
     private final String code;
     private final String title;

@@ -8,6 +8,9 @@ import com.calendar.users.infrastructure.messaging.models.OutboxEventType;
 import com.calendar.users.infrastructure.messaging.models.UserCreatedEventDTO;
 import com.calendar.users.infrastructure.messaging.models.UserModifiedEventDTO;
 import com.calendar.users.infrastructure.persistence.models.IdentityToCheckRow;
+import com.calendar.users.infrastructure.persistence.models.UserPictureRow;
+import com.calendar.users.domain.models.UserPicture;
+import java.util.List;
 import com.calendar.users.domain.models.IdentityToCheck;
 import reactor.core.publisher.Flux;
 import com.calendar.users.infrastructure.persistence.mappers.UserEntityMapper;
@@ -298,5 +301,49 @@ class R2dbcUserRepositoryAdapterTest {
                 when(userR2dbcRepository.findKeycloakIdById(ID)).thenReturn(Mono.just("kc-camille"));
 
                 StepVerifier.create(adapter.findKeycloakIdByUserId(ID)).expectNext("kc-camille").verifyComplete();
+        }
+
+        // --- pictures --------------------------------------------------------
+
+        @Test
+        void updatePicture_ShouldPointTheUserAtTheKeyThenWriteUserModified() {
+                UserEntity stored = mock(UserEntity.class);
+                when(userR2dbcRepository.updatePicture(ID, "avatars/k.jpg")).thenReturn(Mono.just(1L));
+                when(userR2dbcRepository.findById(ID)).thenReturn(Mono.just(stored));
+                when(userEntityMapper.toBusinessUser(stored)).thenReturn(RENAMED);
+                when(kafkaDataMapper.toUserModifiedEventDTO(RENAMED))
+                                .thenReturn(new UserModifiedEventDTO(ID, "camille_d", 4321, "Cam", "Dupont", "avatars/k.jpg"));
+                when(outboxEventStore.append(any(UUID.class), anyString(), anyString())).thenReturn(Mono.just(1L));
+
+                StepVerifier.create(adapter.updatePicture(ID, "avatars/k.jpg")).expectNext(RENAMED).verifyComplete();
+
+                verify(outboxEventStore).append(eq(ID), eq(OutboxEventType.USER_MODIFIED.name()), anyString());
+        }
+
+        @Test
+        void updatePicture_ShouldFailAsNotFound_WhenNoRowWasUpdated() {
+                when(userR2dbcRepository.updatePicture(ID, "avatars/k.jpg")).thenReturn(Mono.just(0L));
+
+                StepVerifier.create(adapter.updatePicture(ID, "avatars/k.jpg"))
+                                .expectErrorMatches(error -> error instanceof BusinessException business
+                                                && business.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
+                                .verify();
+        }
+
+        @Test
+        void findPictures_ShouldMapTheRows() {
+                when(userR2dbcRepository.findPictures(List.of(ID)))
+                                .thenReturn(Flux.just(new UserPictureRow(ID, "avatars/k.jpg")));
+
+                StepVerifier.create(adapter.findPictures(List.of(ID)))
+                                .expectNext(new UserPicture(ID, "avatars/k.jpg"))
+                                .verifyComplete();
+        }
+
+        @Test
+        void findPictures_ShouldNotQuery_ForNoUsers() {
+                StepVerifier.create(adapter.findPictures(List.of())).verifyComplete();
+
+                verify(userR2dbcRepository, never()).findPictures(any());
         }
 }

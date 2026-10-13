@@ -17,6 +17,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.MethodParameter;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.MultipartBodyBuilder;
+import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.web.reactive.BindingContext;
@@ -28,6 +32,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -166,5 +171,66 @@ class ProfileControllerTest {
                 .bodyValue(new ProvisionUserRequest("kc-1", " ", "Léa", "Martin"))
                 .exchange()
                 .expectStatus().isBadRequest();
+    }
+
+    // --- updatePicture ----------------------------------------------------
+
+    private static MultipartBodyBuilder pictureOf(int size) {
+        MultipartBodyBuilder body = new MultipartBodyBuilder();
+        body.part("file", new ByteArrayResource(new byte[size]) {
+            @Override
+            public String getFilename() {
+                return "avatar.jpg";
+            }
+        }).contentType(MediaType.IMAGE_JPEG);
+        return body;
+    }
+
+    @Test
+    void updatePicture_ShouldStoreTheCallersPictureAndAnswerItsUrl() {
+        UUID userId = UUID.randomUUID();
+        when(mockJwt.getClaimAsString("businessId")).thenReturn(userId.toString());
+        when(userService.updatePicture(eq(userId), any())).thenReturn(Mono.just("https://media/signed"));
+
+        webTestClient.post()
+                .uri("/profile/picture")
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .body(BodyInserters.fromMultipartData(pictureOf(1024).build()))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.profilePicUrl").isEqualTo("https://media/signed");
+    }
+
+    @Test
+    void updatePicture_ShouldAnswer413_AboveTheLimit() {
+        when(mockJwt.getClaimAsString("businessId")).thenReturn(UUID.randomUUID().toString());
+
+        webTestClient.post()
+                .uri("/profile/picture")
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .body(BodyInserters.fromMultipartData(pictureOf(ProfileController.MAX_PICTURE_BYTES + 1).build()))
+                .exchange()
+                .expectStatus().isEqualTo(413)
+                .expectBody()
+                .jsonPath("$.code").isEqualTo("USR-BUS-007");
+
+        verify(userService, never()).updatePicture(any(), any());
+    }
+
+    @Test
+    void updatePicture_ShouldAnswer400_ForAFileThatIsNotAnImage() {
+        when(mockJwt.getClaimAsString("businessId")).thenReturn(UUID.randomUUID().toString());
+        when(userService.updatePicture(any(), any()))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.PICTURE_INVALID)));
+
+        webTestClient.post()
+                .uri("/profile/picture")
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .body(BodyInserters.fromMultipartData(pictureOf(16).build()))
+                .exchange()
+                .expectStatus().isBadRequest()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo("USR-BUS-006");
     }
 }
