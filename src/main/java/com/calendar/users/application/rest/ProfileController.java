@@ -65,8 +65,8 @@ public class ProfileController {
     static final int MAX_PICTURE_BYTES = 5 * 1024 * 1024;
 
     /**
-     * Replaces the caller's picture. The upload is read whole, up to the limit, then normalized:
-     * 413 USR-BUS-007 above 5 MB, 400 USR-BUS-006 for a file that is not an accepted image.
+     * Replaces the caller's picture. The upload is read whole, up to the limit, then sent to
+     * wely-media: 413 USR-BUS-007 above 5 MB, 400 USR-BUS-006 for a file that is not an accepted image.
      */
     @PostMapping(value = "picture", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Mono<PictureResponse> updatePicture(
@@ -86,7 +86,9 @@ public class ProfileController {
                         e -> new BusinessException(BusinessErrorCode.PICTURE_TOO_LARGE))
                 .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.PICTURE_INVALID)))
                 .flatMap(bytes -> userService.updatePicture(userId, bytes))
-                .map(PictureResponse::new);
+                .map(PictureResponse::new)
+                // Saved but not signed: the web app reads the URL from /avatars anyway.
+                .defaultIfEmpty(new PictureResponse(null));
     }
 
     /** The caller's own profile only: whose it is comes from the token. 409 USR-BUS-004 if the username is taken. */

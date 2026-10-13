@@ -7,20 +7,21 @@ import com.calendar.users.domain.models.OrphanSweep;
 import com.calendar.users.domain.models.ProfileUpdate;
 import com.calendar.users.domain.models.UserAbout;
 import com.calendar.users.domain.models.UserPicture;
+import com.calendar.users.domain.models.MediaProfile;
 import com.calendar.users.domain.ports.IdentityProvider;
-import com.calendar.users.domain.ports.PictureNormalizer;
-import com.calendar.users.domain.ports.PictureStorage;
+import com.calendar.users.domain.ports.MediaStore;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Collection;
-import java.util.Map;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -32,18 +33,12 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final IdentityProvider identityProvider;
-    private final PictureStorage pictureStorage;
-    private final PictureNormalizer pictureNormalizer;
+    private final MediaStore mediaStore;
 
-    /** How long a picture URL stays valid. The client caches it for a little less. */
-    public static final Duration PICTURE_URL_TTL = Duration.ofHours(1);
-
-    public UserService(UserRepository userRepository, IdentityProvider identityProvider,
-                       PictureStorage pictureStorage, PictureNormalizer pictureNormalizer) {
+    public UserService(UserRepository userRepository, IdentityProvider identityProvider, MediaStore mediaStore) {
         this.userRepository = userRepository;
         this.identityProvider = identityProvider;
-        this.pictureStorage = pictureStorage;
-        this.pictureNormalizer = pictureNormalizer;
+        this.mediaStore = mediaStore;
     }
 
     public Mono<BusinessUser> readProfile(UUID userId) {
@@ -112,44 +107,69 @@ public class UserService {
     /**
      * Replaces the user's picture and answers with a URL to show it.
      *
-     * <p>The picture is normalized, stored under a key nobody can guess, then the user is pointed at
-     * it (with USER_MODIFIED). The order keeps the user from ever pointing at a missing file: if the
-     * database refuses, the new file is removed again. The previous file is removed last, and only
-     * if it was an upload; failing to remove it leaves an orphan file, not a broken profile.
+     * <p>The picture is normalized and stored under a key nobody can guess, then the user is pointed
+     * at it (with USER_MODIFIED). The order keeps the user from ever pointing at a missing file: if
+     * the database refuses, the new file is removed again. The previous file is removed last, and
+     * only if it was an upload; failing to remove it leaves an orphan file, not a broken profile.
+     *
+     * <p>Completes empty when the new picture is saved but cannot be signed: the change happened,
+     * so it is not reported as a failure, and the web app asks /avatars for the URL anyway.
      */
     public Mono<String> updatePicture(UUID userId, byte[] upload) {
         return userRepository.getBusinessUserByUserId(userId)
                 .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)))
-                .flatMap(current -> pictureNormalizer.normalize(upload)
-                        .flatMap(picture -> {
-                            String key = UserPicture.STORED_PREFIX + userId + "/" + UUID.randomUUID() + ".jpg";
-                            // Deferred steps: built eagerly, each would run even when the one before failed.
-                            return pictureStorage.put(key, picture, pictureNormalizer.contentType())
-                                    .then(Mono.defer(() -> userRepository.updatePicture(userId, key)
-                                            // The file is stored but nobody points at it: remove it.
-                                            .onErrorResume(error -> pictureStorage.delete(key)
-                                                    .onErrorResume(cleanup -> Mono.empty())
-                                                    .then(Mono.error(error)))))
+                .flatMap(current -> {
+                    String key = UserPicture.STORED_PREFIX + userId + "/" + UUID.randomUUID() + ".jpg";
+                    // Deferred steps: built eagerly, each would run even when the one before failed.
+                    return mediaStore.store(key, upload, MediaProfile.AVATAR)
+                            .flatMap(stored -> userRepository.updatePicture(userId, stored.key())
+                                    // The file is stored but nobody points at it: remove it.
+                                    .onErrorResume(error -> mediaStore.delete(stored.key())
+                                            .onErrorResume(cleanup -> Mono.empty())
+                                            .then(Mono.error(error)))
                                     .then(Mono.defer(() -> removePrevious(new UserPicture(userId, current.profilePicUrl()))))
-                                    .then(Mono.fromSupplier(() -> pictureStorage.signedUrl(key, PICTURE_URL_TTL)));
-                        }));
+                                    .then(Mono.defer(() -> mediaStore.urls(List.of(stored.key()))
+                                            .mapNotNull(urls -> urls.get(stored.key()))
+                                            .onErrorResume(error -> Mono.empty()))));
+                });
     }
 
     /**
      * URLs for these users' pictures, for anyone signed in: the visibility profile pictures have
-     * always had. An upload gets a signed URL; a path the web app serves is returned as it is.
-     * Users without a picture are left out.
+     * always had. Uploads are signed in one call; a path the web app serves is returned as it is.
+     * Users without a picture are left out, and so are uploads the media store cannot sign right
+     * now: one store outage should not take the demo avatars and the whole screen down with it.
      */
     public Mono<Map<UUID, String>> pictureUrls(Collection<UUID> userIds) {
         return userRepository.findPictures(userIds)
-                .collectMap(UserPicture::userId, picture -> picture.isStored()
-                        ? pictureStorage.signedUrl(picture.reference(), PICTURE_URL_TTL)
-                        : picture.reference());
+                .collectList()
+                .flatMap(pictures -> {
+                    List<String> keys = pictures.stream()
+                            .filter(UserPicture::isStored)
+                            .map(UserPicture::reference)
+                            .toList();
+                    Mono<Map<String, String>> signed = keys.isEmpty()
+                            ? Mono.just(Map.of())
+                            : mediaStore.urls(keys).onErrorResume(error -> Mono.just(Map.of()));
+                    return signed.map(urls -> resolve(pictures, urls));
+                });
+    }
+
+    /** User id to URL: signed for an upload, as it is for a served path, absent when unsigned. */
+    private static Map<UUID, String> resolve(List<UserPicture> pictures, Map<String, String> signed) {
+        Map<UUID, String> urls = new HashMap<>();
+        for (UserPicture picture : pictures) {
+            String url = picture.isStored() ? signed.get(picture.reference()) : picture.reference();
+            if (url != null) {
+                urls.put(picture.userId(), url);
+            }
+        }
+        return urls;
     }
 
     private Mono<Void> removePrevious(UserPicture previous) {
         return previous.isStored()
-                ? pictureStorage.delete(previous.reference()).onErrorResume(error -> Mono.empty())
+                ? mediaStore.delete(previous.reference()).onErrorResume(error -> Mono.empty())
                 : Mono.empty();
     }
 

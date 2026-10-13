@@ -7,6 +7,8 @@ import com.calendar.users.application.mappers.UpdateProfileRequestMapperImpl;
 import com.calendar.users.domain.models.ProfileUpdate;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
+import com.calendar.users.exception.TechnicalErrorCode;
+import com.calendar.users.exception.TechnicalException;
 import com.calendar.users.exception.GlobalErrorHandler;
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.models.IdentityUser;
@@ -232,5 +234,36 @@ class ProfileControllerTest {
                 .expectStatus().isBadRequest()
                 .expectBody()
                 .jsonPath("$.code").isEqualTo("USR-BUS-006");
+    }
+
+    @Test
+    void updatePicture_ShouldAnswerWithoutAUrl_WhenTheSavedPictureCouldNotBeSigned() {
+        when(mockJwt.getClaimAsString("businessId")).thenReturn(UUID.randomUUID().toString());
+        when(userService.updatePicture(any(), any())).thenReturn(Mono.empty());
+
+        webTestClient.post()
+                .uri("/profile/picture")
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .body(BodyInserters.fromMultipartData(pictureOf(16).build()))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.profilePicUrl").isEmpty();
+    }
+
+    @Test
+    void updatePicture_ShouldAnswer502_WhenTheMediaServiceIsDown() {
+        when(mockJwt.getClaimAsString("businessId")).thenReturn(UUID.randomUUID().toString());
+        when(userService.updatePicture(any(), any()))
+                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.MEDIA_ERROR)));
+
+        webTestClient.post()
+                .uri("/profile/picture")
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .body(BodyInserters.fromMultipartData(pictureOf(16).build()))
+                .exchange()
+                .expectStatus().isEqualTo(502)
+                .expectBody()
+                .jsonPath("$.code").isEqualTo("USR-TEC-004");
     }
 }
