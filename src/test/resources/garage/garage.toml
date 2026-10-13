@@ -1,4 +1,4 @@
-# A single-node Garage for S3PictureStorageAdapterIntegrationTest. Throwaway secrets: test only.
+# A single-node Garage for GaragePictureStorageAdapterIntegrationTest. Throwaway secrets: test only.
 metadata_dir = "/var/lib/garage/meta"
 data_dir = "/var/lib/garage/data"
 db_engine = "sqlite"

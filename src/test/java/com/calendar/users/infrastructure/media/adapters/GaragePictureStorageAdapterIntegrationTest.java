@@ -1,7 +1,7 @@
 package com.calendar.users.infrastructure.media.adapters;
 
 import com.calendar.users.configuration.MediaClientConfig;
-import org.junit.jupiter.api.AfterAll;
+import com.calendar.users.infrastructure.media.signing.GarageRequestSigner;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -11,26 +11,27 @@ import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.MountableFile;
-import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Clock;
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * The storage against a real Garage: what the bucket accepts, what a signed URL opens, and what it
- * refuses. These are properties of Garage's S3 implementation, which a mocked client cannot settle.
+ * refuses. These are properties of Garage itself, and of whether it accepts our signatures, which
+ * a stubbed exchange cannot settle.
  *
  * <p>Opt-in: CI sets {@code CI=true}, locally pass {@code -Dintegration.tests=true}.
  */
 @Testcontainers
 @EnabledIf("containersRequested")
-class S3PictureStorageAdapterIntegrationTest {
+class GaragePictureStorageAdapterIntegrationTest {
 
     private static final String ACCESS_KEY = "GK0123456789abcdef01234567";
     private static final String SECRET_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -43,8 +44,7 @@ class S3PictureStorageAdapterIntegrationTest {
             .waitingFor(Wait.forHttp("/health").forPort(3903).forStatusCodeMatching(code -> code < 600));
 
     private static final HttpClient HTTP = HttpClient.newHttpClient();
-    private static S3PictureStorageAdapter storage;
-    private static S3Presigner presigner;
+    private static GaragePictureStorageAdapter storage;
 
     static boolean containersRequested() {
         return System.getenv("CI") != null || Boolean.getBoolean("integration.tests");
@@ -63,16 +63,8 @@ class S3PictureStorageAdapterIntegrationTest {
                 + "\",\"permissions\":{\"read\":true,\"write\":true,\"owner\":false}}");
 
         URI endpoint = URI.create("http://" + GARAGE.getHost() + ":" + GARAGE.getMappedPort(3900));
-        MediaClientConfig config = new MediaClientConfig(ACCESS_KEY, SECRET_KEY, "garage");
-        presigner = config.mediaPresigner(endpoint);
-        storage = new S3PictureStorageAdapter(config.mediaClient(endpoint), presigner, BUCKET);
-    }
-
-    @AfterAll
-    static void tearDown() {
-        if (presigner != null) {
-            presigner.close();
-        }
+        storage = new GaragePictureStorageAdapter(new MediaClientConfig().mediaWebClient(),
+                new GarageRequestSigner(ACCESS_KEY, SECRET_KEY, "garage", Clock.systemUTC()), endpoint, endpoint, BUCKET);
     }
 
     private static String admin(String endpoint, String body) throws IOException, InterruptedException {
