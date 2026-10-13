@@ -1,5 +1,11 @@
 package com.calendar.users.infrastructure.persistence.adapters;
 
+import static org.mockito.ArgumentMatchers.any;
+
+import com.calendar.users.infrastructure.persistence.models.UserAboutRow;
+
+import com.calendar.users.domain.models.UserAbout;
+
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
@@ -345,5 +351,44 @@ class R2dbcUserRepositoryAdapterTest {
                 StepVerifier.create(adapter.findPictures(List.of())).verifyComplete();
 
                 verify(userR2dbcRepository, never()).findPictures(any());
+        }
+
+        @Test
+        void findAbout_shouldReadTheTextArrayAsAList() {
+                UUID userId = UUID.randomUUID();
+                when(userR2dbcRepository.findAboutById(userId))
+                                .thenReturn(Mono.just(new UserAboutRow("Partante", new String[] {"Rando", "Ciné"})));
+
+                StepVerifier.create(adapter.findAbout(userId))
+                                .expectNext(new UserAbout("Partante", List.of("Rando", "Ciné")))
+                                .verifyComplete();
+        }
+
+        @Test
+        void findAbout_shouldReadANullArrayAsNoInterest() {
+                UUID userId = UUID.randomUUID();
+                when(userR2dbcRepository.findAboutById(userId)).thenReturn(Mono.just(new UserAboutRow(null, null)));
+
+                StepVerifier.create(adapter.findAbout(userId)).expectNext(UserAbout.EMPTY).verifyComplete();
+        }
+
+        @Test
+        void updateAbout_shouldWriteTheInterestsAsAnArray() {
+                UUID userId = UUID.randomUUID();
+                UserAbout about = new UserAbout("Partante", List.of("Rando"));
+                when(userR2dbcRepository.updateAbout(userId, "Partante", new String[] {"Rando"})).thenReturn(Mono.just(1L));
+
+                StepVerifier.create(adapter.updateAbout(userId, about)).expectNext(about).verifyComplete();
+        }
+
+        @Test
+        void updateAbout_shouldReportAnUnknownUser() {
+                UUID userId = UUID.randomUUID();
+                when(userR2dbcRepository.updateAbout(any(), any(), any())).thenReturn(Mono.just(0L));
+
+                StepVerifier.create(adapter.updateAbout(userId, UserAbout.EMPTY))
+                                .expectErrorMatches(error -> error instanceof BusinessException exception
+                                                && exception.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
+                                .verify();
         }
 }

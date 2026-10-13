@@ -58,7 +58,13 @@ public enum BusinessErrorCode {
             "USR-BUS-007",
             "Picture too large",
             "The picture must be smaller than 5 MB.",
-            HttpStatus.CONTENT_TOO_LARGE);
+            HttpStatus.CONTENT_TOO_LARGE),
+
+    ABOUT_INVALID(
+            "USR-BUS-008",
+            "Invalid profile presentation",
+            "A bio holds up to 160 characters, and a profile up to 5 interests of up to 24 characters each.",
+            HttpStatus.BAD_REQUEST);
 
     private final String code;
     private final String title;

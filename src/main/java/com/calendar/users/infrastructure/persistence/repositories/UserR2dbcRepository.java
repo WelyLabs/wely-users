@@ -1,6 +1,7 @@
 package com.calendar.users.infrastructure.persistence.repositories;
 
 import com.calendar.users.infrastructure.persistence.models.IdentityToCheckRow;
+import com.calendar.users.infrastructure.persistence.models.UserAboutRow;
 import com.calendar.users.infrastructure.persistence.models.UserPictureRow;
 import com.calendar.users.infrastructure.persistence.models.entities.UserEntity;
 import org.springframework.data.repository.reactive.ReactiveCrudRepository;
@@ -56,4 +57,11 @@ public interface UserR2dbcRepository extends ReactiveCrudRepository<UserEntity, 
 
     @Query("SELECT id, profile_pic_url FROM app_user WHERE id IN (:ids) AND profile_pic_url IS NOT NULL")
     Flux<UserPictureRow> findPictures(Collection<UUID> ids);
+
+    @Query("SELECT bio, interests FROM app_user WHERE id = :id")
+    Mono<UserAboutRow> findAboutById(UUID id);
+
+    @Modifying
+    @Query("UPDATE app_user SET bio = :bio, interests = :interests WHERE id = :id")
+    Mono<Long> updateAbout(UUID id, String bio, String[] interests);
 }
