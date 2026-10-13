@@ -1,6 +1,7 @@
 package com.calendar.users.infrastructure.persistence.adapters;
 
 import com.calendar.users.domain.models.BusinessUser;
+import com.calendar.users.domain.models.UserAbout;
 import com.calendar.users.domain.models.IdentityToCheck;
 import com.calendar.users.domain.models.UserPicture;
 import com.calendar.users.domain.ports.UserRepository;
@@ -21,6 +22,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 
 /** Persists users through R2DBC. Unexpected failures are mapped by {@code InfrastructureErrorAspect}. */
@@ -148,5 +150,19 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
     @Override
     public Mono<BusinessUser> getBusinessUserByUserId(UUID userId) {
         return userR2dbcRepository.findById(userId).map(userEntityMapper::toBusinessUser);
+    }
+
+    @Override
+    public Mono<UserAbout> findAbout(UUID userId) {
+        return userR2dbcRepository.findAboutById(userId)
+                .map(row -> new UserAbout(row.bio(), row.interests() == null ? List.of() : List.of(row.interests())));
+    }
+
+    @Override
+    public Mono<UserAbout> updateAbout(UUID userId, UserAbout about) {
+        return userR2dbcRepository.updateAbout(userId, about.bio(), about.interests().toArray(String[]::new))
+                .flatMap(updated -> updated == 0
+                        ? Mono.<UserAbout>error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND))
+                        : Mono.just(about));
     }
 }

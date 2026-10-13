@@ -151,6 +151,8 @@ Toutes les routes sont préfixées par `/user-service` et exposées via la gatew
 | Méthode | Route | Auth | Description |
 |---|---|---|---|
 | `GET` | `/profile` | JWT | Profil de l'utilisateur courant (identité lue dans le claim `businessId`) |
+| `GET` | `/profile/about` | JWT | Présentation de l'utilisateur courant : bio (160 caractères) et centres d'intérêt (5 au plus, 24 caractères chacun) |
+| `PUT` | `/profile/about` | JWT | La remplace ; espaces nettoyés, doublons retirés (« Rando » et « rando »), refus au-delà des limites (`USR-BUS-008`, 400) plutôt que coupure |
 | `POST` | `/profile/provision` | `X-Internal-Secret` | **Interne.** Crée l'utilisateur à l'inscription, depuis l'étape d'inscription de Keycloak. Idempotent sur l'UUID Keycloak |
 | `GET` | `/profile/resolve/{keycloakId}` | `X-Internal-Secret` | **Interne.** Lit le `businessId` d'un UUID Keycloak ; 404 s'il est inconnu |
 
@@ -199,6 +201,9 @@ CREATE TABLE app_user (
     last_name       TEXT,
     profile_pic_url TEXT,
     joined_date     TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+    identity_checked_at TIMESTAMPTZ,        -- V3
+    bio             TEXT,                   -- V4
+    interests       TEXT[] NOT NULL DEFAULT '{}',  -- V4
     CONSTRAINT unique_user_identity UNIQUE (user_name, hashtag)
 );
 
@@ -216,7 +221,7 @@ CREATE TABLE outbox_event (
 CREATE INDEX idx_outbox_event_pending ON outbox_event (id) WHERE published_at IS NULL;
 ```
 
-Les deux tables sont décrites dans `db/migration/`, **volontairement hors du classpath** pour qu'aucune initialisation Spring ne les exécute à l'insu de qui que ce soit. `V2__create_outbox_event.sql` doit être appliqué **avant** de déployer la version qui écrit dedans : l'insertion fait partie du provisioning, donc une table absente casse l'inscription au lieu de la dégrader. `V3__add_identity_checked_at.sql` doit l'être avant la version qui nettoie les orphelins, et avant le jeu de données de démo qui remplit la colonne.
+Les deux tables sont décrites dans `db/migration/`, **volontairement hors du classpath** pour qu'aucune initialisation Spring ne les exécute à l'insu de qui que ce soit. `V2__create_outbox_event.sql` doit être appliqué **avant** de déployer la version qui écrit dedans : l'insertion fait partie du provisioning, donc une table absente casse l'inscription au lieu de la dégrader. `V3__add_identity_checked_at.sql` doit l'être avant la version qui nettoie les orphelins, et avant le jeu de données de démo qui remplit la colonne. `V4__add_profile_about.sql` (bio et centres d'intérêt) doit l'être avant la version qui les lit : sans les colonnes, la page de profil ne charge plus sa présentation.
 
 ---
 
@@ -283,6 +288,11 @@ Deux hiérarchies distinctes — métier et technique — traduites par `GlobalE
 | `USR-BUS-001` | 404 | Utilisateur introuvable |
 | `USR-BUS-002` | 409 | Utilisateur déjà existant pour cette identité |
 | `USR-BUS-003` | 409 | Plus aucun hashtag disponible pour ce pseudo |
+| `USR-BUS-004` | 409 | Pseudo déjà pris |
+| `USR-BUS-005` | 400 | Profil refusé par Keycloak |
+| `USR-BUS-006` | 400 | Le fichier n'est pas une image acceptée |
+| `USR-BUS-007` | 413 | Photo de plus de 5 Mo |
+| `USR-BUS-008` | 400 | Présentation hors limites (bio, centres d'intérêt) |
 | `USR-VAL-001` | 400 | Validation du corps de requête, détail par champ |
 | `USR-REQ-000` | *repris* | Chemin inconnu, méthode non autorisée |
 | `USR-TEC-001` | 502 | Keycloak injoignable |

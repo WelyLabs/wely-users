@@ -5,6 +5,7 @@ import com.calendar.users.domain.models.IdentityToCheck;
 import com.calendar.users.domain.models.IdentityUser;
 import com.calendar.users.domain.models.OrphanSweep;
 import com.calendar.users.domain.models.ProfileUpdate;
+import com.calendar.users.domain.models.UserAbout;
 import com.calendar.users.domain.models.UserPicture;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.PictureNormalizer;
@@ -93,6 +94,19 @@ public class UserService {
                             .then(Mono.defer(() -> userRepository.updateProfile(changed)
                                     .onErrorResume(error -> undo(keycloakId, before, error))));
                 });
+    }
+
+    /** The user's bio and interests, as they wrote them; empty when they wrote none. */
+    public Mono<UserAbout> about(UUID userId) {
+        return userRepository.findAbout(userId).defaultIfEmpty(UserAbout.EMPTY);
+    }
+
+    /**
+     * Replaces the user's bio and interests. They live in this service only: the identity provider
+     * and the other services have no use for them, so no event is sent.
+     */
+    public Mono<UserAbout> updateAbout(UUID userId, UserAbout about) {
+        return userRepository.updateAbout(userId, about);
     }
 
     /**

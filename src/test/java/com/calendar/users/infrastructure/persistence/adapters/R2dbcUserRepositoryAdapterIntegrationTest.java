@@ -1,5 +1,7 @@
 package com.calendar.users.infrastructure.persistence.adapters;
 
+import com.calendar.users.domain.models.UserAbout;
+
 import com.calendar.users.EphemeralDatabaseCheck;
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.exception.BusinessErrorCode;
@@ -22,6 +24,7 @@ import reactor.test.StepVerifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -68,6 +71,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
             databaseClient.sql(Files.readString(Path.of("db/migration/V1__create_app_user.sql"))).then().block();
             databaseClient.sql(Files.readString(Path.of("db/migration/V2__create_outbox_event.sql"))).then().block();
             databaseClient.sql(Files.readString(Path.of("db/migration/V3__add_identity_checked_at.sql"))).then().block();
+            databaseClient.sql(Files.readString(Path.of("db/migration/V4__add_profile_about.sql"))).then().block();
             schemaApplied = true;
         }
 
@@ -345,5 +349,19 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
                 .verify();
 
         assertThat(outboxTypes()).isEqualTo("USER_CREATED,USER_CREATED");
+    }
+
+    @Test
+    @DisplayName("the bio and interests round-trip through the text[] column, and a new user has none")
+    void updateAbout_shouldRoundTripThroughTheTextArray() {
+        BusinessUser user = savedAgo("about", 5555, "kc-about", 0);
+
+        StepVerifier.create(adapter.findAbout(user.id())).expectNext(UserAbout.EMPTY).verifyComplete();
+
+        adapter.updateAbout(user.id(), new UserAbout("Partante", List.of("Rando", "Jeux de société"))).block();
+
+        StepVerifier.create(adapter.findAbout(user.id()))
+                .expectNext(new UserAbout("Partante", List.of("Rando", "Jeux de société")))
+                .verifyComplete();
     }
 }

@@ -1,6 +1,7 @@
 package com.calendar.users.domain.ports;
 
 import com.calendar.users.domain.models.BusinessUser;
+import com.calendar.users.domain.models.UserAbout;
 import com.calendar.users.domain.models.IdentityToCheck;
 import com.calendar.users.domain.models.UserPicture;
 import reactor.core.publisher.Flux;
@@ -44,4 +45,10 @@ public interface UserRepository {
     /** The pictures of those of these users who have one. */
     Flux<UserPicture> findPictures(Collection<UUID> userIds);
 
+
+    /** The user's bio and interests; empty when they wrote none. */
+    Mono<UserAbout> findAbout(UUID userId);
+
+    /** Replaces the user's bio and interests; fails with USER_NOT_FOUND for an unknown user. */
+    Mono<UserAbout> updateAbout(UUID userId, UserAbout about);
 }

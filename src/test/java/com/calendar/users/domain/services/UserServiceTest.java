@@ -1,5 +1,13 @@
 package com.calendar.users.domain.services;
 
+import static org.mockito.ArgumentMatchers.any;
+
+import java.util.List;
+
+import static org.mockito.Mockito.verifyNoInteractions;
+
+import com.calendar.users.domain.models.UserAbout;
+
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.PictureNormalizer;
@@ -512,5 +520,43 @@ class UserServiceTest {
                 StepVerifier.create(userService.pictureUrls(Set.of(USER_ID, lea)))
                                 .expectNext(Map.of(USER_ID, "https://media/signed", lea, "/demo/avatars/lea.svg"))
                                 .verifyComplete();
+        }
+
+        @Test
+        void about_shouldReturnWhatTheUserWrote() {
+                UUID userId = UUID.randomUUID();
+                UserAbout about = new UserAbout("Partante", List.of("Rando"));
+                when(userRepository.findAbout(userId)).thenReturn(Mono.just(about));
+
+                StepVerifier.create(userService.about(userId)).expectNext(about).verifyComplete();
+        }
+
+        @Test
+        void about_shouldBeEmpty_whenNothingWasWritten() {
+                UUID userId = UUID.randomUUID();
+                when(userRepository.findAbout(userId)).thenReturn(Mono.empty());
+
+                StepVerifier.create(userService.about(userId)).expectNext(UserAbout.EMPTY).verifyComplete();
+        }
+
+        @Test
+        void updateAbout_shouldStoreIt_withoutTouchingTheIdentityProvider() {
+                UUID userId = UUID.randomUUID();
+                UserAbout about = new UserAbout("Partante", List.of("Rando"));
+                when(userRepository.updateAbout(userId, about)).thenReturn(Mono.just(about));
+
+                StepVerifier.create(userService.updateAbout(userId, about)).expectNext(about).verifyComplete();
+                verifyNoInteractions(identityProvider);
+        }
+
+        @Test
+        void updateAbout_shouldFail_forAnUnknownUser() {
+                UUID userId = UUID.randomUUID();
+                when(userRepository.updateAbout(any(), any()))
+                                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
+
+                StepVerifier.create(userService.updateAbout(userId, UserAbout.EMPTY))
+                                .expectError(BusinessException.class)
+                                .verify();
         }
 }
