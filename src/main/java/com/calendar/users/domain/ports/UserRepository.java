@@ -27,4 +27,13 @@ public interface UserRepository {
     /** Deletes a user left by a cancelled registration. Other services are told (USER_DELETED). */
     Mono<Void> deleteOrphan(UUID userId);
 
+    /**
+     * Writes a user's new name and username, and tells other services (USER_MODIFIED). Fails with
+     * USERNAME_TAKEN if the (username, hashtag) pair is someone else's.
+     */
+    Mono<BusinessUser> updateProfile(BusinessUser businessUser);
+
+    /** The identity provider's id for this user. */
+    Mono<String> findKeycloakIdByUserId(UUID userId);
+
 }

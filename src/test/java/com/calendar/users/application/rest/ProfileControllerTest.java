@@ -1,7 +1,13 @@
 package com.calendar.users.application.rest;
 
 import com.calendar.users.application.dtos.ProvisionUserRequest;
+import com.calendar.users.application.dtos.UpdateProfileRequest;
 import com.calendar.users.application.mappers.ProvisionUserRequestMapperImpl;
+import com.calendar.users.application.mappers.UpdateProfileRequestMapperImpl;
+import com.calendar.users.domain.models.ProfileUpdate;
+import com.calendar.users.exception.BusinessErrorCode;
+import com.calendar.users.exception.BusinessException;
+import com.calendar.users.exception.GlobalErrorHandler;
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.models.IdentityUser;
 import com.calendar.users.domain.services.UserService;
@@ -21,7 +27,10 @@ import reactor.core.publisher.Mono;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -37,7 +46,9 @@ class ProfileControllerTest {
     void setUp() {
         mockJwt = mock(Jwt.class);
 
-        webTestClient = WebTestClient.bindToController(new ProfileController(userService, new ProvisionUserRequestMapperImpl()))
+        webTestClient = WebTestClient.bindToController(new ProfileController(userService,
+                        new ProvisionUserRequestMapperImpl(), new UpdateProfileRequestMapperImpl()))
+                .controllerAdvice(new GlobalErrorHandler())
                 .argumentResolvers(configurer -> configurer.addCustomResolver(new HandlerMethodArgumentResolver() {
                     @Override
                     public boolean supportsParameter(MethodParameter parameter) {
@@ -101,6 +112,51 @@ class ProfileControllerTest {
                 .expectStatus().isOk()
                 .expectBody(String.class)
                 .isEqualTo(businessId.toString());
+    }
+
+    @Test
+    void updateProfile_ShouldUpdateTheCallersOwnProfile() {
+        UUID userId = UUID.randomUUID();
+        when(mockJwt.getClaimAsString("businessId")).thenReturn(userId.toString());
+        BusinessUser updated = new BusinessUser(userId, "camille_d", 4321, "Camille", "Durand", null, LocalDateTime.now());
+        when(userService.updateProfile(userId, new ProfileUpdate("camille_d", "Camille", "Durand")))
+                .thenReturn(Mono.just(updated));
+
+        webTestClient.put()
+                .uri("/profile")
+                .bodyValue(new UpdateProfileRequest("camille_d", "Camille", "Durand"))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.userName").isEqualTo("camille_d")
+                .jsonPath("$.hashtag").isEqualTo(4321);
+    }
+
+    @Test
+    void updateProfile_ShouldAnswer409WithItsCode_WhenTheUsernameIsTaken() {
+        UUID userId = UUID.randomUUID();
+        when(mockJwt.getClaimAsString("businessId")).thenReturn(userId.toString());
+        when(userService.updateProfile(any(), any()))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USERNAME_TAKEN)));
+
+        webTestClient.put()
+                .uri("/profile")
+                .bodyValue(new UpdateProfileRequest("lea", "Camille", "Durand"))
+                .exchange()
+                .expectStatus().isEqualTo(409)
+                .expectBody()
+                .jsonPath("$.code").isEqualTo("USR-BUS-004");
+    }
+
+    @Test
+    void updateProfile_ShouldRejectAUsernameWithForbiddenCharacters() {
+        webTestClient.put()
+                .uri("/profile")
+                .bodyValue(new UpdateProfileRequest("camille durand!", "Camille", "Durand"))
+                .exchange()
+                .expectStatus().isBadRequest();
+
+        verify(userService, never()).updateProfile(any(), any());
     }
 
     @Test

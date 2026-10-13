@@ -35,4 +35,12 @@ public interface UserR2dbcRepository extends ReactiveCrudRepository<UserEntity, 
     @Modifying
     @Query("UPDATE app_user SET identity_checked_at = now() WHERE id = :id")
     Mono<Long> markIdentityChecked(UUID id);
+
+    /** The name fields only: joined date, hashtag and picture are not the profile form's to change. */
+    @Modifying
+    @Query("UPDATE app_user SET user_name = :userName, first_name = :firstName, last_name = :lastName WHERE id = :id")
+    Mono<Long> updateProfile(UUID id, String userName, String firstName, String lastName);
+
+    @Query("SELECT keycloak_id FROM app_user WHERE id = :id")
+    Mono<String> findKeycloakIdById(UUID id);
 }

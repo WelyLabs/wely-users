@@ -4,6 +4,7 @@ import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.models.IdentityToCheck;
 import com.calendar.users.domain.models.IdentityUser;
 import com.calendar.users.domain.models.OrphanSweep;
+import com.calendar.users.domain.models.ProfileUpdate;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
@@ -12,6 +13,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -38,6 +40,55 @@ public class UserService {
     public Mono<UUID> findBusinessIdByKeycloakId(String keycloakId) {
         return userRepository.findIdByKeycloakId(keycloakId)
                 .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
+    }
+
+    /**
+     * Changes the user's username and names, here and at the identity provider, and tells the other
+     * services (USER_MODIFIED).
+     *
+     * <p>No transaction spans PostgreSQL and the identity provider, so this is a small saga. The
+     * identity provider goes first: refusing — the username is taken, a value breaks one of its
+     * rules — it leaves nothing to undo. The row and its outbox event come next, in the
+     * repository's own transaction. If the database refuses, the identity provider is given its
+     * previous values back before the error goes on. Only that undo failing too leaves the two
+     * apart: the original error carries the undo's as suppressed, and saving the profile again
+     * repairs it.
+     *
+     * <p>The transaction stays where it is technical, in the adapter: the domain states what to
+     * undo, not how a database commits.
+     *
+     * <p>The username is lowercased because the identity provider stores it so: kept as typed, the
+     * two would disagree on the name the user signs in with.
+     */
+    public Mono<BusinessUser> updateProfile(UUID userId, ProfileUpdate update) {
+        String userName = update.userName().toLowerCase(Locale.ROOT);
+
+        return userRepository.getBusinessUserByUserId(userId)
+                .zipWith(userRepository.findKeycloakIdByUserId(userId))
+                .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)))
+                .flatMap(found -> {
+                    BusinessUser current = found.getT1();
+                    String keycloakId = found.getT2();
+                    BusinessUser changed = new BusinessUser(current.id(), userName, current.hashtag(),
+                            update.firstName(), update.lastName(), current.profilePicUrl(), current.joinedDate());
+                    IdentityUser before = new IdentityUser(current.userName(), current.firstName(), current.lastName());
+                    IdentityUser after = new IdentityUser(userName, update.firstName(), update.lastName());
+
+                    return identityProvider.updateProfile(keycloakId, after)
+                            // Deferred: built eagerly, the write would be prepared even when the provider refused.
+                            .then(Mono.defer(() -> userRepository.updateProfile(changed)
+                                    .onErrorResume(error -> undo(keycloakId, before, error))));
+                });
+    }
+
+    /** Gives the identity provider its previous values back, then fails with the original error. */
+    private Mono<BusinessUser> undo(String keycloakId, IdentityUser previous, Throwable error) {
+        return identityProvider.updateProfile(keycloakId, previous)
+                .onErrorResume(undoFailed -> {
+                    error.addSuppressed(undoFailed);
+                    return Mono.empty();
+                })
+                .then(Mono.error(error));
     }
 
     /**
