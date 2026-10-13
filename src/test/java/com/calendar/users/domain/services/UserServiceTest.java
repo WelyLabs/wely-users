@@ -2,7 +2,6 @@ package com.calendar.users.domain.services;
 
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.ports.IdentityProvider;
-import com.calendar.users.domain.ports.TransactionRunner;
 import com.calendar.users.domain.models.ProfileUpdate;
 import org.mockito.InOrder;
 import com.calendar.users.domain.ports.UserRepository;
@@ -35,8 +34,6 @@ class UserServiceTest {
         @Mock
         private IdentityProvider identityProvider;
 
-        @Mock
-        private TransactionRunner transactionRunner;
 
         @InjectMocks
         private UserService userService;
@@ -281,35 +278,34 @@ class UserServiceTest {
         private static final LocalDateTime JOINED = LocalDateTime.of(2026, 9, 1, 10, 0);
         private static final BusinessUser CAMILLE =
                         new BusinessUser(USER_ID, "camille", 4321, "Camille", "Durand", "pic.jpg", JOINED);
+        private static final IdentityUser CAMILLE_BEFORE = new IdentityUser("camille", "Camille", "Durand");
 
-        /** The transaction is a pass-through here: what it guarantees is the integration test's to prove. */
-        private void givenATransactionAndCamille() {
-                when(transactionRunner.inTransaction(any())).thenAnswer(call -> call.getArgument(0));
+        private void givenCamille() {
                 when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.just(CAMILLE));
                 when(userRepository.findKeycloakIdByUserId(USER_ID)).thenReturn(Mono.just("kc-camille"));
         }
 
         @Test
-        void updateProfile_ShouldWriteHereThenAtTheIdentityProvider_KeepingHashtagAndPicture() {
-                givenATransactionAndCamille();
+        void updateProfile_ShouldChangeTheIdentityProviderThenTheDatabase_KeepingHashtagAndPicture() {
+                givenCamille();
                 BusinessUser expected = new BusinessUser(USER_ID, "camille_d", 4321, "Cam", "Dupont", "pic.jpg", JOINED);
-                when(userRepository.updateProfile(expected)).thenReturn(Mono.just(expected));
                 when(identityProvider.updateProfile(any(), any())).thenReturn(Mono.empty());
+                when(userRepository.updateProfile(expected)).thenReturn(Mono.just(expected));
 
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("camille_d", "Cam", "Dupont")))
                                 .expectNext(expected)
                                 .verifyComplete();
 
-                InOrder order = inOrder(userRepository, identityProvider);
-                order.verify(userRepository).updateProfile(expected);
+                InOrder order = inOrder(identityProvider, userRepository);
                 order.verify(identityProvider).updateProfile("kc-camille", new IdentityUser("camille_d", "Cam", "Dupont"));
+                order.verify(userRepository).updateProfile(expected);
         }
 
         @Test
         void updateProfile_ShouldLowercaseTheUsername_AsTheIdentityProviderStoresIt() {
-                givenATransactionAndCamille();
-                when(userRepository.updateProfile(any())).thenAnswer(call -> Mono.just(call.getArgument(0)));
+                givenCamille();
                 when(identityProvider.updateProfile(any(), any())).thenReturn(Mono.empty());
+                when(userRepository.updateProfile(any())).thenAnswer(call -> Mono.just(call.getArgument(0)));
 
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("Camille_D", "Cam", "Dupont")))
                                 .expectNextMatches(user -> user.userName().equals("camille_d"))
@@ -319,20 +315,8 @@ class UserServiceTest {
         }
 
         @Test
-        void updateProfile_ShouldRunInsideOneTransaction() {
-                givenATransactionAndCamille();
-                when(userRepository.updateProfile(any())).thenAnswer(call -> Mono.just(call.getArgument(0)));
-                when(identityProvider.updateProfile(any(), any())).thenReturn(Mono.empty());
-
-                userService.updateProfile(USER_ID, new ProfileUpdate("camille", "Cam", "Dupont")).block();
-
-                verify(transactionRunner).inTransaction(any());
-        }
-
-        @Test
-        void updateProfile_ShouldFail_WhenTheIdentityProviderRefuses_SoTheTransactionRollsBack() {
-                givenATransactionAndCamille();
-                when(userRepository.updateProfile(any())).thenAnswer(call -> Mono.just(call.getArgument(0)));
+        void updateProfile_ShouldWriteNothing_WhenTheIdentityProviderRefuses() {
+                givenCamille();
                 when(identityProvider.updateProfile(any(), any()))
                                 .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USERNAME_TAKEN)));
 
@@ -340,24 +324,48 @@ class UserServiceTest {
                                 .expectErrorMatches(error -> error instanceof BusinessException business
                                                 && business.getErrorCode() == BusinessErrorCode.USERNAME_TAKEN)
                                 .verify();
+
+                verify(userRepository, never()).updateProfile(any());
+                verify(identityProvider, times(1)).updateProfile(any(), any());
         }
 
         @Test
-        void updateProfile_ShouldNotCallTheIdentityProvider_WhenTheDatabaseRefuses() {
-                givenATransactionAndCamille();
+        void updateProfile_ShouldGiveTheIdentityProviderItsPreviousValuesBack_WhenTheDatabaseRefuses() {
+                givenCamille();
+                when(identityProvider.updateProfile(any(), any())).thenReturn(Mono.empty());
                 when(userRepository.updateProfile(any()))
                                 .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USERNAME_TAKEN)));
 
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("lea", "Cam", "Dupont")))
-                                .expectError(BusinessException.class)
+                                .expectErrorMatches(error -> error instanceof BusinessException business
+                                                && business.getErrorCode() == BusinessErrorCode.USERNAME_TAKEN)
                                 .verify();
 
-                verify(identityProvider, never()).updateProfile(any(), any());
+                InOrder order = inOrder(identityProvider, userRepository);
+                order.verify(identityProvider).updateProfile("kc-camille", new IdentityUser("lea", "Cam", "Dupont"));
+                order.verify(userRepository).updateProfile(any());
+                order.verify(identityProvider).updateProfile("kc-camille", CAMILLE_BEFORE);
+        }
+
+        @Test
+        void updateProfile_ShouldKeepTheOriginalError_WhenTheUndoFailsToo() {
+                givenCamille();
+                RuntimeException databaseDown = new IllegalStateException("database down");
+                RuntimeException keycloakDown = new IllegalStateException("keycloak down");
+                when(identityProvider.updateProfile(eq("kc-camille"), any()))
+                                .thenReturn(Mono.empty())
+                                .thenReturn(Mono.error(keycloakDown));
+                when(userRepository.updateProfile(any())).thenReturn(Mono.error(databaseDown));
+
+                StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("camille_d", "Cam", "Dupont")))
+                                .expectErrorMatches(error -> error == databaseDown
+                                                && error.getSuppressed().length == 1
+                                                && error.getSuppressed()[0] == keycloakDown)
+                                .verify();
         }
 
         @Test
         void updateProfile_ShouldError_WhenTheUserDoesNotExist() {
-                when(transactionRunner.inTransaction(any())).thenAnswer(call -> call.getArgument(0));
                 when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.empty());
                 when(userRepository.findKeycloakIdByUserId(USER_ID)).thenReturn(Mono.empty());
 
@@ -366,6 +374,7 @@ class UserServiceTest {
                                                 && business.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
                                 .verify();
 
+                verify(identityProvider, never()).updateProfile(any(), any());
                 verify(userRepository, never()).updateProfile(any());
         }
 }

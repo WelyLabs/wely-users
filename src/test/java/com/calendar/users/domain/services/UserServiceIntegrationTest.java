@@ -2,6 +2,7 @@ package com.calendar.users.domain.services;
 
 import com.calendar.users.EphemeralDatabaseCheck;
 import com.calendar.users.domain.models.BusinessUser;
+import com.calendar.users.domain.models.IdentityUser;
 import com.calendar.users.domain.models.ProfileUpdate;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.UserRepository;
@@ -29,13 +30,14 @@ import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * The guarantee {@link UserService#updateProfile} rests on, against a real PostgreSQL: the
- * identity provider is called inside the transaction, so its refusal leaves the database as it
- * was — the row and the USER_MODIFIED event both rolled back. A unit test can only check the
- * order of the calls; only a database can say whether the rollback reaches the outbox.
+ * The saga {@link UserService#updateProfile} rests on, against a real PostgreSQL: the identity
+ * provider goes first, the row and USER_MODIFIED follow in the repository's transaction, and a
+ * database refusal gives the provider its previous values back. A unit test checks the order of
+ * the calls; only a database can say the refused write left neither the row nor the event.
  *
  * <p>Opt-in: CI sets {@code CI=true}, locally pass {@code -Dintegration.tests=true}.
  */
@@ -104,8 +106,8 @@ class UserServiceIntegrationTest {
     }
 
     @Test
-    @DisplayName("the identity provider refusing rolls back the row and the event")
-    void updateProfile_shouldRollBack_whenTheIdentityProviderRefuses() {
+    @DisplayName("the identity provider refusing leaves the row and the outbox untouched")
+    void updateProfile_shouldWriteNothing_whenTheIdentityProviderRefuses() {
         BusinessUser camille = camille();
         when(identityProvider.updateProfile(any(), any()))
                 .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USERNAME_TAKEN)));
@@ -114,9 +116,25 @@ class UserServiceIntegrationTest {
                 .expectError(BusinessException.class)
                 .verify();
 
+        assertThat(userRepository.getBusinessUserByUserId(camille.id()).block().userName()).isEqualTo("camille");
+        assertThat(modifiedEvents()).isZero();
+    }
+
+    @Test
+    @DisplayName("a database refusal rolls the row and event back, and undoes the identity provider")
+    void updateProfile_shouldUndoTheIdentityProvider_whenTheDatabaseRefuses() {
+        userRepository.save(new BusinessUser(null, "lea", 4321, "Léa", "Martin", null, LocalDateTime.now()), "kc-lea").block();
+        BusinessUser camille = camille();
+        when(identityProvider.updateProfile(any(), any())).thenReturn(Mono.empty());
+
+        // lea#4321 is taken in the database: the unique (user_name, hashtag) constraint refuses.
+        StepVerifier.create(userService.updateProfile(camille.id(), new ProfileUpdate("lea", "Cam", "Dupont")))
+                .expectError(BusinessException.class)
+                .verify();
+
         BusinessUser after = userRepository.getBusinessUserByUserId(camille.id()).block();
         assertThat(after.userName()).isEqualTo("camille");
-        assertThat(after.firstName()).isEqualTo("Camille");
         assertThat(modifiedEvents()).isZero();
+        verify(identityProvider).updateProfile("kc-camille", new IdentityUser("camille", "Camille", "Durand"));
     }
 }

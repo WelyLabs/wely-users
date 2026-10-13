@@ -81,10 +81,7 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
                 .then();
     }
 
-    /**
-     * Updates the names and writes USER_MODIFIED in one transaction, joined by the caller's when
-     * there is one: {@code UserService.updateProfile} also calls Keycloak inside it.
-     */
+    /** Updates the names and writes USER_MODIFIED in one transaction, like save does for USER_CREATED. */
     @Override
     @Transactional
     public Mono<BusinessUser> updateProfile(BusinessUser businessUser) {
