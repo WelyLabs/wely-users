@@ -3,7 +3,9 @@ package com.calendar.users.infrastructure.persistence.adapters;
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.models.UserAbout;
 import com.calendar.users.domain.models.IdentityToCheck;
+import com.calendar.users.domain.models.Theme;
 import com.calendar.users.domain.models.UserPicture;
+import com.calendar.users.domain.models.UserPreferences;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
@@ -164,5 +166,19 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
                 .flatMap(updated -> updated == 0
                         ? Mono.<UserAbout>error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND))
                         : Mono.just(about));
+    }
+
+    @Override
+    public Mono<UserPreferences> findPreferences(UUID userId) {
+        return userR2dbcRepository.findPreferencesById(userId)
+                .map(row -> new UserPreferences(row.theme() == null ? null : Theme.valueOf(row.theme())));
+    }
+
+    @Override
+    public Mono<UserPreferences> updatePreferences(UUID userId, UserPreferences preferences) {
+        return userR2dbcRepository.updatePreferences(userId, preferences.theme().name())
+                .flatMap(updated -> updated == 0
+                        ? Mono.<UserPreferences>error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND))
+                        : Mono.just(preferences));
     }
 }

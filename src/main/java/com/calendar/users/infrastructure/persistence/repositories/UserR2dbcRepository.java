@@ -3,6 +3,7 @@ package com.calendar.users.infrastructure.persistence.repositories;
 import com.calendar.users.infrastructure.persistence.models.IdentityToCheckRow;
 import com.calendar.users.infrastructure.persistence.models.UserAboutRow;
 import com.calendar.users.infrastructure.persistence.models.UserPictureRow;
+import com.calendar.users.infrastructure.persistence.models.UserPreferencesRow;
 import com.calendar.users.infrastructure.persistence.models.entities.UserEntity;
 import org.springframework.data.repository.reactive.ReactiveCrudRepository;
 import org.springframework.data.r2dbc.repository.Modifying;
@@ -64,4 +65,11 @@ public interface UserR2dbcRepository extends ReactiveCrudRepository<UserEntity, 
     @Modifying
     @Query("UPDATE app_user SET bio = :bio, interests = :interests WHERE id = :id")
     Mono<Long> updateAbout(UUID id, String bio, String[] interests);
+
+    @Query("SELECT theme FROM app_user WHERE id = :id")
+    Mono<UserPreferencesRow> findPreferencesById(UUID id);
+
+    @Modifying
+    @Query("UPDATE app_user SET theme = :theme WHERE id = :id")
+    Mono<Long> updatePreferences(UUID id, String theme);
 }

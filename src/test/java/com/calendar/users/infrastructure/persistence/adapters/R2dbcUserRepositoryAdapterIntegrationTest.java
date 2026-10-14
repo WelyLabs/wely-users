@@ -1,6 +1,8 @@
 package com.calendar.users.infrastructure.persistence.adapters;
 
 import com.calendar.users.domain.models.UserAbout;
+import com.calendar.users.domain.models.Theme;
+import com.calendar.users.domain.models.UserPreferences;
 
 import com.calendar.users.EphemeralDatabaseCheck;
 import com.calendar.users.domain.models.BusinessUser;
@@ -72,6 +74,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
             databaseClient.sql(Files.readString(Path.of("db/migration/V2__create_outbox_event.sql"))).then().block();
             databaseClient.sql(Files.readString(Path.of("db/migration/V3__add_identity_checked_at.sql"))).then().block();
             databaseClient.sql(Files.readString(Path.of("db/migration/V4__add_profile_about.sql"))).then().block();
+            databaseClient.sql(Files.readString(Path.of("db/migration/V5__add_theme_preference.sql"))).then().block();
             schemaApplied = true;
         }
 
@@ -363,5 +366,30 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         StepVerifier.create(adapter.findAbout(user.id()))
                 .expectNext(new UserAbout("Partante", List.of("Rando", "Jeux de société")))
                 .verifyComplete();
+    }
+
+    @Test
+    @DisplayName("the theme round-trips through its column, and a new user follows their device")
+    void updatePreferences_shouldRoundTripTheTheme() {
+        BusinessUser user = savedAgo("prefs", 6666, "kc-prefs", 0);
+
+        StepVerifier.create(adapter.findPreferences(user.id())).expectNext(UserPreferences.DEFAULT).verifyComplete();
+
+        adapter.updatePreferences(user.id(), new UserPreferences(Theme.DARK)).block();
+
+        StepVerifier.create(adapter.findPreferences(user.id()))
+                .expectNext(new UserPreferences(Theme.DARK))
+                .verifyComplete();
+    }
+
+    @Test
+    @DisplayName("the column refuses a theme outside the three")
+    void themeColumn_shouldRefuseAnUnknownTheme() {
+        BusinessUser user = savedAgo("prefs", 6667, "kc-prefs-bad", 0);
+
+        StepVerifier.create(databaseClient.sql("UPDATE app_user SET theme = 'PINK' WHERE id = :id")
+                        .bind("id", user.id()).then())
+                .expectError()
+                .verify();
     }
 }

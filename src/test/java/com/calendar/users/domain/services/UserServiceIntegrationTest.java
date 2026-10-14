@@ -73,7 +73,8 @@ class UserServiceIntegrationTest {
     void prepareSchema() throws Exception {
         if (!schemaApplied) {
             for (String migration : new String[] {"V1__create_app_user.sql", "V2__create_outbox_event.sql",
-                    "V3__add_identity_checked_at.sql", "V4__add_profile_about.sql"}) {
+                    "V3__add_identity_checked_at.sql", "V4__add_profile_about.sql",
+                    "V5__add_theme_preference.sql"}) {
                 databaseClient.sql(Files.readString(Path.of("db/migration/" + migration))).then().block();
             }
             schemaApplied = true;

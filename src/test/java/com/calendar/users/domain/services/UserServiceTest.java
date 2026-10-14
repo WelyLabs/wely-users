@@ -7,6 +7,8 @@ import java.util.List;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.calendar.users.domain.models.UserAbout;
+import com.calendar.users.domain.models.Theme;
+import com.calendar.users.domain.models.UserPreferences;
 
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.ports.IdentityProvider;
@@ -762,5 +764,44 @@ class UserServiceTest {
                                                 && e.getErrorCode() == TechnicalErrorCode.SOCIAL_ERROR)
                                 .verify();
                 verify(userRepository, never()).findAbout(any());
+        }
+
+        @Test
+        void preferences_shouldReturnWhatTheUserChose() {
+                UUID userId = UUID.randomUUID();
+                when(userRepository.findPreferences(userId)).thenReturn(Mono.just(new UserPreferences(Theme.DARK)));
+
+                StepVerifier.create(userService.preferences(userId))
+                                .expectNext(new UserPreferences(Theme.DARK))
+                                .verifyComplete();
+        }
+
+        @Test
+        void preferences_shouldBeTheDefaults_whenNothingIsStored() {
+                UUID userId = UUID.randomUUID();
+                when(userRepository.findPreferences(userId)).thenReturn(Mono.empty());
+
+                StepVerifier.create(userService.preferences(userId)).expectNext(UserPreferences.DEFAULT).verifyComplete();
+        }
+
+        @Test
+        void updatePreferences_shouldStoreThem_withoutTouchingTheIdentityProvider() {
+                UUID userId = UUID.randomUUID();
+                UserPreferences dark = new UserPreferences(Theme.DARK);
+                when(userRepository.updatePreferences(userId, dark)).thenReturn(Mono.just(dark));
+
+                StepVerifier.create(userService.updatePreferences(userId, dark)).expectNext(dark).verifyComplete();
+                verifyNoInteractions(identityProvider);
+        }
+
+        @Test
+        void updatePreferences_shouldFail_forAnUnknownUser() {
+                UUID userId = UUID.randomUUID();
+                when(userRepository.updatePreferences(any(), any()))
+                                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
+
+                StepVerifier.create(userService.updatePreferences(userId, UserPreferences.DEFAULT))
+                                .expectError(BusinessException.class)
+                                .verify();
         }
 }

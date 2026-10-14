@@ -155,6 +155,8 @@ Toutes les routes sont préfixées par `/user-service` et exposées via la gatew
 | `GET` | `/profile` | JWT | Profil de l'utilisateur courant (identité lue dans le claim `businessId`) |
 | `GET` | `/profile/about` | JWT | Présentation de l'utilisateur courant : bio (160 caractères) et centres d'intérêt (5 au plus, 24 caractères chacun) |
 | `PUT` | `/profile/about` | JWT | La remplace ; espaces nettoyés, doublons retirés (« Rando » et « rando »), refus au-delà des limites (`USR-BUS-008`, 400) plutôt que coupure |
+| `GET` | `/profile/preferences` | JWT | Préférences de l'utilisateur courant : `{"theme": "LIGHT" \| "DARK" \| "SYSTEM"}`, `SYSTEM` s'il n'a jamais choisi |
+| `PUT` | `/profile/preferences` | JWT | Les remplace ; un thème absent (`USR-VAL-001`) ou hors des trois (`USR-REQ-000`) est refusé en 400 |
 | `GET` | `/users/{userId}/profile` | JWT | Profil d'un ami (identité, date d'inscription, bio, centres d'intérêt). Amitié vérifiée auprès de `wely-social` avec le jeton de l'appelant : 403 `USR-BUS-009` sinon, 404 `USR-BUS-001` si l'utilisateur est inconnu, 502 `USR-TEC-005` si `wely-social` ne répond pas. Son propre id renvoie son profil sans appel |
 | `POST` | `/profile/provision` | `X-Internal-Secret` | **Interne.** Crée l'utilisateur à l'inscription, depuis l'étape d'inscription de Keycloak. Idempotent sur l'UUID Keycloak |
 | `GET` | `/profile/resolve/{keycloakId}` | `X-Internal-Secret` | **Interne.** Lit le `businessId` d'un UUID Keycloak ; 404 s'il est inconnu |
@@ -218,6 +220,7 @@ CREATE TABLE app_user (
     identity_checked_at TIMESTAMPTZ,        -- V3
     bio             TEXT,                   -- V4
     interests       TEXT[] NOT NULL DEFAULT '{}',  -- V4
+    theme           TEXT NOT NULL DEFAULT 'SYSTEM' CHECK (theme IN ('LIGHT', 'DARK', 'SYSTEM')),  -- V5
     CONSTRAINT unique_user_identity UNIQUE (user_name, hashtag)
 );
 
@@ -235,7 +238,7 @@ CREATE TABLE outbox_event (
 CREATE INDEX idx_outbox_event_pending ON outbox_event (id) WHERE published_at IS NULL;
 ```
 
-Les deux tables sont décrites dans `db/migration/`, **volontairement hors du classpath** pour qu'aucune initialisation Spring ne les exécute à l'insu de qui que ce soit. `V2__create_outbox_event.sql` doit être appliqué **avant** de déployer la version qui écrit dedans : l'insertion fait partie du provisioning, donc une table absente casse l'inscription au lieu de la dégrader. `V3__add_identity_checked_at.sql` doit l'être avant la version qui nettoie les orphelins, et avant le jeu de données de démo qui remplit la colonne. `V4__add_profile_about.sql` (bio et centres d'intérêt) doit l'être avant la version qui les lit : sans les colonnes, la page de profil ne charge plus sa présentation.
+Les deux tables sont décrites dans `db/migration/`, **volontairement hors du classpath** pour qu'aucune initialisation Spring ne les exécute à l'insu de qui que ce soit. `V2__create_outbox_event.sql` doit être appliqué **avant** de déployer la version qui écrit dedans : l'insertion fait partie du provisioning, donc une table absente casse l'inscription au lieu de la dégrader. `V3__add_identity_checked_at.sql` doit l'être avant la version qui nettoie les orphelins, et avant le jeu de données de démo qui remplit la colonne. `V4__add_profile_about.sql` (bio et centres d'intérêt) doit l'être avant la version qui les lit : sans les colonnes, la page de profil ne charge plus sa présentation. `V5__add_theme_preference.sql` (thème de l'application) doit l'être avant la version qui le lit : sans la colonne, l'application ne retrouve plus le thème choisi et suit l'appareil.
 
 ---
 

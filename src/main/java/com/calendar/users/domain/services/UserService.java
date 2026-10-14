@@ -8,6 +8,7 @@ import com.calendar.users.domain.models.OrphanSweep;
 import com.calendar.users.domain.models.ProfileUpdate;
 import com.calendar.users.domain.models.UserAbout;
 import com.calendar.users.domain.models.UserPicture;
+import com.calendar.users.domain.models.UserPreferences;
 import com.calendar.users.domain.models.MediaProfile;
 import com.calendar.users.domain.ports.FriendshipChecker;
 import com.calendar.users.domain.ports.IdentityProvider;
@@ -127,6 +128,19 @@ public class UserService {
      */
     public Mono<UserAbout> updateAbout(UUID userId, UserAbout about) {
         return userRepository.updateAbout(userId, about);
+    }
+
+    /** The user's preferences; the defaults for a user who never chose. */
+    public Mono<UserPreferences> preferences(UUID userId) {
+        return userRepository.findPreferences(userId).defaultIfEmpty(UserPreferences.DEFAULT);
+    }
+
+    /**
+     * Replaces the user's preferences. Only the web app reads them, from this service: the identity
+     * provider and the other services have no use for them, so no event is sent.
+     */
+    public Mono<UserPreferences> updatePreferences(UUID userId, UserPreferences preferences) {
+        return userRepository.updatePreferences(userId, preferences);
     }
 
     /**
