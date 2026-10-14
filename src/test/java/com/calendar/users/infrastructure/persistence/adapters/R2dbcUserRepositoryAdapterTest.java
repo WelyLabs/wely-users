@@ -3,6 +3,9 @@ package com.calendar.users.infrastructure.persistence.adapters;
 import static org.mockito.ArgumentMatchers.any;
 
 import com.calendar.users.infrastructure.persistence.models.UserAboutRow;
+import com.calendar.users.infrastructure.persistence.models.UserPreferencesRow;
+import com.calendar.users.domain.models.Theme;
+import com.calendar.users.domain.models.UserPreferences;
 
 import com.calendar.users.domain.models.UserAbout;
 
@@ -387,6 +390,52 @@ class R2dbcUserRepositoryAdapterTest {
                 when(userR2dbcRepository.updateAbout(any(), any(), any())).thenReturn(Mono.just(0L));
 
                 StepVerifier.create(adapter.updateAbout(userId, UserAbout.EMPTY))
+                                .expectErrorMatches(error -> error instanceof BusinessException exception
+                                                && exception.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
+                                .verify();
+        }
+
+        @Test
+        void findPreferences_shouldReadTheStoredTheme() {
+                UUID userId = UUID.randomUUID();
+                when(userR2dbcRepository.findPreferencesById(userId)).thenReturn(Mono.just(new UserPreferencesRow("DARK")));
+
+                StepVerifier.create(adapter.findPreferences(userId))
+                                .expectNext(new UserPreferences(Theme.DARK))
+                                .verifyComplete();
+        }
+
+        @Test
+        void findPreferences_shouldReadANullThemeAsTheDevices() {
+                UUID userId = UUID.randomUUID();
+                when(userR2dbcRepository.findPreferencesById(userId)).thenReturn(Mono.just(new UserPreferencesRow(null)));
+
+                StepVerifier.create(adapter.findPreferences(userId)).expectNext(UserPreferences.DEFAULT).verifyComplete();
+        }
+
+        @Test
+        void findPreferences_shouldBeEmpty_forAnUnknownUser() {
+                UUID userId = UUID.randomUUID();
+                when(userR2dbcRepository.findPreferencesById(userId)).thenReturn(Mono.empty());
+
+                StepVerifier.create(adapter.findPreferences(userId)).verifyComplete();
+        }
+
+        @Test
+        void updatePreferences_shouldWriteTheThemesName() {
+                UUID userId = UUID.randomUUID();
+                UserPreferences light = new UserPreferences(Theme.LIGHT);
+                when(userR2dbcRepository.updatePreferences(userId, "LIGHT")).thenReturn(Mono.just(1L));
+
+                StepVerifier.create(adapter.updatePreferences(userId, light)).expectNext(light).verifyComplete();
+        }
+
+        @Test
+        void updatePreferences_shouldReportAnUnknownUser() {
+                UUID userId = UUID.randomUUID();
+                when(userR2dbcRepository.updatePreferences(any(), any())).thenReturn(Mono.just(0L));
+
+                StepVerifier.create(adapter.updatePreferences(userId, UserPreferences.DEFAULT))
                                 .expectErrorMatches(error -> error instanceof BusinessException exception
                                                 && exception.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
                                 .verify();

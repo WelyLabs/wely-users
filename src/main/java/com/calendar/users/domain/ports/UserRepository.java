@@ -4,6 +4,7 @@ import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.models.UserAbout;
 import com.calendar.users.domain.models.IdentityToCheck;
 import com.calendar.users.domain.models.UserPicture;
+import com.calendar.users.domain.models.UserPreferences;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -51,4 +52,10 @@ public interface UserRepository {
 
     /** Replaces the user's bio and interests; fails with USER_NOT_FOUND for an unknown user. */
     Mono<UserAbout> updateAbout(UUID userId, UserAbout about);
+
+    /** The user's preferences; empty for an unknown user. */
+    Mono<UserPreferences> findPreferences(UUID userId);
+
+    /** Replaces the user's preferences; fails with USER_NOT_FOUND for an unknown user. */
+    Mono<UserPreferences> updatePreferences(UUID userId, UserPreferences preferences);
 }
