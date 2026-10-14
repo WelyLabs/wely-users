@@ -50,8 +50,13 @@ class SocialApiAdapterTest {
             }
         });
         server.start();
-        adapter = new SocialApiAdapter(new SocialApiClientConfig()
-                .socialApiWebClient("http://127.0.0.1:" + server.getAddress().getPort()), Duration.ofMillis(300));
+        // A generous timeout: a cold client's first call on a busy CI runner took over 300ms.
+        adapter = adapterWithTimeout(Duration.ofSeconds(5));
+    }
+
+    private SocialApiAdapter adapterWithTimeout(Duration timeout) {
+        return new SocialApiAdapter(new SocialApiClientConfig()
+                .socialApiWebClient("http://127.0.0.1:" + server.getAddress().getPort()), timeout);
     }
 
     @AfterEach
@@ -116,6 +121,7 @@ class SocialApiAdapterTest {
     @Test
     void areFriends_shouldReportSocialError_whenSocialTimesOut() {
         delayMillis = 1500;
+        adapter = adapterWithTimeout(Duration.ofMillis(300));
 
         StepVerifier.create(areFriendsAsCaller()).expectErrorMatches(SocialApiAdapterTest::isSocialError).verify();
     }
