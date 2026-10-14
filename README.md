@@ -238,7 +238,9 @@ CREATE TABLE outbox_event (
 CREATE INDEX idx_outbox_event_pending ON outbox_event (id) WHERE published_at IS NULL;
 ```
 
-Les deux tables sont décrites dans `db/migration/`, **volontairement hors du classpath** pour qu'aucune initialisation Spring ne les exécute à l'insu de qui que ce soit. `V2__create_outbox_event.sql` doit être appliqué **avant** de déployer la version qui écrit dedans : l'insertion fait partie du provisioning, donc une table absente casse l'inscription au lieu de la dégrader. `V3__add_identity_checked_at.sql` doit l'être avant la version qui nettoie les orphelins, et avant le jeu de données de démo qui remplit la colonne. `V4__add_profile_about.sql` (bio et centres d'intérêt) doit l'être avant la version qui les lit : sans les colonnes, la page de profil ne charge plus sa présentation. `V5__add_theme_preference.sql` (thème de l'application) doit l'être avant la version qui le lit : sans la colonne, l'application ne retrouve plus le thème choisi et suit l'appareil.
+Le schéma est dans `src/main/resources/db/migration/` et **Flyway l'applique au démarrage**, avant que le service ne prenne du trafic : une version ne peut plus partir sans les colonnes qu'elle lit. Flyway ne parle que JDBC ; il ouvre sa propre connexion (`DB_JDBC_URL`) le temps de la migration, et l'auto-configuration JDBC est exclue pour qu'aucun pool ni gestionnaire de transactions JDBC ne s'installe à côté de R2DBC.
+
+Les bases déployées ont reçu V1 à V5 à la main, avant Flyway : `baseline-on-migrate` avec `baseline-version=5` les inscrit en V5 sans rien rejouer. Une base vide reçoit toutes les migrations depuis V1. Une évolution du schéma = un nouveau fichier `V6__….sql` ; un fichier déjà appliqué ne se modifie plus (Flyway refuse de démarrer si sa somme de contrôle change). Les tests d'intégration construisent leur base avec ces mêmes migrations.
 
 ---
 
@@ -418,6 +420,5 @@ Elles portent sur ce qu'un mock ne peut pas montrer : que `FOR UPDATE SKIP LOCKE
 
 ## Limites connues
 
-- **Pas d'outil de migration.** Les fichiers de `db/migration/` sont appliqués à la main, sans Flyway ni Liquibase. Rien ne vérifie au démarrage que le schéma correspond au code.
 - **Pas de réconciliation.** L'outbox empêche une classe de pannes ; il ne dit pas si le graphe social a dérivé pour une autre raison. Comparer le nombre de lignes `app_user` au nombre de nœuds `User` couvrirait *toutes* les causes.
 - **Le relais tient sa transaction pendant l'envoi.** Les verrous durent le temps de l'appel au broker. C'est le bon compromis à un événement par inscription, pas à un débit soutenu.

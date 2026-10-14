@@ -5,6 +5,7 @@ import com.calendar.users.domain.models.Theme;
 import com.calendar.users.domain.models.UserPreferences;
 
 import com.calendar.users.EphemeralDatabaseCheck;
+import com.calendar.users.FlywayTestDatabase;
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
@@ -14,17 +15,22 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
+import org.flywaydb.core.api.configuration.FluentConfiguration;
+import org.flywaydb.core.api.output.MigrateResult;
+import org.springframework.boot.flyway.autoconfigure.FlywayProperties;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import reactor.test.StepVerifier;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -39,9 +45,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code Mono<UUID>} is the kind of projection that either works or fails at runtime, and the
  * unit test — which mocks the repository — cannot tell which.
  *
- * <p>The schema comes from {@code db/migration/V1__create_app_user.sql}, read from disk rather
- * than copied into the test resources. A copy would drift, and the constraint this class cares
- * about most is declared in that file.
+ * <p>The schema is built by Flyway from the migrations the image ships, not from a copy in the
+ * test resources. A copy would drift, and the constraint this class cares about most is declared
+ * in {@code V1__create_app_user.sql}.
  *
  * <p>Opt-in: CI sets {@code CI=true}, locally pass {@code -Dintegration.tests=true}.
  */
@@ -59,25 +65,22 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         return System.getenv("CI") != null || Boolean.getBoolean("integration.tests");
     }
 
+    @DynamicPropertySource
+    static void migrations(DynamicPropertyRegistry registry) {
+        FlywayTestDatabase.migrate(registry, POSTGRES);
+    }
+
     @Autowired
     private R2dbcUserRepositoryAdapter adapter;
 
     @Autowired
     private DatabaseClient databaseClient;
 
-    private static boolean schemaApplied;
+    @Autowired
+    private FlywayProperties flywayProperties;
 
     @BeforeEach
-    void prepareSchema() throws Exception {
-        if (!schemaApplied) {
-            databaseClient.sql(Files.readString(Path.of("db/migration/V1__create_app_user.sql"))).then().block();
-            databaseClient.sql(Files.readString(Path.of("db/migration/V2__create_outbox_event.sql"))).then().block();
-            databaseClient.sql(Files.readString(Path.of("db/migration/V3__add_identity_checked_at.sql"))).then().block();
-            databaseClient.sql(Files.readString(Path.of("db/migration/V4__add_profile_about.sql"))).then().block();
-            databaseClient.sql(Files.readString(Path.of("db/migration/V5__add_theme_preference.sql"))).then().block();
-            schemaApplied = true;
-        }
-
+    void prepareSchema() {
         // Before any DELETE. See EphemeralDatabaseCheck: this fixture empties app_user, and
         // that is exactly how the dev users were lost.
         EphemeralDatabaseCheck.verifyThrowaway(databaseClient);
@@ -391,5 +394,47 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
                         .bind("id", user.id()).then())
                 .expectError()
                 .verify();
+    }
+
+    @Test
+    @DisplayName("an empty database gets every shipped migration from V1")
+    void migrations_shouldBuildAnEmptyDatabaseFromV1() {
+        List<String> applied = databaseClient.sql(
+                        "SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank")
+                .map(row -> row.get(0, String.class))
+                .all()
+                .collectList()
+                .block();
+
+        assertThat(applied).startsWith("1", "2", "3", "4", "5");
+    }
+
+    @Test
+    @DisplayName("a database migrated to V5 by hand is baselined, nothing up to V5 runs again")
+    void migrations_shouldBaselineAHandMigratedDatabase() {
+        String schema = "hand_migrated";
+        // V1 to V5 as they were applied before Flyway: the tables are there, the history is not.
+        flywayOn(schema).target(MigrationVersion.fromVersion("5")).load().migrate();
+        databaseClient.sql("DROP TABLE " + schema + ".flyway_schema_history").then().block();
+
+        try {
+            MigrateResult result = flywayOn(schema)
+                    .baselineOnMigrate(flywayProperties.isBaselineOnMigrate())
+                    .baselineVersion(flywayProperties.getBaselineVersion())
+                    .load()
+                    .migrate();
+
+            assertThat(result.migrations)
+                    .allSatisfy(migration -> assertThat(MigrationVersion.fromVersion(migration.version))
+                            .isGreaterThan(MigrationVersion.fromVersion("5")));
+        } finally {
+            databaseClient.sql("DROP SCHEMA " + schema + " CASCADE").then().block();
+        }
+    }
+
+    private static FluentConfiguration flywayOn(String schema) {
+        return Flyway.configure()
+                .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .schemas(schema);
     }
 }

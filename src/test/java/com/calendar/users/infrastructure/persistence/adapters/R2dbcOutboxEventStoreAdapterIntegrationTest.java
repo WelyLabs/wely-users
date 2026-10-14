@@ -1,6 +1,7 @@
 package com.calendar.users.infrastructure.persistence.adapters;
 
 import com.calendar.users.EphemeralDatabaseCheck;
+import com.calendar.users.FlywayTestDatabase;
 import com.calendar.users.infrastructure.persistence.models.entities.OutboxEventEntity;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -11,6 +12,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -19,8 +22,6 @@ import reactor.core.Disposable;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -57,6 +58,11 @@ class R2dbcOutboxEventStoreAdapterIntegrationTest {
         return System.getenv("CI") != null || Boolean.getBoolean("integration.tests");
     }
 
+    @DynamicPropertySource
+    static void migrations(DynamicPropertyRegistry registry) {
+        FlywayTestDatabase.migrate(registry, POSTGRES);
+    }
+
     @Autowired
     private R2dbcOutboxEventStoreAdapter adapter;
 
@@ -66,18 +72,8 @@ class R2dbcOutboxEventStoreAdapterIntegrationTest {
     @Autowired
     private DatabaseClient databaseClient;
 
-    private static boolean schemaApplied;
-
     @BeforeEach
-    void prepareSchema() throws Exception {
-        if (!schemaApplied) {
-            // Read from db/migration rather than from a copy in the test resources: a copy
-            // drifts, and the partial index and the attempts default are the subject here.
-            databaseClient.sql(Files.readString(Path.of("db/migration/V2__create_outbox_event.sql")))
-                    .then().block();
-            schemaApplied = true;
-        }
-
+    void prepareSchema() {
         // Before any DELETE. See EphemeralDatabaseCheck: this fixture empties its table,
         // and it has already been pointed at a deployed database once.
         EphemeralDatabaseCheck.verifyThrowaway(databaseClient);
