@@ -1,6 +1,7 @@
 package com.calendar.users.domain.services;
 
 import com.calendar.users.EphemeralDatabaseCheck;
+import com.calendar.users.FlywayTestDatabase;
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.models.IdentityUser;
 import com.calendar.users.domain.models.ProfileUpdate;
@@ -17,6 +18,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -24,8 +27,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -55,6 +56,11 @@ class UserServiceIntegrationTest {
         return System.getenv("CI") != null || Boolean.getBoolean("integration.tests");
     }
 
+    @DynamicPropertySource
+    static void migrations(DynamicPropertyRegistry registry) {
+        FlywayTestDatabase.migrate(registry, POSTGRES);
+    }
+
     @Autowired
     private UserService userService;
 
@@ -67,18 +73,8 @@ class UserServiceIntegrationTest {
     @MockitoBean
     private IdentityProvider identityProvider;
 
-    private static boolean schemaApplied;
-
     @BeforeEach
-    void prepareSchema() throws Exception {
-        if (!schemaApplied) {
-            for (String migration : new String[] {"V1__create_app_user.sql", "V2__create_outbox_event.sql",
-                    "V3__add_identity_checked_at.sql", "V4__add_profile_about.sql",
-                    "V5__add_theme_preference.sql"}) {
-                databaseClient.sql(Files.readString(Path.of("db/migration/" + migration))).then().block();
-            }
-            schemaApplied = true;
-        }
+    void prepareSchema() {
         EphemeralDatabaseCheck.verifyThrowaway(databaseClient);
         databaseClient.sql("DELETE FROM app_user").then().block();
         databaseClient.sql("DELETE FROM outbox_event").then().block();

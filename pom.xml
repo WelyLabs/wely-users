@@ -125,6 +125,16 @@
 			<artifactId>postgresql</artifactId>
 			<scope>runtime</scope>
 		</dependency>
+		<!-- Schema migrations at startup. Flyway only speaks JDBC: the connection is opened for
+		     the migration and closed before the reactive service takes traffic. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-flyway</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
 		<!-- Spring Boot 4 a renommé spring-boot-starter-aop en -aspectj. -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
