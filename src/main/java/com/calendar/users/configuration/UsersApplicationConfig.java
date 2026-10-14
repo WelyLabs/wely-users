@@ -1,5 +1,6 @@
 package com.calendar.users.configuration;
 
+import com.calendar.users.domain.ports.FriendshipChecker;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.MediaStore;
 import com.calendar.users.domain.ports.UserRepository;
@@ -12,7 +13,7 @@ public class UsersApplicationConfig {
 
     @Bean
     public UserService userService(UserRepository userRepository, IdentityProvider identityProvider,
-                                   MediaStore mediaStore) {
-        return new UserService(userRepository, identityProvider, mediaStore);
+                                   MediaStore mediaStore, FriendshipChecker friendshipChecker) {
+        return new UserService(userRepository, identityProvider, mediaStore, friendshipChecker);
     }
 }

@@ -167,6 +167,13 @@ class WebFluxSecurityConfigTest {
     }
 
     @Test
+    void apiHttpSecurity_shouldRequireATokenOnAFriendsProfile() {
+        client().get().uri("/user-service/users/" + UUID.randomUUID() + "/profile")
+                .exchange()
+                .expectStatus().isUnauthorized();
+    }
+
+    @Test
     void apiHttpSecurity_shouldAllowAuthenticatedRequests() {
         UUID businessId = UUID.randomUUID();
         when(userRepository.getBusinessUserByUserId(any(UUID.class)))
