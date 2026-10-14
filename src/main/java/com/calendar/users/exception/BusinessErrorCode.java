@@ -64,7 +64,14 @@ public enum BusinessErrorCode {
             "USR-BUS-008",
             "Invalid profile presentation",
             "A bio holds up to 160 characters, and a profile up to 5 interests of up to 24 characters each.",
-            HttpStatus.BAD_REQUEST);
+            HttpStatus.BAD_REQUEST),
+
+    /** Another user's profile is shown to their friends only. */
+    NOT_A_FRIEND(
+            "USR-BUS-009",
+            "Not a friend",
+            "Only this user's friends can see their profile.",
+            HttpStatus.FORBIDDEN);
 
     private final String code;
     private final String title;

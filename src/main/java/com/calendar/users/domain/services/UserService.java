@@ -1,6 +1,7 @@
 package com.calendar.users.domain.services;
 
 import com.calendar.users.domain.models.BusinessUser;
+import com.calendar.users.domain.models.FriendProfile;
 import com.calendar.users.domain.models.IdentityToCheck;
 import com.calendar.users.domain.models.IdentityUser;
 import com.calendar.users.domain.models.OrphanSweep;
@@ -8,6 +9,7 @@ import com.calendar.users.domain.models.ProfileUpdate;
 import com.calendar.users.domain.models.UserAbout;
 import com.calendar.users.domain.models.UserPicture;
 import com.calendar.users.domain.models.MediaProfile;
+import com.calendar.users.domain.ports.FriendshipChecker;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.MediaStore;
 import com.calendar.users.domain.ports.UserRepository;
@@ -34,11 +36,14 @@ public class UserService {
     private final UserRepository userRepository;
     private final IdentityProvider identityProvider;
     private final MediaStore mediaStore;
+    private final FriendshipChecker friendshipChecker;
 
-    public UserService(UserRepository userRepository, IdentityProvider identityProvider, MediaStore mediaStore) {
+    public UserService(UserRepository userRepository, IdentityProvider identityProvider, MediaStore mediaStore,
+                       FriendshipChecker friendshipChecker) {
         this.userRepository = userRepository;
         this.identityProvider = identityProvider;
         this.mediaStore = mediaStore;
+        this.friendshipChecker = friendshipChecker;
     }
 
     public Mono<BusinessUser> readProfile(UUID userId) {
@@ -94,6 +99,26 @@ public class UserService {
     /** The user's bio and interests, as they wrote them; empty when they wrote none. */
     public Mono<UserAbout> about(UUID userId) {
         return userRepository.findAbout(userId).defaultIfEmpty(UserAbout.EMPTY);
+    }
+
+    /**
+     * Another user's profile, for their friends only. An unknown user is 404 before anything else;
+     * the viewer asking for themself is not sent to the social graph.
+     */
+    public Mono<FriendProfile> friendProfile(UUID viewerId, UUID userId) {
+        return readProfile(userId)
+                .flatMap(user -> isAllowed(viewerId, userId)
+                        .filter(Boolean::booleanValue)
+                        .switchIfEmpty(Mono.error(() -> new BusinessException(BusinessErrorCode.NOT_A_FRIEND)))
+                        // Deferred: built eagerly, the bio would be read even for a refused viewer.
+                        .then(Mono.defer(() -> about(userId)))
+                        .map(about -> FriendProfile.of(user, about)));
+    }
+
+    private Mono<Boolean> isAllowed(UUID viewerId, UUID userId) {
+        return viewerId.equals(userId)
+                ? Mono.just(true)
+                : friendshipChecker.areFriends(viewerId.toString(), userId.toString());
     }
 
     /**

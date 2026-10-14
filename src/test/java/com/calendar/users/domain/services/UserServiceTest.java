@@ -13,6 +13,8 @@ import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.models.MediaProfile;
 import com.calendar.users.domain.models.StoredMedia;
 import com.calendar.users.domain.ports.MediaStore;
+import com.calendar.users.domain.ports.FriendshipChecker;
+import com.calendar.users.domain.models.FriendProfile;
 import com.calendar.users.exception.TechnicalErrorCode;
 import com.calendar.users.exception.TechnicalException;
 import com.calendar.users.domain.models.UserPicture;
@@ -55,6 +57,9 @@ class UserServiceTest {
 
         @Mock
         private MediaStore mediaStore;
+
+        @Mock
+        private FriendshipChecker friendshipChecker;
 
 
         @InjectMocks
@@ -681,5 +686,81 @@ class UserServiceTest {
                 StepVerifier.create(userService.updateAbout(userId, UserAbout.EMPTY))
                                 .expectError(BusinessException.class)
                                 .verify();
+        }
+
+        private static final UUID VIEWER = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        private static final UUID FRIEND = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        private static final LocalDateTime FRIEND_JOINED = LocalDateTime.of(2026, 1, 15, 10, 30);
+        private static final BusinessUser FRIEND_USER =
+                        new BusinessUser(FRIEND, "lea", 4242, "Léa", "Martin", "avatars/x.jpg", FRIEND_JOINED);
+
+        @Test
+        void friendProfile_shouldReturnTheProfileAndAbout_whenTheyAreFriends() {
+                when(userRepository.getBusinessUserByUserId(FRIEND)).thenReturn(Mono.just(FRIEND_USER));
+                when(friendshipChecker.areFriends(VIEWER.toString(), FRIEND.toString())).thenReturn(Mono.just(true));
+                when(userRepository.findAbout(FRIEND)).thenReturn(Mono.just(new UserAbout("Partante", List.of("Rando"))));
+
+                StepVerifier.create(userService.friendProfile(VIEWER, FRIEND))
+                                .expectNext(new FriendProfile(FRIEND, "lea", 4242, "Léa", "Martin", FRIEND_JOINED,
+                                                "Partante", List.of("Rando")))
+                                .verifyComplete();
+        }
+
+        @Test
+        void friendProfile_shouldGiveEmptyAbout_whenTheFriendWroteNothing() {
+                when(userRepository.getBusinessUserByUserId(FRIEND)).thenReturn(Mono.just(FRIEND_USER));
+                when(friendshipChecker.areFriends(VIEWER.toString(), FRIEND.toString())).thenReturn(Mono.just(true));
+                when(userRepository.findAbout(FRIEND)).thenReturn(Mono.empty());
+
+                StepVerifier.create(userService.friendProfile(VIEWER, FRIEND))
+                                .expectNextMatches(profile -> profile.bio() == null && profile.interests().isEmpty())
+                                .verifyComplete();
+        }
+
+        @Test
+        void friendProfile_shouldRefuseWithNotAFriend_whenTheyAreNotFriends() {
+                when(userRepository.getBusinessUserByUserId(FRIEND)).thenReturn(Mono.just(FRIEND_USER));
+                when(friendshipChecker.areFriends(VIEWER.toString(), FRIEND.toString())).thenReturn(Mono.just(false));
+
+                StepVerifier.create(userService.friendProfile(VIEWER, FRIEND))
+                                .expectErrorMatches(error -> error instanceof BusinessException e
+                                                && e.getErrorCode() == BusinessErrorCode.NOT_A_FRIEND)
+                                .verify();
+                verify(userRepository, never()).findAbout(any());
+        }
+
+        @Test
+        void friendProfile_shouldReturnTheirOwnProfile_withoutAskingSocial_whenViewerIsTheUser() {
+                when(userRepository.getBusinessUserByUserId(FRIEND)).thenReturn(Mono.just(FRIEND_USER));
+                when(userRepository.findAbout(FRIEND)).thenReturn(Mono.empty());
+
+                StepVerifier.create(userService.friendProfile(FRIEND, FRIEND))
+                                .expectNextMatches(profile -> profile.id().equals(FRIEND))
+                                .verifyComplete();
+                verifyNoInteractions(friendshipChecker);
+        }
+
+        @Test
+        void friendProfile_shouldFailWithUserNotFound_whenTheUserIsUnknown() {
+                when(userRepository.getBusinessUserByUserId(FRIEND)).thenReturn(Mono.empty());
+
+                StepVerifier.create(userService.friendProfile(VIEWER, FRIEND))
+                                .expectErrorMatches(error -> error instanceof BusinessException e
+                                                && e.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
+                                .verify();
+                verifyNoInteractions(friendshipChecker);
+        }
+
+        @Test
+        void friendProfile_shouldPropagateTheOutage_whenSocialIsUnavailable() {
+                when(userRepository.getBusinessUserByUserId(FRIEND)).thenReturn(Mono.just(FRIEND_USER));
+                when(friendshipChecker.areFriends(VIEWER.toString(), FRIEND.toString()))
+                                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.SOCIAL_ERROR)));
+
+                StepVerifier.create(userService.friendProfile(VIEWER, FRIEND))
+                                .expectErrorMatches(error -> error instanceof TechnicalException e
+                                                && e.getErrorCode() == TechnicalErrorCode.SOCIAL_ERROR)
+                                .verify();
+                verify(userRepository, never()).findAbout(any());
         }
 }

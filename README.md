@@ -155,6 +155,7 @@ Toutes les routes sont préfixées par `/user-service` et exposées via la gatew
 | `GET` | `/profile` | JWT | Profil de l'utilisateur courant (identité lue dans le claim `businessId`) |
 | `GET` | `/profile/about` | JWT | Présentation de l'utilisateur courant : bio (160 caractères) et centres d'intérêt (5 au plus, 24 caractères chacun) |
 | `PUT` | `/profile/about` | JWT | La remplace ; espaces nettoyés, doublons retirés (« Rando » et « rando »), refus au-delà des limites (`USR-BUS-008`, 400) plutôt que coupure |
+| `GET` | `/users/{userId}/profile` | JWT | Profil d'un ami (identité, date d'inscription, bio, centres d'intérêt). Amitié vérifiée auprès de `wely-social` avec le jeton de l'appelant : 403 `USR-BUS-009` sinon, 404 `USR-BUS-001` si l'utilisateur est inconnu, 502 `USR-TEC-005` si `wely-social` ne répond pas. Son propre id renvoie son profil sans appel |
 | `POST` | `/profile/provision` | `X-Internal-Secret` | **Interne.** Crée l'utilisateur à l'inscription, depuis l'étape d'inscription de Keycloak. Idempotent sur l'UUID Keycloak |
 | `GET` | `/profile/resolve/{keycloakId}` | `X-Internal-Secret` | **Interne.** Lit le `businessId` d'un UUID Keycloak ; 404 s'il est inconnu |
 | `POST` | `/profile/picture` | JWT | Remplace la photo de l'utilisateur courant (multipart `file`, 5 Mo au plus) et répond une URL signée |
@@ -306,12 +307,14 @@ Deux hiérarchies distinctes — métier et technique — traduites par `GlobalE
 | `USR-BUS-006` | 400 | Le fichier n'est pas une image acceptée |
 | `USR-BUS-007` | 413 | Photo de plus de 5 Mo |
 | `USR-BUS-008` | 400 | Présentation hors limites (bio, centres d'intérêt) |
+| `USR-BUS-009` | 403 | Profil d'un utilisateur qui n'est pas un ami |
 | `USR-VAL-001` | 400 | Validation du corps de requête, détail par champ |
 | `USR-REQ-000` | *repris* | Chemin inconnu, méthode non autorisée |
 | `USR-TEC-001` | 502 | Keycloak injoignable |
 | `USR-TEC-002` | 502 | Base de données injoignable |
 | `USR-TEC-003` | 502 | Kafka injoignable |
 | `USR-TEC-004` | 502 | wely-media injoignable ou en erreur |
+| `USR-TEC-005` | 502 | wely-social injoignable, en erreur ou au-delà de 5 s |
 
 **502 et non 500 pour les erreurs techniques** : la requête était valide et le service tourne —
 c'est une dépendance qui est tombée, et 502 le dit précisément.
@@ -355,6 +358,7 @@ client peut tester et un `timestamp` :
 | `KAFKA_KEY` / `KAFKA_SECRET` | Identifiants SASL |
 | `OUTBOX_RELAY_ENABLED` | Démarre le relais (`true` par défaut) |
 | `MEDIA_API_URL` | URL de `wely-media` (`http://localhost:8085` en profil `dev`) |
+| `SOCIAL_API_URL` | URL de `wely-social` (`http://localhost:8083` en profil `dev`), interrogée avec le jeton de l'appelant |
 | `MEDIA_API_SECRET` | Secret partagé envoyé à `wely-media` dans `X-Internal-Secret` |
 
 Réglages de l'outbox, dans `application.properties` :

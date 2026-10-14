@@ -37,6 +37,12 @@ public enum TechnicalErrorCode {
             "USR-TEC-004",
             "Picture storage unavailable",
             "The picture could not be stored.",
+            HttpStatus.BAD_GATEWAY),
+
+    SOCIAL_ERROR(
+            "USR-TEC-005",
+            "Social graph unavailable",
+            "The friendship could not be checked.",
             HttpStatus.BAD_GATEWAY);
 
     private final String code;
