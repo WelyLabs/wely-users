@@ -1,6 +1,7 @@
 # Maven
 target/
 target-maven/
+target-cli/
 pom.xml.tag
 pom.xml.releaseBackup
 pom.xml.versionsBackup
