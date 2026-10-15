@@ -21,6 +21,9 @@ public interface MediaStore {
     /** Removing a missing key is not an error. */
     Mono<Void> delete(String key);
 
+    /** Removes every picture stored under this prefix; a prefix with nothing under it is not an error. */
+    Mono<Void> deletePrefix(String prefix);
+
     /** Key to signed URL, in one call; a key the store cannot sign is absent. */
     Mono<Map<String, String>> urls(Collection<String> keys);
 }

@@ -13,28 +13,48 @@ import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.jwt.*;
 import org.springframework.security.web.server.SecurityWebFilterChain;
+import org.springframework.security.web.server.util.matcher.OrServerWebExchangeMatcher;
+import org.springframework.security.web.server.util.matcher.ServerWebExchangeMatcher;
+import org.springframework.security.web.server.util.matcher.ServerWebExchangeMatchers;
+import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
+import reactor.core.publisher.Mono;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Optional;
 
 @Configuration
 @EnableWebFluxSecurity
 public class WebFluxSecurityConfig {
 
-    @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}")
-    private String publicIssuer;
+    static final String SECRET_HEADER = "X-Internal-Secret";
 
-    @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri}")
-    private String internalJwkSetUri;
+    /** Called by Keycloak before any JWT exists: provision at registration, resolve while minting a token. */
+    static final ServerWebExchangeMatcher KEYCLOAK_CALLBACKS = new OrServerWebExchangeMatcher(
+            ServerWebExchangeMatchers.pathMatchers(HttpMethod.GET, "/user-service/profile/resolve/**"),
+            ServerWebExchangeMatchers.pathMatchers(HttpMethod.POST, "/user-service/profile/provision"));
 
-    /**
-     * Shared secret guarding the two internal endpoints Keycloak calls before any JWT
-     * exists: provision, from the registration form, and resolve, while minting a token.
-     * Injected from the environment; the application fails to start if unset.
-     */
-    @Value("${app.internal-secret}")
-    private String internalSecret;
+    /** Read by the other services' reconciliation, with a secret of its own. */
+    static final ServerWebExchangeMatcher DELETED_USERS_READER =
+            ServerWebExchangeMatchers.pathMatchers(HttpMethod.GET, "/user-service/internal/**");
+
+    private final String publicIssuer;
+    private final String internalJwkSetUri;
+    private final String internalSecret;
+    private final String deletedUsersReaderSecret;
+
+    /** The internal secret is required at startup; a blank reader secret refuses every call to the listing. */
+    public WebFluxSecurityConfig(
+            @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}") String publicIssuer,
+            @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri}") String internalJwkSetUri,
+            @Value("${app.internal-secret}") String internalSecret,
+            @Value("${app.deleted-users.reader-secret:}") String deletedUsersReaderSecret) {
+        this.publicIssuer = publicIssuer;
+        this.internalJwkSetUri = internalJwkSetUri;
+        this.internalSecret = internalSecret;
+        this.deletedUsersReaderSecret = deletedUsersReaderSecret;
+    }
 
     @Bean
     public SecurityWebFilterChain apiHttpSecurity(ServerHttpSecurity http) {
@@ -43,9 +63,8 @@ public class WebFluxSecurityConfig {
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .addFilterAt(internalSecretWebFilter(), SecurityWebFiltersOrder.AUTHENTICATION)
                 .authorizeExchange((authorize) -> authorize
-                        // Both guarded by the internal secret below, not by a user token.
-                        .pathMatchers(HttpMethod.GET, "/user-service/profile/resolve/**").permitAll()
-                        .pathMatchers(HttpMethod.POST, "/user-service/profile/provision").permitAll()
+                        // Guarded by their secret in the filter below, which uses the same matchers.
+                        .matchers(KEYCLOAK_CALLBACKS, DELETED_USERS_READER).permitAll()
                         .pathMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         // Kubernetes probes: the kubelet carries no token. Only the two
                         // health groups are opened, not /actuator as a whole.
@@ -72,37 +91,43 @@ public class WebFluxSecurityConfig {
         return jwtDecoder;
     }
 
-    private WebFilter internalSecretWebFilter() {
+    /** 401 for an internal path whose secret is missing or wrong; every other request passes through. */
+    WebFilter internalSecretWebFilter() {
         return (exchange, chain) -> {
-            String path = exchange.getRequest().getURI().getPath();
-
             if (HttpMethod.OPTIONS.equals(exchange.getRequest().getMethod())) {
                 return chain.filter(exchange);
             }
-
-            if (path.startsWith("/user-service/profile/resolve/") || path.equals("/user-service/profile/provision")) {
-                String headerSecret = exchange.getRequest().getHeaders().getFirst("X-Internal-Secret");
-
-                if (!secretMatches(headerSecret)) {
-                    exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
-                    return exchange.getResponse().setComplete();
-                }
-            }
-            return chain.filter(exchange);
+            String candidate = exchange.getRequest().getHeaders().getFirst(SECRET_HEADER);
+            return requiredSecret(exchange)
+                    .flatMap(required -> required.isEmpty() || secretMatches(candidate, required.get())
+                            ? chain.filter(exchange)
+                            : unauthorized(exchange));
         };
     }
 
-    /**
-     * Constant-time comparison: a plain {@code equals} returns as soon as two
-     * bytes differ, which leaks the length of the matching prefix to a caller
-     * timing the responses.
-     */
-    private boolean secretMatches(String candidate) {
-        if (candidate == null) {
+    /** The secret an internal path requires, or empty for any other path. */
+    private Mono<Optional<String>> requiredSecret(ServerWebExchange exchange) {
+        return KEYCLOAK_CALLBACKS.matches(exchange)
+                .flatMap(callback -> callback.isMatch()
+                        ? Mono.just(Optional.of(internalSecret))
+                        : DELETED_USERS_READER.matches(exchange)
+                                .map(reader -> reader.isMatch()
+                                        ? Optional.of(deletedUsersReaderSecret)
+                                        : Optional.<String>empty()));
+    }
+
+    private static Mono<Void> unauthorized(ServerWebExchange exchange) {
+        exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+        return exchange.getResponse().setComplete();
+    }
+
+    /** Constant-time, so response timing leaks no matching prefix; a blank expected secret matches nothing. */
+    private static boolean secretMatches(String candidate, String expected) {
+        if (candidate == null || expected == null || expected.isBlank()) {
             return false;
         }
         return MessageDigest.isEqual(
                 candidate.getBytes(StandardCharsets.UTF_8),
-                internalSecret.getBytes(StandardCharsets.UTF_8));
+                expected.getBytes(StandardCharsets.UTF_8));
     }
 }

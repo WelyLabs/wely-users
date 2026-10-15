@@ -1,7 +1,9 @@
 package com.calendar.users.infrastructure.persistence.adapters;
 
 import com.calendar.users.domain.models.BusinessUser;
+import com.calendar.users.domain.ports.AccountDeletionRepository;
 import com.calendar.users.domain.ports.UserRepository;
+import com.calendar.users.infrastructure.deletion.AccountDeletionWorker;
 import com.calendar.users.infrastructure.identity.reaper.OrphanUserReaper;
 import com.calendar.users.infrastructure.messaging.relay.OutboxRelay;
 import org.junit.jupiter.api.DisplayName;
@@ -12,6 +14,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -27,6 +32,9 @@ class R2dbcUserRepositoryAdapterWiringTest {
     private R2dbcOutboxEventStoreAdapter outboxEventStore;
 
     @Autowired
+    private AccountDeletionRepository accountDeletionRepository;
+
+    @Autowired
     private ApplicationContext context;
 
     @Test
@@ -37,6 +45,32 @@ class R2dbcUserRepositoryAdapterWiringTest {
                 .getMethod("save", BusinessUser.class, String.class)
                 .isAnnotationPresent(Transactional.class))
                 .isTrue();
+    }
+
+    @Test
+    @DisplayName("the account erasure is transactional: tombstone, handle, job and events commit together")
+    void eraseAccount_shouldRunInATransaction() throws NoSuchMethodException {
+        assertThat(R2dbcUserRepositoryAdapter.class
+                .getMethod("eraseAccount", UUID.class, Instant.class)
+                .isAnnotationPresent(Transactional.class))
+                .isTrue();
+        assertThat(R2dbcUserRepositoryAdapter.class
+                .getMethod("deleteOrphan", UUID.class)
+                .isAnnotationPresent(Transactional.class))
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("the deletion job adapter is advised, so a failed query surfaces as a database error")
+    void accountDeletionAdapter_shouldBeAdvisedByTheAspect() {
+        assertThat(AopUtils.isAopProxy(accountDeletionRepository)).isTrue();
+    }
+
+    @Test
+    @DisplayName("the account deletion worker does not start when it is switched off")
+    void accountDeletionWorker_shouldBeAbsent_whenDisabled() {
+        // app.account-deletion.worker.enabled=false in application-test.properties.
+        assertThat(context.getBeanNamesForType(AccountDeletionWorker.class)).isEmpty();
     }
 
     @Test

@@ -6,7 +6,10 @@ import com.calendar.users.domain.models.UserPreferences;
 
 import com.calendar.users.EphemeralDatabaseCheck;
 import com.calendar.users.FlywayTestDatabase;
+import com.calendar.users.domain.models.AccountErasure;
+import com.calendar.users.domain.models.AccountState;
 import com.calendar.users.domain.models.BusinessUser;
+import com.calendar.users.domain.models.DeletedUser;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
 import org.junit.jupiter.api.BeforeAll;
@@ -29,10 +32,20 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Schedulers;
 import reactor.test.StepVerifier;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -88,6 +101,9 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         // DELETE, not DROP: dropping a table takes its constraints with it, and the unique
         // constraint is the subject of half this class. The same mistake cost wely-chat a run
         // where every test ran against an unindexed database.
+        // account_deletion references app_user, so it goes first.
+        databaseClient.sql("DELETE FROM account_deletion").then().block();
+        databaseClient.sql("DELETE FROM retired_handle").then().block();
         databaseClient.sql("DELETE FROM app_user").then().block();
         databaseClient.sql("DELETE FROM outbox_event").then().block();
     }
@@ -304,18 +320,33 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     }
 
     @Test
-    @DisplayName("deleting an orphan removes the user and writes USER_DELETED, together")
+    @DisplayName("deleting an orphan removes the user and its USER_CREATED, and writes USER_DELETED, together")
     void deleteOrphan_shouldDeleteTheUserAndWriteTheEvent() {
         BusinessUser orphan = savedAgo("orphan", 1111, "kc-orphan", 60);
 
         adapter.deleteOrphan(orphan.id()).block();
 
         assertThat(count("app_user")).isZero();
+        assertThat(outboxTypes()).isEqualTo("USER_DELETED");
         String payload = databaseClient.sql("SELECT payload FROM outbox_event WHERE type = 'USER_DELETED'")
                 .map(row -> row.get(0, String.class))
                 .one()
                 .block();
-        assertThat(payload).isEqualTo("{\"userId\":\"" + orphan.id() + "\"}");
+        assertThat(payload).matches("\\{\"userId\":\"" + orphan.id()
+                + "\",\"deletedAt\":\"\\d{4}-\\d{2}-\\d{2}T[0-9:.]+Z\"}");
+    }
+
+    @Test
+    @DisplayName("an orphan check read before a deletion never hard-deletes the tombstone")
+    void deleteOrphan_shouldLeaveATombstoneAlone() {
+        BusinessUser user = savedAgo("orphan", 1111, "kc-orphan", 60);
+        adapter.eraseAccount(user.id(), now()).block();
+
+        adapter.deleteOrphan(user.id()).block();
+
+        assertThat(count("app_user")).isEqualTo(1L);
+        assertThat(count("account_deletion")).isEqualTo(1L);
+        assertThat(eventsOfType("USER_DELETED")).isEqualTo(1L);
     }
 
     // --- updateProfile ---------------------------------------------------
@@ -333,7 +364,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         BusinessUser saved = adapter.save(aUser("camille", 4321), "kc-camille").block();
 
         BusinessUser updated = adapter.updateProfile(new BusinessUser(saved.id(), "camille_d", 4321, "Cam", "Dupont",
-                null, saved.joinedDate())).block();
+                null, saved.joinedDate()), "camille").block();
 
         assertThat(updated.userName()).isEqualTo("camille_d");
         assertThat(updated.firstName()).isEqualTo("Cam");
@@ -349,7 +380,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         BusinessUser camille = adapter.save(aUser("camille", 4321), "kc-camille").block();
 
         StepVerifier.create(adapter.updateProfile(new BusinessUser(camille.id(), "lea", 4321, "Cam", "Dupont",
-                        null, camille.joinedDate())))
+                        null, camille.joinedDate()), "camille"))
                 .expectErrorMatches(error -> error instanceof BusinessException business
                         && business.getErrorCode() == BusinessErrorCode.USERNAME_TAKEN)
                 .verify();
@@ -406,7 +437,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
                 .collectList()
                 .block();
 
-        assertThat(applied).startsWith("1", "2", "3", "4", "5");
+        assertThat(applied).startsWith("1", "2", "3", "4", "5", "6");
     }
 
     @Test
@@ -436,5 +467,418 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         return Flyway.configure()
                 .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
                 .schemas(schema);
+    }
+
+    @Test
+    @DisplayName("a database migrated to V5 by hand gets V6 on top of the baseline")
+    void migrations_shouldApplyV6OnTopOfTheBaseline_whenTheDatabaseWasHandMigrated() {
+        String schema = "hand_migrated_v6";
+        flywayOn(schema).target(MigrationVersion.fromVersion("5")).load().migrate();
+        databaseClient.sql("DROP TABLE " + schema + ".flyway_schema_history").then().block();
+
+        try {
+            MigrateResult result = flywayOn(schema)
+                    .baselineOnMigrate(flywayProperties.isBaselineOnMigrate())
+                    .baselineVersion(flywayProperties.getBaselineVersion())
+                    .load()
+                    .migrate();
+
+            assertThat(result.migrations).extracting(migration -> migration.version).contains("6");
+            Long tables = databaseClient.sql("""
+                            SELECT count(*) FROM information_schema.tables
+                             WHERE table_schema = :schema AND table_name IN ('retired_handle', 'account_deletion')
+                            """)
+                    .bind("schema", schema)
+                    .map(row -> row.get(0, Long.class))
+                    .one()
+                    .block();
+            assertThat(tables).isEqualTo(2L);
+        } finally {
+            databaseClient.sql("DROP SCHEMA " + schema + " CASCADE").then().block();
+        }
+    }
+
+    // --- account deletion -------------------------------------------------
+
+    private static Instant now() {
+        return Instant.now().truncatedTo(ChronoUnit.MICROS);
+    }
+
+    private long eventsOfType(String type) {
+        return databaseClient.sql("SELECT count(*) FROM outbox_event WHERE type = :type")
+                .bind("type", type)
+                .map(row -> row.get(0, Long.class))
+                .one()
+                .block();
+    }
+
+    private Map<String, Object> rowOf(UUID id) {
+        return databaseClient.sql("SELECT * FROM app_user WHERE id = :id")
+                .bind("id", id)
+                .fetch()
+                .one()
+                .block();
+    }
+
+    private BusinessUser aFullUser(String userName, int hashtag, String keycloakId) {
+        BusinessUser user = adapter.save(aUser(userName, hashtag), keycloakId).block();
+        adapter.updatePicture(user.id(), "avatars/" + user.id() + "/a.jpg").block();
+        adapter.updateAbout(user.id(), new UserAbout("Partante", List.of("Rando"))).block();
+        adapter.updatePreferences(user.id(), new UserPreferences(Theme.DARK)).block();
+        return user;
+    }
+
+    private BusinessUser aTombstone() {
+        BusinessUser user = adapter.save(aUser("alice", 1111), "kc-alice").block();
+        adapter.eraseAccount(user.id(), now()).block();
+        return user;
+    }
+
+    private static boolean isBusiness(Throwable error, BusinessErrorCode code) {
+        return error instanceof BusinessException business && business.getErrorCode() == code;
+    }
+
+    @Test
+    @DisplayName("an erased account keeps no personal field: only the placeholders the CHECK allows")
+    void eraseAccount_shouldLeaveOnlyTheTombstonePlaceholders_whenTheAccountIsErased() {
+        BusinessUser user = aFullUser("alice", 1111, "kc-alice");
+        Instant deletedAt = now();
+
+        StepVerifier.create(adapter.eraseAccount(user.id(), deletedAt))
+                .expectNext(AccountErasure.ERASED)
+                .verifyComplete();
+
+        Map<String, Object> row = rowOf(user.id());
+        assertThat(row.get("keycloak_id")).isEqualTo("deleted:" + user.id());
+        assertThat(row.get("user_name")).isEqualTo("deleted-" + user.id());
+        assertThat(row.get("hashtag")).isEqualTo(0);
+        assertThat(row.get("first_name")).isNull();
+        assertThat(row.get("last_name")).isNull();
+        assertThat(row.get("profile_pic_url")).isNull();
+        assertThat(row.get("bio")).isNull();
+        assertThat((Object[]) row.get("interests")).isEmpty();
+        assertThat(row.get("theme")).isEqualTo("SYSTEM");
+        assertThat(row.get("joined_date")).isEqualTo(LocalDateTime.ofInstant(deletedAt, ZoneOffset.UTC));
+        assertThat(row.get("identity_checked_at")).isNotNull();
+        assertThat(((OffsetDateTime) row.get("deleted_at")).toInstant()).isEqualTo(deletedAt);
+    }
+
+    @Test
+    @DisplayName("the businessId survives: every other service keeps it as the pseudonym")
+    void eraseAccount_shouldKeepTheBusinessId_whenTheAccountIsErased() {
+        BusinessUser user = aTombstone();
+
+        assertThat(count("app_user")).isEqualTo(1L);
+        assertThat(rowOf(user.id()).get("id")).isEqualTo(user.id());
+    }
+
+    @Test
+    @DisplayName("the job keeps the original Keycloak id, the only copy left once the row is a tombstone")
+    void eraseAccount_shouldQueueTheJobWithTheOriginalKeycloakId_whenTheAccountIsErased() {
+        BusinessUser user = adapter.save(aUser("alice", 1111), "kc-alice").block();
+        Instant deletedAt = now();
+
+        adapter.eraseAccount(user.id(), deletedAt).block();
+
+        Map<String, Object> job = databaseClient.sql("SELECT * FROM account_deletion WHERE user_id = :id")
+                .bind("id", user.id())
+                .fetch()
+                .one()
+                .block();
+        assertThat(job.get("keycloak_id")).isEqualTo("kc-alice");
+        assertThat(((OffsetDateTime) job.get("requested_at")).toInstant()).isEqualTo(deletedAt);
+        assertThat(((OffsetDateTime) job.get("next_attempt_at")).toInstant()).isEqualTo(deletedAt);
+        assertThat(job.get("identity_deleted_at")).isNull();
+        assertThat(job.get("media_deleted_at")).isNull();
+        assertThat(job.get("attempts")).isEqualTo(0);
+    }
+
+    @Test
+    @DisplayName("every other event of the user goes, pending, parked or published; other users' stay")
+    void eraseAccount_shouldDeletePendingParkedAndPublishedEventsOfTheUserOnly_whenErasing() {
+        BusinessUser user = adapter.save(aUser("alice", 1111), "kc-alice").block();
+        adapter.updatePicture(user.id(), "avatars/" + user.id() + "/a.jpg").block();
+        adapter.updatePicture(user.id(), "avatars/" + user.id() + "/b.jpg").block();
+        BusinessUser other = adapter.save(aUser("bob", 2222), "kc-bob").block();
+        databaseClient.sql("""
+                        UPDATE outbox_event SET published_at = now()
+                         WHERE id = (SELECT min(id) FROM outbox_event WHERE aggregate_id = :id)
+                        """).bind("id", user.id()).then().block();
+        databaseClient.sql("""
+                        UPDATE outbox_event SET attempts = 5
+                         WHERE id = (SELECT max(id) FROM outbox_event WHERE aggregate_id = :id)
+                        """).bind("id", user.id()).then().block();
+
+        adapter.eraseAccount(user.id(), now()).block();
+
+        List<String> left = databaseClient.sql("SELECT aggregate_id::text || ':' || type FROM outbox_event ORDER BY id")
+                .map(row -> row.get(0, String.class))
+                .all()
+                .collectList()
+                .block();
+        assertThat(left).containsExactly(other.id() + ":USER_CREATED", user.id() + ":USER_DELETED");
+    }
+
+    @Test
+    @DisplayName("USER_DELETED is appended last, with deletedAt as an ISO string")
+    void eraseAccount_shouldAppendUserDeletedAfterEveryEarlierEvent_withAnIsoDeletedAt() {
+        BusinessUser user = adapter.save(aUser("alice", 1111), "kc-alice").block();
+        adapter.save(aUser("bob", 2222), "kc-bob").block();
+        Instant deletedAt = Instant.parse("2026-10-15T14:03:27.123456Z");
+
+        adapter.eraseAccount(user.id(), deletedAt).block();
+
+        String last = databaseClient.sql("SELECT type || ' ' || payload FROM outbox_event ORDER BY id DESC LIMIT 1")
+                .map(row -> row.get(0, String.class))
+                .one()
+                .block();
+        assertThat(last).isEqualTo("USER_DELETED {\"userId\":\"" + user.id()
+                + "\",\"deletedAt\":\"2026-10-15T14:03:27.123456Z\"}");
+    }
+
+    @Test
+    @DisplayName("if USER_DELETED cannot be stored, the tombstone, the handle, the job and the cleanup roll back")
+    void eraseAccount_shouldRollBackEverything_whenTheEventCannotBeStored() {
+        BusinessUser user = aFullUser("alice", 1111, "kc-alice");
+        long eventsBefore = count("outbox_event");
+        databaseClient.sql("ALTER TABLE outbox_event ADD CONSTRAINT refuse_deleted CHECK (type <> 'USER_DELETED') NOT VALID")
+                .then().block();
+        try {
+            StepVerifier.create(adapter.eraseAccount(user.id(), now())).expectError().verify();
+
+            assertThat(rowOf(user.id()).get("user_name")).isEqualTo("alice");
+            assertThat(rowOf(user.id()).get("deleted_at")).isNull();
+            assertThat(count("retired_handle")).isZero();
+            assertThat(count("account_deletion")).isZero();
+            assertThat(count("outbox_event")).isEqualTo(eventsBefore);
+        } finally {
+            databaseClient.sql("ALTER TABLE outbox_event DROP CONSTRAINT refuse_deleted").then().block();
+        }
+    }
+
+    @Test
+    @DisplayName("two erasures racing on one row serialize on its lock: one USER_DELETED, one already erased")
+    void eraseAccount_shouldWriteOneUserDeleted_whenTwoErasuresRace() {
+        BusinessUser user = adapter.save(aUser("alice", 1111), "kc-alice").block();
+
+        List<AccountErasure> outcomes = Flux.merge(
+                        adapter.eraseAccount(user.id(), now()).subscribeOn(Schedulers.boundedElastic()),
+                        adapter.eraseAccount(user.id(), now()).subscribeOn(Schedulers.boundedElastic()))
+                .collectList()
+                .block(Duration.ofSeconds(30));
+
+        assertThat(outcomes).containsExactlyInAnyOrder(AccountErasure.ERASED, AccountErasure.ALREADY_ERASED);
+        assertThat(eventsOfType("USER_DELETED")).isEqualTo(1L);
+        assertThat(count("account_deletion")).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("erasing a tombstone again writes nothing")
+    void eraseAccount_shouldReturnAlreadyErased_whenTheAccountIsATombstone() {
+        BusinessUser user = aTombstone();
+
+        StepVerifier.create(adapter.eraseAccount(user.id(), now()))
+                .expectNext(AccountErasure.ALREADY_ERASED)
+                .verifyComplete();
+
+        assertThat(eventsOfType("USER_DELETED")).isEqualTo(1L);
+    }
+
+    @Test
+    void eraseAccount_shouldReturnUnknownUser_whenNoRowExists() {
+        StepVerifier.create(adapter.eraseAccount(UUID.randomUUID(), now()))
+                .expectNext(AccountErasure.UNKNOWN_USER)
+                .verifyComplete();
+
+        assertThat(count("outbox_event")).isZero();
+    }
+
+    @Test
+    @DisplayName("the database itself refuses a tombstone that keeps a personal field")
+    void tombstoneCheck_shouldRefuseADeletedRow_whenItKeepsAName() {
+        BusinessUser user = aTombstone();
+
+        StepVerifier.create(databaseClient.sql("UPDATE app_user SET first_name = 'Alice' WHERE id = :id")
+                        .bind("id", user.id()).then())
+                .expectError()
+                .verify();
+    }
+
+    @Test
+    @DisplayName("a job cannot claim the identity is deleted while still holding the Keycloak id")
+    void accountDeletionCheck_shouldRefuseARow_whenIdentityIsDeletedButTheKeycloakIdRemains() {
+        BusinessUser user = aTombstone();
+
+        StepVerifier.create(databaseClient.sql("UPDATE account_deletion SET identity_deleted_at = now() WHERE user_id = :id")
+                        .bind("id", user.id()).then())
+                .expectError()
+                .verify();
+    }
+
+    @Test
+    @DisplayName("a retired handle is never free again, whatever its case")
+    void existsByUserNameAndHashtag_shouldAnswerTrue_whenTheHandleIsRetiredInAnotherCase() {
+        BusinessUser user = adapter.save(aUser("Alice", 1111), "kc-alice").block();
+        adapter.eraseAccount(user.id(), now()).block();
+
+        StepVerifier.create(adapter.existsByUserNameAndHashtag("alice", 1111)).expectNext(true).verifyComplete();
+        StepVerifier.create(adapter.existsByUserNameAndHashtag("Alice", 1111)).expectNext(true).verifyComplete();
+        StepVerifier.create(adapter.existsByUserNameAndHashtag("alice", 2222)).expectNext(false).verifyComplete();
+    }
+
+    @Test
+    @DisplayName("renaming onto a retired handle is USERNAME_TAKEN, and rolls the rename back")
+    void updateProfile_shouldRefuseARetiredHandle_whenRenaming() {
+        BusinessUser gone = adapter.save(aUser("lea", 4321), "kc-lea").block();
+        adapter.eraseAccount(gone.id(), now()).block();
+        BusinessUser camille = adapter.save(aUser("camille", 4321), "kc-camille").block();
+
+        StepVerifier.create(adapter.updateProfile(new BusinessUser(camille.id(), "lea", 4321, "Cam", "Dupont",
+                        null, camille.joinedDate()), "camille"))
+                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USERNAME_TAKEN))
+                .verify();
+
+        assertThat(rowOf(camille.id()).get("user_name")).isEqualTo("camille");
+        assertThat(eventsOfType("USER_MODIFIED")).isZero();
+    }
+
+    @Test
+    @DisplayName("a live row whose handle differs only by case from a retired one can still edit its names")
+    void updateProfile_shouldNotCheckRetirement_whenTheHandleIsUnchanged() {
+        BusinessUser gone = adapter.save(aUser("lea", 4321), "kc-lea").block();
+        adapter.eraseAccount(gone.id(), now()).block();
+        BusinessUser legacy = adapter.save(aUser("Lea", 4321), "kc-legacy").block();
+
+        StepVerifier.create(adapter.updateProfile(new BusinessUser(legacy.id(), "Lea", 4321, "Léa", "Martin",
+                        null, legacy.joinedDate()), "Lea"))
+                .expectNextMatches(user -> user.firstName().equals("Léa"))
+                .verifyComplete();
+    }
+
+    @Test
+    void updateProfile_shouldMatchNoRow_whenTheUserIsATombstone() {
+        BusinessUser user = aTombstone();
+
+        StepVerifier.create(adapter.updateProfile(new BusinessUser(user.id(), "alice", 1111, "A", "B", null,
+                        user.joinedDate()), "alice"))
+                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
+                .verify();
+        assertThat(eventsOfType("USER_MODIFIED")).isZero();
+    }
+
+    @Test
+    void updatePicture_shouldMatchNoRow_whenTheUserIsATombstone() {
+        BusinessUser user = aTombstone();
+
+        StepVerifier.create(adapter.updatePicture(user.id(), "avatars/" + user.id() + "/late.jpg"))
+                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
+                .verify();
+        assertThat(eventsOfType("USER_MODIFIED")).isZero();
+    }
+
+    @Test
+    void updateAbout_shouldMatchNoRow_whenTheUserIsATombstone() {
+        BusinessUser user = aTombstone();
+
+        StepVerifier.create(adapter.updateAbout(user.id(), new UserAbout("Back", List.of())))
+                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
+                .verify();
+        StepVerifier.create(adapter.findAbout(user.id())).verifyComplete();
+    }
+
+    @Test
+    void updatePreferences_shouldMatchNoRow_whenTheUserIsATombstone() {
+        BusinessUser user = aTombstone();
+
+        StepVerifier.create(adapter.updatePreferences(user.id(), new UserPreferences(Theme.DARK)))
+                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
+                .verify();
+        StepVerifier.create(adapter.findPreferences(user.id())).verifyComplete();
+    }
+
+    @Test
+    void getBusinessUserByUserId_shouldBeEmpty_whenTheUserIsATombstone() {
+        BusinessUser user = aTombstone();
+
+        StepVerifier.create(adapter.getBusinessUserByUserId(user.id())).verifyComplete();
+        StepVerifier.create(adapter.findKeycloakIdByUserId(user.id())).verifyComplete();
+    }
+
+    @Test
+    @DisplayName("neither the original Keycloak id nor the placeholder resolves: the mapper refuses tokens")
+    void findIdByKeycloakId_shouldBeEmpty_forTheOriginalAndThePlaceholderIds() {
+        BusinessUser user = aTombstone();
+
+        StepVerifier.create(adapter.findIdByKeycloakId("kc-alice")).verifyComplete();
+        StepVerifier.create(adapter.findIdByKeycloakId("deleted:" + user.id())).verifyComplete();
+    }
+
+    @Test
+    void findIdentitiesToCheck_shouldSkipTombstones_whenTheirCheckIsNull() {
+        BusinessUser user = savedAgo("alice", 1111, "kc-alice", 60);
+        adapter.eraseAccount(user.id(), now()).block();
+        assertThat(rowOf(user.id()).get("identity_checked_at")).isNotNull();
+        databaseClient.sql("UPDATE app_user SET identity_checked_at = NULL WHERE id = :id")
+                .bind("id", user.id()).then().block();
+
+        StepVerifier.create(adapter.findIdentitiesToCheck(LocalDateTime.now().plusDays(1), 10)).verifyComplete();
+    }
+
+    @Test
+    void findPictures_shouldLeaveTombstonesOut_whenAsked() {
+        BusinessUser gone = aFullUser("alice", 1111, "kc-alice");
+        BusinessUser live = aFullUser("bob", 2222, "kc-bob");
+        adapter.eraseAccount(gone.id(), now()).block();
+
+        StepVerifier.create(adapter.findPictures(List.of(gone.id(), live.id())))
+                .assertNext(picture -> assertThat(picture.userId()).isEqualTo(live.id()))
+                .verifyComplete();
+    }
+
+    @Test
+    void findAccountState_shouldTellLiveTombstoneAndUnknownApart() {
+        BusinessUser live = adapter.save(aUser("bob", 2222), "kc-bob").block();
+        BusinessUser gone = aTombstone();
+
+        StepVerifier.create(adapter.findAccountState(live.id())).expectNext(AccountState.ACTIVE).verifyComplete();
+        StepVerifier.create(adapter.findAccountState(gone.id())).expectNext(AccountState.DELETED).verifyComplete();
+        StepVerifier.create(adapter.findAccountState(UUID.randomUUID())).verifyComplete();
+    }
+
+    @Test
+    @DisplayName("the keyset listing pages in (deletedAt, id) order, even across equal timestamps")
+    void findDeleted_shouldPageInDeletedAtThenIdOrder_acrossEqualTimestamps() {
+        Instant same = now();
+        List<UUID> expected = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            BusinessUser user = adapter.save(aUser("user" + i, 1000 + i), "kc-" + i).block();
+            adapter.eraseAccount(user.id(), same).block();
+            expected.add(user.id());
+        }
+        // PostgreSQL orders uuids byte by byte, as their text does; UUID.compareTo compares signed longs.
+        expected.sort(Comparator.comparing(UUID::toString));
+        BusinessUser later = adapter.save(aUser("later", 4000), "kc-later").block();
+        adapter.eraseAccount(later.id(), same.plusSeconds(1)).block();
+        expected.add(later.id());
+        adapter.save(aUser("live", 5000), "kc-live").block();
+
+        List<DeletedUser> first = adapter.findDeleted(null, 2).collectList().block();
+        List<DeletedUser> second = adapter.findDeleted(first.getLast(), 2).collectList().block();
+        List<DeletedUser> third = adapter.findDeleted(second.getLast(), 2).collectList().block();
+
+        assertThat(first).extracting(DeletedUser::userId).containsExactly(expected.get(0), expected.get(1));
+        assertThat(second).extracting(DeletedUser::userId).containsExactly(expected.get(2), expected.get(3));
+        assertThat(third).isEmpty();
+        assertThat(first.getFirst().deletedAt()).isEqualTo(same);
+    }
+
+    @Test
+    void findDeletedIds_shouldReturnOnlyTombstones_whenMixedIdsAreGiven() {
+        BusinessUser live = adapter.save(aUser("bob", 2222), "kc-bob").block();
+        BusinessUser gone = aTombstone();
+
+        StepVerifier.create(adapter.findDeletedIds(List.of(live.id(), gone.id(), UUID.randomUUID())))
+                .expectNext(gone.id())
+                .verifyComplete();
     }
 }

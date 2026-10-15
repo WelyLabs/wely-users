@@ -34,6 +34,11 @@ public class R2dbcOutboxEventStoreAdapter {
         return outboxEventRepository.save(event).map(OutboxEventEntity::getId);
     }
 
+    /** Deletes the user's events of every other type; joins the caller's transaction, like append. */
+    public Mono<Long> deleteOtherEventsOf(UUID aggregateId, String keptType) {
+        return outboxEventRepository.deleteOtherEventsOf(aggregateId, keptType);
+    }
+
     /** Locks and returns the next unpublished events, for the relay. */
     public Flux<OutboxEventEntity> claimPending(int batchSize, int maxAttempts) {
         return outboxEventRepository.claimPending(batchSize, maxAttempts);

@@ -162,8 +162,16 @@ Toutes les routes sont préfixées par `/user-service` et exposées via la gatew
 | `GET` | `/profile/resolve/{keycloakId}` | `X-Internal-Secret` | **Interne.** Lit le `businessId` d'un UUID Keycloak ; 404 s'il est inconnu |
 | `POST` | `/profile/picture` | JWT | Remplace la photo de l'utilisateur courant (multipart `file`, 5 Mo au plus) et répond une URL signée |
 | `POST` | `/avatars` | JWT | URL des photos de 100 utilisateurs au plus, `{ userId: url }` ; les utilisateurs sans photo sont absents |
+| `DELETE` | `/profile` | JWT with a recent `auth_time` | Deletes the caller's account: **202**, no body. 403 `USR-BUS-014` while deletion is switched off, 403 `USR-BUS-011` for a demo account, 202 again for an account already deleted, 403 `USR-BUS-010` when the last sign-in is over 5 min old or unknown, 404 for an unknown id. See [Account deletion](#account-deletion) |
+| `GET` | `/profile/deletion` | JWT | `{"allowed": boolean}`: false for a demo account, so the web app never sends the user through a new sign-in for nothing; 403 `USR-BUS-014` while deletion is switched off |
+| `POST` | `/users/deleted` | JWT | `{"userIds": [...]}` (100 at most) → `{"deletedIds": [...]}`, the ids whose account was deleted, for the "deleted user" label |
+| `GET` | `/internal/deleted-users?after=&limit=` | `X-Internal-Secret` (`DELETED_USERS_READER_SECRET`) | **Internal.** Every deleted account, `{"items": [{"userId", "deletedAt"}], "next": cursor}` (500 per page, opaque cursor, `next` null on the last page), for the other services' reconciliation. Blocked by the gateway, refused while the secret is unset |
 
 `/profile/provision` et `/profile/resolve/**` sont les seuls endpoints exemptés de l'authentification JWT : Keycloak les appelle pendant l'inscription et pendant l'émission du token, donc avant qu'un token existe. Il est protégé par un secret partagé vérifié dans un `WebFilter` dédié.
+
+`/internal/**` (GET) is the third one, guarded by a secret of its own: the Keycloak mapper's secret cannot read it. The same `ServerWebExchangeMatcher`s decide what `permitAll` opens and what the filter guards, so the two cannot diverge.
+
+Once an account is deleted, every endpoint about the caller (`/profile`, `/profile/about`, `/profile/preferences`, `/profile/picture`, and `/profile/deletion` while deletion is switched on) and `GET /users/{id}/profile` for that user answer **410 `USR-BUS-012`**. `/profile/resolve` keeps answering 404: on a 410 the Keycloak mapper would fall back on its cached id and mint a token.
 
 ### OpenAPI
 
@@ -259,6 +267,38 @@ Les bases déployées ont reçu V1 à V5 à la main, avant Flyway : `baseline-on
 
 Consommé par [`wely-social`](https://github.com/WelyLabs/wely-social), qui crée le nœud correspondant dans Neo4j.
 
+**Topic** `USER_DELETED` · same partition key, no record key
+
+```json
+{
+  "userId": "550e8400-e29b-41d4-a716-446655440000",
+  "deletedAt": "2026-10-15T14:03:27.123456Z"
+}
+```
+
+Written in the tombstone's transaction by an account deletion, and by `OrphanUserReaper` for an orphan (`deletedAt` = now). Records sent before `deletedAt` existed carry `userId` only. Consumed by wely-social, wely-chat, wely-events and wely-notifications, which erase the user and keep a permanent marker.
+
+---
+
+## Account deletion
+
+`DELETE /profile` keeps the row as a **tombstone**: the `businessId` survives, because every other service keeps it as a pseudonym, and every personal field is cleared.
+
+1. **Checks, in this order.** The switch first: unless `ACCOUNT_DELETION_ENABLED` is `true`, 403 `USR-BUS-014` on both `DELETE /profile` and `GET /profile/deletion`, without reading the account. Then the demo guard (`ACCOUNT_DELETION_PROTECTED_USER_IDS`, 403 `USR-BUS-011`), so a demo visitor is never made to sign in again for nothing. Then an account already deleted answers 202: a retry after a lost 202 must not send the user to a sign-in that can no longer succeed. Then the access token's `auth_time` must be at most 5 min old and at most 60 s ahead, or 403 `USR-BUS-010` — 403 and not 401, because the web app answers any 401 with a plain login. A missing claim fails closed.
+2. **One R2DBC transaction** (`R2dbcUserRepositoryAdapter.eraseAccount`): lock the row, retire the handle, write the tombstone, queue an `account_deletion` job holding the original Keycloak id, delete the user's other outbox rows (pending, parked or published), append `USER_DELETED`. Then 202.
+3. **From that commit on**, the original Keycloak id resolves to 404, so the mapper refuses every login and refresh; updates match no row, so no `USER_MODIFIED` can follow `USER_DELETED`.
+4. **`AccountDeletionWorker`** (a 5 s loop shaped like the relay) logs the user out of Keycloak, then deletes them (a 404 counts as done), and purges `avatars/<businessId>/` through wely-media — again 10 min later, for an upload that raced the deletion. Jobs are leased, not locked, so no transaction stays open across HTTP calls. Failures back off from 5 s to 1 h and are never parked; the log turns ERROR from the 5th.
+
+| Column | Tombstone |
+|---|---|
+| `keycloak_id` | `deleted:<id>` |
+| `user_name`, `hashtag` | `deleted-<id>`, `0` (outside the drawn 1000–9999) |
+| names, picture, bio, interests | cleared |
+| `theme`, `joined_date` | `SYSTEM`, the deletion time |
+| `deleted_at` | the deletion time (null for a live user) |
+
+`app_user_tombstone_check` makes "no personal field survives" a database invariant. The old handle is kept only as a SHA-256 digest of `lower(name)#hashtag` in `retired_handle`, computed by the one SQL function `retired_handle_digest` (V6): allocation draws another hashtag and a rename answers `USERNAME_TAKEN`, so a handle is never handed out again. The rename check runs only when the name changes, after the UPDATE, so it sees a concurrent deletion that committed while the UPDATE waited on the unique index.
+
 ---
 
 ## L'outbox transactionnel
@@ -313,6 +353,11 @@ Deux hiérarchies distinctes — métier et technique — traduites par `GlobalE
 | `USR-BUS-007` | 413 | Photo de plus de 5 Mo |
 | `USR-BUS-008` | 400 | Présentation hors limites (bio, centres d'intérêt) |
 | `USR-BUS-009` | 403 | Profil d'un utilisateur qui n'est pas un ami |
+| `USR-BUS-010` | 403 | Account deletion needs a sign-in less than 5 min old |
+| `USR-BUS-011` | 403 | Demo account, which cannot be deleted |
+| `USR-BUS-012` | 410 | The account was deleted |
+| `USR-BUS-013` | 400 | Deleted-users cursor not issued by this service |
+| `USR-BUS-014` | 403 | Account deletion is switched off on this deployment |
 | `USR-VAL-001` | 400 | Validation du corps de requête, détail par champ |
 | `USR-REQ-000` | *repris* | Chemin inconnu, méthode non autorisée |
 | `USR-TEC-001` | 502 | Keycloak injoignable |
@@ -365,6 +410,10 @@ client peut tester et un `timestamp` :
 | `MEDIA_API_URL` | URL de `wely-media` (`http://localhost:8085` en profil `dev`) |
 | `SOCIAL_API_URL` | URL de `wely-social` (`http://localhost:8083` en profil `dev`), interrogée avec le jeton de l'appelant |
 | `MEDIA_API_SECRET` | Secret partagé envoyé à `wely-media` dans `X-Internal-Secret` |
+| `ACCOUNT_DELETION_ENABLED` | Turns `DELETE /profile` on (`false` by default, so an image deployed before its protected list stays closed); `AccountDeletionWorker`, `POST /users/deleted` and the deleted-users listing ignore it, so queued jobs still finish |
+| `ACCOUNT_DELETION_PROTECTED_USER_IDS` | businessIds that can never be deleted (the demo accounts), comma-separated; empty by default |
+| `ACCOUNT_DELETION_WORKER_ENABLED` | Starts `AccountDeletionWorker` (`true` by default) |
+| `DELETED_USERS_READER_SECRET` | Secret of `GET /internal/deleted-users`, distinct from `INTERNAL_SECRET`; empty refuses every call |
 
 Réglages de l'outbox, dans `application.properties` :
 
@@ -421,4 +470,6 @@ Elles portent sur ce qu'un mock ne peut pas montrer : que `FOR UPDATE SKIP LOCKE
 ## Limites connues
 
 - **Pas de réconciliation.** L'outbox empêche une classe de pannes ; il ne dit pas si le graphe social a dérivé pour une autre raison. Comparer le nombre de lignes `app_user` au nombre de nœuds `User` couvrirait *toutes* les causes.
+- **A deleted user's access token lives until it expires**, 300 s at most: wely-users refuses it at once (410), and the other services refuse its writes once they have processed `USER_DELETED`. Reads of what the user could already see remain possible in that window. There is no deny-list at the gateway, by choice.
+- **Deleting a user from the Keycloak admin console bypasses erasure**: `OrphanUserReaper` only checks users never confirmed. An account is deleted through `DELETE /profile`.
 - **Le relais tient sa transaction pendant l'envoi.** Les verrous durent le temps de l'appel au broker. C'est le bon compromis à un événement par inscription, pas à un débit soutenu.

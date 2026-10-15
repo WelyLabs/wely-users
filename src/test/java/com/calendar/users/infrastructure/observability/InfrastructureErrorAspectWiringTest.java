@@ -1,10 +1,12 @@
 package com.calendar.users.infrastructure.observability;
 
+import com.calendar.users.domain.ports.AccountDeletionRepository;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.TechnicalErrorCode;
 import com.calendar.users.exception.TechnicalException;
 import com.calendar.users.infrastructure.identity.api.KeycloakAdminApi;
+import com.calendar.users.infrastructure.persistence.repositories.AccountDeletionR2dbcRepository;
 import com.calendar.users.infrastructure.persistence.repositories.UserR2dbcRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -13,6 +15,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
@@ -20,6 +24,8 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
@@ -38,10 +44,12 @@ import static org.mockito.Mockito.when;
 class InfrastructureErrorAspectWiringTest {
 
     @MockitoBean private UserR2dbcRepository userR2dbcRepository;
+    @MockitoBean private AccountDeletionR2dbcRepository accountDeletionR2dbcRepository;
     @MockitoBean private KeycloakAdminApi keycloakAdminApi;
 
     @Autowired private UserRepository userRepository;
     @Autowired private IdentityProvider identityProvider;
+    @Autowired private AccountDeletionRepository accountDeletionRepository;
 
     @Test
     @DisplayName("both adapters are advised by the aspect")
@@ -83,11 +91,48 @@ class InfrastructureErrorAspectWiringTest {
     @Test
     @DisplayName("the pointcut covers every public method of the adapter")
     void persistenceAdapter_shouldTranslateEveryMethod() {
-        when(userR2dbcRepository.findById(any(UUID.class)))
+        when(userR2dbcRepository.findLiveById(any(UUID.class)))
                 .thenReturn(Mono.error(new RuntimeException("statement timeout")));
 
         StepVerifier.create(userRepository.getBusinessUserByUserId(UUID.randomUUID()))
                 .expectError(TechnicalException.class)
+                .verify();
+    }
+
+    @Test
+    @DisplayName("a Keycloak failure while deleting a subject surfaces as KEYCLOAK_ERROR")
+    void identityAdapter_shouldTranslateADeleteFailureToKeycloakError_whenKeycloakAnswers500() {
+        when(keycloakAdminApi.logout(anyString())).thenReturn(Mono.empty());
+        when(keycloakAdminApi.deleteUser(anyString())).thenReturn(Mono.error(
+                WebClientResponseException.create(500, "Internal Server Error", null, null, null)));
+
+        StepVerifier.create(identityProvider.deleteSubject("kc-1"))
+                .expectErrorMatches(error -> error instanceof TechnicalException technical
+                        && technical.getErrorCode() == TechnicalErrorCode.KEYCLOAK_ERROR)
+                .verify();
+    }
+
+    @Test
+    @DisplayName("Keycloak's 404 while deleting a subject is absorbed before the aspect turns it into USER_NOT_FOUND")
+    void identityAdapter_shouldCompleteADelete_whenKeycloakAnswers404() {
+        when(keycloakAdminApi.logout(anyString())).thenReturn(Mono.error(
+                WebClientResponseException.create(404, "Not Found", null, null, null)));
+        when(keycloakAdminApi.deleteUser(anyString())).thenReturn(Mono.error(
+                WebClientResponseException.create(404, "Not Found", null, null, null)));
+
+        StepVerifier.create(identityProvider.deleteSubject("kc-1")).verifyComplete();
+    }
+
+    @Test
+    @DisplayName("the deletion job adapter is advised too")
+    void accountDeletionAdapter_shouldTranslateToDatabaseError_whenTheQueryFails() {
+        assertThat(AopUtils.isAopProxy(accountDeletionRepository)).isTrue();
+        when(accountDeletionR2dbcRepository.claimDue(anyInt(), anyLong()))
+                .thenReturn(Flux.error(new RuntimeException("connection reset by peer")));
+
+        StepVerifier.create(accountDeletionRepository.claimDue(20))
+                .expectErrorMatches(error -> error instanceof TechnicalException technical
+                        && technical.getErrorCode() == TechnicalErrorCode.DATABASE_ERROR)
                 .verify();
     }
 }

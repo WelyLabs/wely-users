@@ -20,4 +20,7 @@ public interface IdentityProvider {
      * the values.
      */
     Mono<Void> updateProfile(String subjectId, IdentityUser profile);
+
+    /** Ends every session of the subject and removes it; a subject the provider does not know is not an error. */
+    Mono<Void> deleteSubject(String subjectId);
 }

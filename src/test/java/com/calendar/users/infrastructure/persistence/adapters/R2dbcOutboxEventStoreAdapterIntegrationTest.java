@@ -28,6 +28,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
@@ -261,5 +262,66 @@ class R2dbcOutboxEventStoreAdapterIntegrationTest {
 
         // An unpublished event is never purged, however old: it has not gone out yet.
         assertThat(left).containsExactly(recent, pending);
+    }
+
+    @Test
+    @DisplayName("a user's other events go, whatever their state; USER_DELETED and other users' events stay")
+    void deleteOtherEventsOf_shouldKeepUserDeletedAndOtherUsersEvents_whenDeleting() {
+        UUID user = UUID.randomUUID();
+        UUID other = UUID.randomUUID();
+        long published = adapter.append(user, "USER_CREATED", "{}").block();
+        long parked = adapter.append(user, "USER_MODIFIED", "{}").block();
+        adapter.append(user, "USER_MODIFIED", "{}").block();
+        long kept = adapter.append(user, "USER_DELETED", "{}").block();
+        long othersEvent = adapter.append(other, "USER_MODIFIED", "{}").block();
+        adapter.markPublished(List.of(published)).block();
+        for (int attempt = 0; attempt < 5; attempt++) {
+            adapter.recordFailure(parked, "broker down").block();
+        }
+
+        assertThat(adapter.deleteOtherEventsOf(user, "USER_DELETED").block()).isEqualTo(3L);
+
+        List<Long> left = databaseClient.sql("SELECT id FROM outbox_event ORDER BY id")
+                .map(row -> row.get("id", Long.class))
+                .all()
+                .collectList()
+                .block();
+        assertThat(left).containsExactly(kept, othersEvent);
+    }
+
+    @Test
+    @DisplayName("a row the relay holds is waited for: it goes out before USER_DELETED, then is deleted")
+    void deleteOtherEventsOf_shouldWaitForARowClaimedByTheRelay_beforeDeletingIt() {
+        UUID user = UUID.randomUUID();
+        long claimedRow = adapter.append(user, "USER_MODIFIED", "{}").block();
+        List<Long> held = new CopyOnWriteArrayList<>();
+        Sinks.Empty<Void> sent = Sinks.empty();
+
+        // The relay's pass: claim, send (held open here), mark published, commit.
+        Disposable relay = transactionalOperator.transactional(
+                        adapter.claimPending(10, 5)
+                                .doOnNext(row -> held.add(row.getId()))
+                                .collectList()
+                                .flatMap(rows -> sent.asMono().then(adapter.markPublished(List.of(claimedRow)))))
+                .subscribe();
+        await().atMost(Duration.ofSeconds(10)).until(() -> held.size() == 1);
+
+        AtomicReference<Long> deleted = new AtomicReference<>();
+        Disposable deletion = transactionalOperator.transactional(adapter.deleteOtherEventsOf(user, "USER_DELETED"))
+                .subscribe(deleted::set);
+        try {
+            await().during(Duration.ofMillis(500)).atMost(Duration.ofSeconds(2)).until(() -> deleted.get() == null);
+
+            sent.tryEmitEmpty();
+
+            await().atMost(Duration.ofSeconds(10)).until(() -> deleted.get() != null);
+            assertThat(deleted.get()).isEqualTo(1L);
+            assertThat(databaseClient.sql("SELECT count(*) FROM outbox_event")
+                    .map(row -> row.get(0, Long.class)).one().block()).isZero();
+        } finally {
+            sent.tryEmitEmpty();
+            relay.dispose();
+            deletion.dispose();
+        }
     }
 }

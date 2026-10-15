@@ -12,10 +12,16 @@ import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.reactive.server.WebTestClient;
+import org.springframework.http.HttpStatus;
+import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
+import org.springframework.mock.web.server.MockServerWebExchange;
+import org.springframework.web.server.WebFilter;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -41,6 +47,9 @@ class WebFluxSecurityConfigTest {
 
     /** Matches app.internal-secret in application-test.properties. */
     private static final String VALID_SECRET = "test-internal-secret";
+    /** Matches app.deleted-users.reader-secret in application-test.properties. */
+    private static final String READER_SECRET = "test-reader-secret";
+    private static final String DELETED_USERS_PATH = "/user-service/internal/deleted-users";
     private static final String SECRET_HEADER = "X-Internal-Secret";
     private static final String RESOLVE_PATH = "/user-service/profile/resolve/keycloak-abc";
     private static final String PROVISION_PATH = "/user-service/profile/provision";
@@ -157,7 +166,94 @@ class WebFluxSecurityConfigTest {
                 .expectBody(String.class).isEqualTo(businessId.toString());
     }
 
+    // --- the deleted-users reader secret -----------------------------------
+
+    @Test
+    void readerSecretFilter_shouldAnswer401_whenTheHeaderIsMissingOnTheDeletedUsersListing() {
+        client().get().uri(DELETED_USERS_PATH)
+                .exchange()
+                .expectStatus().isUnauthorized();
+
+        verify(userRepository, never()).findDeleted(any(), org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    @DisplayName("the Keycloak mapper's secret cannot read the listing: the two secrets are distinct")
+    void readerSecretFilter_shouldAnswer401_whenTheKeycloakSecretIsSentToTheListing() {
+        client().get().uri(DELETED_USERS_PATH)
+                .header(SECRET_HEADER, VALID_SECRET)
+                .exchange()
+                .expectStatus().isUnauthorized();
+    }
+
+    @Test
+    void readerSecretFilter_shouldLetTheListingThroughWithoutAToken_whenTheReaderSecretMatches() {
+        when(userRepository.findDeleted(null, 501)).thenReturn(Flux.empty());
+
+        client().get().uri(DELETED_USERS_PATH)
+                .header(SECRET_HEADER, READER_SECRET)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().json("{\"items\":[],\"next\":null}", true);
+    }
+
+    @Test
+    @DisplayName("with no reader secret configured, every call to the listing is refused")
+    void readerSecretFilter_shouldAnswer401_whenNoReaderSecretIsConfigured() {
+        WebFilter filter = new WebFluxSecurityConfig("http://issuer", "http://jwks", VALID_SECRET, "")
+                .internalSecretWebFilter();
+        AtomicBoolean reached = new AtomicBoolean();
+
+        for (String header : new String[] {"", "anything"}) {
+            MockServerWebExchange exchange = MockServerWebExchange.from(
+                    MockServerHttpRequest.get(DELETED_USERS_PATH).header(SECRET_HEADER, header));
+
+            filter.filter(exchange, ignored -> {
+                reached.set(true);
+                return Mono.empty();
+            }).block();
+
+            assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        }
+        assertThat(reached).isFalse();
+    }
+
+    @Test
+    void internalSecretFilter_shouldAnswer401_whenTheReaderSecretIsSentToResolve() {
+        client().get().uri(RESOLVE_PATH)
+                .header(SECRET_HEADER, READER_SECRET)
+                .exchange()
+                .expectStatus().isUnauthorized();
+    }
+
+    @Test
+    @DisplayName("the reader secret opens the listing for reading only")
+    void readerSecretFilter_shouldRequireAToken_whenWritingToAnInternalPath() {
+        client().post().uri(DELETED_USERS_PATH)
+                .header(SECRET_HEADER, READER_SECRET)
+                .exchange()
+                .expectStatus().isUnauthorized();
+    }
+
     // --- the filter chain -------------------------------------------------
+
+    @Test
+    void apiHttpSecurity_shouldRequireAToken_whenDeletingTheProfile() {
+        client().delete().uri("/user-service/profile")
+                .exchange()
+                .expectStatus().isUnauthorized();
+
+        verify(userRepository, never()).eraseAccount(any(), any());
+    }
+
+    @Test
+    void apiHttpSecurity_shouldRequireAToken_whenLookingUpDeletedUsers() {
+        client().post().uri("/user-service/users/deleted")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue("{\"userIds\":[]}")
+                .exchange()
+                .expectStatus().isUnauthorized();
+    }
 
     @Test
     void apiHttpSecurity_shouldRequireATokenOnBusinessRoutes() {

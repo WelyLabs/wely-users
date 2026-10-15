@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -19,10 +20,12 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import java.util.Map;
+import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -148,5 +151,76 @@ class IdentityAuthAdapterTest {
                 .verify();
 
         verify(keycloakAdminApi, never()).updateUser(any(), any());
+    }
+
+    // --- deleteSubject -------------------------------------------------------
+
+    private static WebClientResponseException status(HttpStatus status) {
+        return WebClientResponseException.create(status.value(), status.getReasonPhrase(), null, null, null);
+    }
+
+    @Test
+    void deleteSubject_shouldLogOutThenDelete_whenTheSubjectExists() {
+        when(keycloakAdminApi.logout("kc-1")).thenReturn(Mono.empty());
+        when(keycloakAdminApi.deleteUser("kc-1")).thenReturn(Mono.empty());
+
+        StepVerifier.create(adapter.deleteSubject("kc-1")).verifyComplete();
+
+        InOrder order = inOrder(keycloakAdminApi);
+        order.verify(keycloakAdminApi).logout("kc-1");
+        order.verify(keycloakAdminApi).deleteUser("kc-1");
+    }
+
+    @Test
+    void deleteSubject_shouldStillDelete_whenLogoutAnswers404() {
+        when(keycloakAdminApi.logout("kc-1")).thenReturn(Mono.error(status(HttpStatus.NOT_FOUND)));
+        when(keycloakAdminApi.deleteUser("kc-1")).thenReturn(Mono.empty());
+
+        StepVerifier.create(adapter.deleteSubject("kc-1")).verifyComplete();
+
+        verify(keycloakAdminApi).deleteUser("kc-1");
+    }
+
+    @Test
+    @DisplayName("a subject Keycloak no longer knows is already deleted: the step is idempotent")
+    void deleteSubject_shouldComplete_whenDeleteAnswers404() {
+        when(keycloakAdminApi.logout("kc-1")).thenReturn(Mono.empty());
+        when(keycloakAdminApi.deleteUser("kc-1")).thenReturn(Mono.error(status(HttpStatus.NOT_FOUND)));
+
+        StepVerifier.create(adapter.deleteSubject("kc-1")).verifyComplete();
+    }
+
+    @Test
+    void deleteSubject_shouldNotDelete_whenLogoutFailsWithAServerError() {
+        when(keycloakAdminApi.logout("kc-1")).thenReturn(Mono.error(status(HttpStatus.SERVICE_UNAVAILABLE)));
+
+        StepVerifier.create(adapter.deleteSubject("kc-1"))
+                .expectError(WebClientResponseException.ServiceUnavailable.class)
+                .verify();
+
+        verify(keycloakAdminApi, never()).deleteUser(any());
+    }
+
+    @Test
+    void deleteSubject_shouldFail_whenDeleteFailsWithAServerError() {
+        when(keycloakAdminApi.logout("kc-1")).thenReturn(Mono.empty());
+        when(keycloakAdminApi.deleteUser("kc-1")).thenReturn(Mono.error(status(HttpStatus.INTERNAL_SERVER_ERROR)));
+
+        StepVerifier.create(adapter.deleteSubject("kc-1"))
+                .expectError(WebClientResponseException.InternalServerError.class)
+                .verify();
+    }
+
+    @Test
+    void deleteSubject_shouldFailWithATimeout_whenKeycloakDoesNotAnswer() {
+        when(keycloakAdminApi.logout("kc-1")).thenReturn(Mono.never());
+
+        StepVerifier.withVirtualTime(() -> adapter.deleteSubject("kc-1"))
+                .expectSubscription()
+                .thenAwait(IdentityAuthAdapter.DELETE_TIMEOUT)
+                .expectError(TimeoutException.class)
+                .verify();
+
+        verify(keycloakAdminApi, never()).deleteUser(any());
     }
 }

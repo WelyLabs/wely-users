@@ -76,6 +76,8 @@ class UserServiceIntegrationTest {
     @BeforeEach
     void prepareSchema() {
         EphemeralDatabaseCheck.verifyThrowaway(databaseClient);
+        databaseClient.sql("DELETE FROM account_deletion").then().block();
+        databaseClient.sql("DELETE FROM retired_handle").then().block();
         databaseClient.sql("DELETE FROM app_user").then().block();
         databaseClient.sql("DELETE FROM outbox_event").then().block();
     }
