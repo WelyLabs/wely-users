@@ -70,4 +70,25 @@ class PreferencesControllerTest {
                         && exception.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
                 .verify();
     }
+
+    @Test
+    void preferences_shouldAnswer410_whenTheCallerIsATombstone() {
+        when(userService.preferences(ME)).thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_DELETED)));
+
+        StepVerifier.create(controller.preferences(jwt))
+                .expectErrorMatches(error -> error instanceof BusinessException exception
+                        && exception.getErrorCode() == BusinessErrorCode.USER_DELETED)
+                .verify();
+    }
+
+    @Test
+    void updatePreferences_shouldAnswer410_whenTheCallerIsATombstone() {
+        when(userService.updatePreferences(ME, new UserPreferences(Theme.DARK)))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_DELETED)));
+
+        StepVerifier.create(controller.updatePreferences(jwt, new PreferencesRequest(Theme.DARK)))
+                .expectErrorMatches(error -> error instanceof BusinessException exception
+                        && exception.getErrorCode() == BusinessErrorCode.USER_DELETED)
+                .verify();
+    }
 }

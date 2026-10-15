@@ -10,6 +10,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.OffsetDateTime;
 import java.util.Collection;
+import java.util.UUID;
 
 /** Spring Data access to {@code outbox_event}. Inserts use the inherited {@code save}. */
 @Repository
@@ -41,4 +42,9 @@ public interface OutboxEventR2dbcRepository extends ReactiveCrudRepository<Outbo
     Mono<Long> recordFailure(long id, String error);
 
     Mono<Long> deleteByPublishedAtBefore(OffsetDateTime cutoff);
+
+    /** Pending, parked and published alike; a row the relay holds locked is waited for, so it goes out first. */
+    @Modifying
+    @Query("DELETE FROM outbox_event WHERE aggregate_id = :aggregateId AND type <> :keptType")
+    Mono<Long> deleteOtherEventsOf(UUID aggregateId, String keptType);
 }

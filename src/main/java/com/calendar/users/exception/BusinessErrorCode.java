@@ -71,6 +71,38 @@ public enum BusinessErrorCode {
             "USR-BUS-009",
             "Not a friend",
             "Only this user's friends can see their profile.",
+            HttpStatus.FORBIDDEN),
+
+    /** 403 rather than 401: the web app answers every 401 with a plain login, not a re-authentication. */
+    REAUTHENTICATION_REQUIRED(
+            "USR-BUS-010",
+            "Recent sign-in required",
+            "Sign in again, then confirm within 5 minutes.",
+            HttpStatus.FORBIDDEN),
+
+    ACCOUNT_PROTECTED(
+            "USR-BUS-011",
+            "Account protected",
+            "This account cannot be deleted.",
+            HttpStatus.FORBIDDEN),
+
+    USER_DELETED(
+            "USR-BUS-012",
+            "User deleted",
+            "This user deleted their account.",
+            HttpStatus.GONE),
+
+    DELETED_USERS_CURSOR_INVALID(
+            "USR-BUS-013",
+            "Invalid cursor",
+            "The cursor was not issued by this service.",
+            HttpStatus.BAD_REQUEST),
+
+    /** ACCOUNT_DELETION_ENABLED is not true on this deployment. */
+    ACCOUNT_DELETION_DISABLED(
+            "USR-BUS-014",
+            "Account deletion disabled",
+            "Account deletion is not available on this deployment.",
             HttpStatus.FORBIDDEN);
 
     private final String code;

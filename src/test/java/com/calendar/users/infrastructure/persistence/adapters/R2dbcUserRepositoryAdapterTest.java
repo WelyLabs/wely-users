@@ -22,13 +22,24 @@ import com.calendar.users.domain.models.UserPicture;
 import java.util.List;
 import com.calendar.users.domain.models.IdentityToCheck;
 import reactor.core.publisher.Flux;
+import com.calendar.users.domain.models.AccountErasure;
+import com.calendar.users.domain.models.AccountState;
+import com.calendar.users.domain.models.DeletedUser;
+import com.calendar.users.infrastructure.messaging.models.UserDeletedEventDTO;
+import com.calendar.users.infrastructure.persistence.mappers.AccountDeletionEntityMapper;
+import com.calendar.users.infrastructure.persistence.mappers.AccountDeletionEntityMapperImpl;
 import com.calendar.users.infrastructure.persistence.mappers.UserEntityMapper;
+import com.calendar.users.infrastructure.persistence.models.DeletedUserRow;
+import com.calendar.users.infrastructure.persistence.models.DeletionLockRow;
+import com.calendar.users.infrastructure.persistence.repositories.AccountDeletionR2dbcRepository;
+import com.calendar.users.infrastructure.persistence.repositories.RetiredHandleR2dbcRepository;
 import com.calendar.users.infrastructure.persistence.models.entities.UserEntity;
 import com.calendar.users.infrastructure.persistence.repositories.UserR2dbcRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.BeforeEach;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -37,7 +48,11 @@ import reactor.test.StepVerifier;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -60,6 +75,14 @@ class R2dbcUserRepositoryAdapterTest {
         @Mock
         private KafkaDataMapper kafkaDataMapper;
 
+        @Mock
+        private RetiredHandleR2dbcRepository retiredHandles;
+
+        @Mock
+        private AccountDeletionR2dbcRepository accountDeletions;
+
+        private final AccountDeletionEntityMapper accountDeletionMapper = new AccountDeletionEntityMapperImpl();
+
         // A real mapper: the stored JSON is what the relay sends to Kafka.
         private final ObjectMapper objectMapper = JsonMapper.builder().build();
 
@@ -68,7 +91,8 @@ class R2dbcUserRepositoryAdapterTest {
         @BeforeEach
         void setUp() {
                 adapter = new R2dbcUserRepositoryAdapter(userR2dbcRepository, userEntityMapper,
-                                outboxEventStore, kafkaDataMapper, objectMapper);
+                                outboxEventStore, kafkaDataMapper, objectMapper, retiredHandles, accountDeletions,
+                                accountDeletionMapper);
         }
 
         @Test
@@ -184,7 +208,7 @@ class R2dbcUserRepositoryAdapterTest {
                 UserEntity entity = new UserEntity();
                 BusinessUser user = new BusinessUser(id, "user", 1, "F", "L", "url", LocalDateTime.now());
 
-                when(userR2dbcRepository.findById(id)).thenReturn(Mono.just(entity));
+                when(userR2dbcRepository.findLiveById(id)).thenReturn(Mono.just(entity));
                 when(userEntityMapper.toBusinessUser(entity)).thenReturn(user);
 
                 // When
@@ -221,23 +245,42 @@ class R2dbcUserRepositoryAdapterTest {
         }
 
         @Test
-        void deleteOrphan_ShouldDeleteTheUserThenWriteUserDeleted() {
+        void deleteOrphan_shouldDropTheOrphansOtherEventsThenWriteUserDeletedWithDeletedAt() {
                 UUID id = UUID.randomUUID();
-                when(userR2dbcRepository.deleteById(id)).thenReturn(Mono.empty());
+                Instant before = Instant.now().truncatedTo(ChronoUnit.MICROS);
+                when(userR2dbcRepository.deleteLiveById(id)).thenReturn(Mono.just(1L));
+                when(outboxEventStore.deleteOtherEventsOf(id, "USER_DELETED")).thenReturn(Mono.just(2L));
                 when(outboxEventStore.append(any(UUID.class), anyString(), anyString())).thenReturn(Mono.just(1L));
 
                 StepVerifier.create(adapter.deleteOrphan(id)).verifyComplete();
 
+                InOrder order = inOrder(userR2dbcRepository, outboxEventStore);
+                order.verify(userR2dbcRepository).deleteLiveById(id);
+                order.verify(outboxEventStore).deleteOtherEventsOf(id, "USER_DELETED");
                 ArgumentCaptor<String> payload = ArgumentCaptor.captor();
-                verify(outboxEventStore).append(eq(id), eq(OutboxEventType.USER_DELETED.name()), payload.capture());
-                assertThat(payload.getValue()).isEqualTo("{\"userId\":\"" + id + "\"}");
+                order.verify(outboxEventStore).append(eq(id), eq(OutboxEventType.USER_DELETED.name()), payload.capture());
+                UserDeletedEventDTO event = objectMapper.readValue(payload.getValue(), UserDeletedEventDTO.class);
+                assertThat(event.userId()).isEqualTo(id);
+                assertThat(event.deletedAt()).isBetween(before, Instant.now());
+        }
+
+        @Test
+        void deleteOrphan_shouldWriteNothing_whenTheRowIsATombstone() {
+                UUID id = UUID.randomUUID();
+                when(userR2dbcRepository.deleteLiveById(id)).thenReturn(Mono.just(0L));
+
+                StepVerifier.create(adapter.deleteOrphan(id)).verifyComplete();
+
+                verify(outboxEventStore, never()).deleteOtherEventsOf(any(), anyString());
+                verify(outboxEventStore, never()).append(any(), anyString(), anyString());
         }
 
         @Test
         void deleteOrphan_ShouldFail_WhenTheEventCannotBeWritten() {
                 // The error reaches the caller, so the transaction rolls the deletion back.
                 UUID id = UUID.randomUUID();
-                when(userR2dbcRepository.deleteById(id)).thenReturn(Mono.empty());
+                when(userR2dbcRepository.deleteLiveById(id)).thenReturn(Mono.just(1L));
+                when(outboxEventStore.deleteOtherEventsOf(id, "USER_DELETED")).thenReturn(Mono.just(0L));
                 when(outboxEventStore.append(any(UUID.class), anyString(), anyString()))
                                 .thenReturn(Mono.error(new IllegalStateException("outbox down")));
 
@@ -257,12 +300,13 @@ class R2dbcUserRepositoryAdapterTest {
                 UserEntity stored = mock(UserEntity.class);
                 UserModifiedEventDTO event = new UserModifiedEventDTO(ID, "camille_d", 4321, "Cam", "Dupont", "pic.jpg");
                 when(userR2dbcRepository.updateProfile(ID, "camille_d", "Cam", "Dupont")).thenReturn(Mono.just(1L));
-                when(userR2dbcRepository.findById(ID)).thenReturn(Mono.just(stored));
+                when(retiredHandles.isRetired("camille_d", 4321)).thenReturn(Mono.just(false));
+                when(userR2dbcRepository.findLiveById(ID)).thenReturn(Mono.just(stored));
                 when(userEntityMapper.toBusinessUser(stored)).thenReturn(RENAMED);
                 when(kafkaDataMapper.toUserModifiedEventDTO(RENAMED)).thenReturn(event);
                 when(outboxEventStore.append(any(UUID.class), anyString(), anyString())).thenReturn(Mono.just(1L));
 
-                StepVerifier.create(adapter.updateProfile(RENAMED)).expectNext(RENAMED).verifyComplete();
+                StepVerifier.create(adapter.updateProfile(RENAMED, "camille")).expectNext(RENAMED).verifyComplete();
 
                 ArgumentCaptor<String> payload = ArgumentCaptor.captor();
                 verify(outboxEventStore).append(eq(ID), eq(OutboxEventType.USER_MODIFIED.name()), payload.capture());
@@ -274,7 +318,7 @@ class R2dbcUserRepositoryAdapterTest {
                 when(userR2dbcRepository.updateProfile(ID, "camille_d", "Cam", "Dupont"))
                                 .thenReturn(Mono.error(new DataIntegrityViolationException("unique_user_identity")));
 
-                StepVerifier.create(adapter.updateProfile(RENAMED))
+                StepVerifier.create(adapter.updateProfile(RENAMED, "camille"))
                                 .expectErrorMatches(error -> error instanceof BusinessException business
                                                 && business.getErrorCode() == BusinessErrorCode.USERNAME_TAKEN)
                                 .verify();
@@ -286,7 +330,7 @@ class R2dbcUserRepositoryAdapterTest {
         void updateProfile_ShouldFailAsNotFound_WhenNoRowWasUpdated() {
                 when(userR2dbcRepository.updateProfile(ID, "camille_d", "Cam", "Dupont")).thenReturn(Mono.just(0L));
 
-                StepVerifier.create(adapter.updateProfile(RENAMED))
+                StepVerifier.create(adapter.updateProfile(RENAMED, "camille"))
                                 .expectErrorMatches(error -> error instanceof BusinessException business
                                                 && business.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
                                 .verify();
@@ -297,12 +341,13 @@ class R2dbcUserRepositoryAdapterTest {
                 // The error reaches the caller, so the transaction rolls the update back.
                 UserEntity stored = mock(UserEntity.class);
                 when(userR2dbcRepository.updateProfile(ID, "camille_d", "Cam", "Dupont")).thenReturn(Mono.just(1L));
-                when(userR2dbcRepository.findById(ID)).thenReturn(Mono.just(stored));
+                when(retiredHandles.isRetired("camille_d", 4321)).thenReturn(Mono.just(false));
+                when(userR2dbcRepository.findLiveById(ID)).thenReturn(Mono.just(stored));
                 when(userEntityMapper.toBusinessUser(stored)).thenReturn(RENAMED);
                 when(outboxEventStore.append(any(UUID.class), anyString(), anyString()))
                                 .thenReturn(Mono.error(new IllegalStateException("outbox down")));
 
-                StepVerifier.create(adapter.updateProfile(RENAMED)).expectError(IllegalStateException.class).verify();
+                StepVerifier.create(adapter.updateProfile(RENAMED, "camille")).expectError(IllegalStateException.class).verify();
         }
 
         @Test
@@ -318,7 +363,7 @@ class R2dbcUserRepositoryAdapterTest {
         void updatePicture_ShouldPointTheUserAtTheKeyThenWriteUserModified() {
                 UserEntity stored = mock(UserEntity.class);
                 when(userR2dbcRepository.updatePicture(ID, "avatars/k.jpg")).thenReturn(Mono.just(1L));
-                when(userR2dbcRepository.findById(ID)).thenReturn(Mono.just(stored));
+                when(userR2dbcRepository.findLiveById(ID)).thenReturn(Mono.just(stored));
                 when(userEntityMapper.toBusinessUser(stored)).thenReturn(RENAMED);
                 when(kafkaDataMapper.toUserModifiedEventDTO(RENAMED))
                                 .thenReturn(new UserModifiedEventDTO(ID, "camille_d", 4321, "Cam", "Dupont", "avatars/k.jpg"));
@@ -439,5 +484,181 @@ class R2dbcUserRepositoryAdapterTest {
                                 .expectErrorMatches(error -> error instanceof BusinessException exception
                                                 && exception.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
                                 .verify();
+        }
+
+        // --- retired handles on rename -----------------------------------------
+
+        @Test
+        void updateProfile_shouldFailAsUsernameTaken_whenTheNewHandleIsRetired() {
+                when(userR2dbcRepository.updateProfile(ID, "camille_d", "Cam", "Dupont")).thenReturn(Mono.just(1L));
+                when(retiredHandles.isRetired("camille_d", 4321)).thenReturn(Mono.just(true));
+
+                StepVerifier.create(adapter.updateProfile(RENAMED, "camille"))
+                                .expectErrorMatches(error -> error instanceof BusinessException business
+                                                && business.getErrorCode() == BusinessErrorCode.USERNAME_TAKEN)
+                                .verify();
+
+                verify(outboxEventStore, never()).append(any(), anyString(), anyString());
+        }
+
+        @Test
+        void updateProfile_shouldNotCheckRetirement_whenTheHandleIsUnchanged() {
+                // A legacy row differing only by case from a deleted user's handle must keep editing its names.
+                UserEntity stored = mock(UserEntity.class);
+                when(userR2dbcRepository.updateProfile(ID, "camille_d", "Cam", "Dupont")).thenReturn(Mono.just(1L));
+                when(userR2dbcRepository.findLiveById(ID)).thenReturn(Mono.just(stored));
+                when(userEntityMapper.toBusinessUser(stored)).thenReturn(RENAMED);
+                when(outboxEventStore.append(any(UUID.class), anyString(), anyString())).thenReturn(Mono.just(1L));
+
+                StepVerifier.create(adapter.updateProfile(RENAMED, "Camille_D")).expectNext(RENAMED).verifyComplete();
+
+                verifyNoInteractions(retiredHandles);
+        }
+
+        // --- eraseAccount --------------------------------------------------------
+
+        private static final Instant DELETED_AT = Instant.parse("2026-10-15T14:03:27.123456Z");
+        private static final OffsetDateTime DELETED_AT_UTC = OffsetDateTime.ofInstant(DELETED_AT, ZoneOffset.UTC);
+
+        private void givenALiveRowLocked() {
+                when(userR2dbcRepository.lockForDeletion(ID)).thenReturn(Mono.just(new DeletionLockRow(ID, "kc-camille", null)));
+        }
+
+        private void givenEveryStepSucceeds() {
+                givenEveryStepBeforeTheEventSucceeds();
+                when(outboxEventStore.append(any(UUID.class), anyString(), anyString())).thenReturn(Mono.just(9L));
+        }
+
+        private void givenEveryStepBeforeTheEventSucceeds() {
+                when(retiredHandles.retireHandleOf(ID)).thenReturn(Mono.just(1L));
+                when(userR2dbcRepository.tombstone(ID, DELETED_AT_UTC)).thenReturn(Mono.just(1L));
+                when(accountDeletions.insertJob(ID, "kc-camille", DELETED_AT_UTC)).thenReturn(Mono.just(1L));
+                when(outboxEventStore.deleteOtherEventsOf(ID, "USER_DELETED")).thenReturn(Mono.just(3L));
+        }
+
+        @Test
+        void eraseAccount_shouldReturnUnknownUser_whenNoRowIsLocked() {
+                when(userR2dbcRepository.lockForDeletion(ID)).thenReturn(Mono.empty());
+
+                StepVerifier.create(adapter.eraseAccount(ID, DELETED_AT)).expectNext(AccountErasure.UNKNOWN_USER).verifyComplete();
+
+                verifyNoInteractions(retiredHandles, accountDeletions, outboxEventStore);
+        }
+
+        @Test
+        void eraseAccount_shouldReturnAlreadyErasedWithoutWriting_whenTheRowIsATombstone() {
+                when(userR2dbcRepository.lockForDeletion(ID))
+                                .thenReturn(Mono.just(new DeletionLockRow(ID, "deleted:" + ID, DELETED_AT_UTC)));
+
+                StepVerifier.create(adapter.eraseAccount(ID, DELETED_AT.plusSeconds(60)))
+                                .expectNext(AccountErasure.ALREADY_ERASED)
+                                .verifyComplete();
+
+                verify(userR2dbcRepository, never()).tombstone(any(), any());
+                verifyNoInteractions(retiredHandles, accountDeletions, outboxEventStore);
+        }
+
+        @Test
+        void eraseAccount_shouldRetireTombstoneQueueDropAndAppendInThatOrder_whenTheRowIsLive() {
+                givenALiveRowLocked();
+                givenEveryStepSucceeds();
+
+                StepVerifier.create(adapter.eraseAccount(ID, DELETED_AT)).expectNext(AccountErasure.ERASED).verifyComplete();
+
+                InOrder order = inOrder(userR2dbcRepository, retiredHandles, accountDeletions, outboxEventStore);
+                order.verify(userR2dbcRepository).lockForDeletion(ID);
+                order.verify(retiredHandles).retireHandleOf(ID);
+                order.verify(userR2dbcRepository).tombstone(ID, DELETED_AT_UTC);
+                order.verify(accountDeletions).insertJob(ID, "kc-camille", DELETED_AT_UTC);
+                order.verify(outboxEventStore).deleteOtherEventsOf(ID, "USER_DELETED");
+                order.verify(outboxEventStore).append(eq(ID), eq("USER_DELETED"), anyString());
+        }
+
+        @Test
+        void eraseAccount_shouldCarryDeletedAtInTheEvent_whenErasing() {
+                givenALiveRowLocked();
+                givenEveryStepSucceeds();
+
+                adapter.eraseAccount(ID, DELETED_AT).block();
+
+                ArgumentCaptor<String> payload = ArgumentCaptor.captor();
+                verify(outboxEventStore).append(eq(ID), eq("USER_DELETED"), payload.capture());
+                assertThat(payload.getValue())
+                                .isEqualTo("{\"userId\":\"" + ID + "\",\"deletedAt\":\"2026-10-15T14:03:27.123456Z\"}");
+        }
+
+        @Test
+        void eraseAccount_shouldFail_whenTheTombstoneMatchesNoRow() {
+                givenALiveRowLocked();
+                when(retiredHandles.retireHandleOf(ID)).thenReturn(Mono.just(1L));
+                when(userR2dbcRepository.tombstone(ID, DELETED_AT_UTC)).thenReturn(Mono.just(0L));
+
+                StepVerifier.create(adapter.eraseAccount(ID, DELETED_AT)).expectError(IllegalStateException.class).verify();
+
+                verifyNoInteractions(accountDeletions, outboxEventStore);
+        }
+
+        @Test
+        void eraseAccount_shouldFail_whenTheEventCannotBeWritten() {
+                // The error reaches the caller, so the transaction rolls every step back.
+                givenALiveRowLocked();
+                givenEveryStepBeforeTheEventSucceeds();
+                when(outboxEventStore.append(any(UUID.class), anyString(), anyString()))
+                                .thenReturn(Mono.error(new IllegalStateException("outbox down")));
+
+                StepVerifier.create(adapter.eraseAccount(ID, DELETED_AT)).expectError(IllegalStateException.class).verify();
+        }
+
+        // --- tombstone reads -----------------------------------------------------
+
+        @Test
+        void findAccountState_shouldMapTheFlag_whenTheRowExists() {
+                UUID live = UUID.randomUUID();
+                when(userR2dbcRepository.isDeleted(ID)).thenReturn(Mono.just(true));
+                when(userR2dbcRepository.isDeleted(live)).thenReturn(Mono.just(false));
+
+                StepVerifier.create(adapter.findAccountState(ID)).expectNext(AccountState.DELETED).verifyComplete();
+                StepVerifier.create(adapter.findAccountState(live)).expectNext(AccountState.ACTIVE).verifyComplete();
+        }
+
+        @Test
+        void findAccountState_shouldBeEmpty_whenTheUserIsUnknown() {
+                when(userR2dbcRepository.isDeleted(ID)).thenReturn(Mono.empty());
+
+                StepVerifier.create(adapter.findAccountState(ID)).verifyComplete();
+        }
+
+        @Test
+        void findDeletedIds_shouldNotQuery_whenNoIdIsGiven() {
+                StepVerifier.create(adapter.findDeletedIds(List.of())).verifyComplete();
+
+                verify(userR2dbcRepository, never()).findDeletedIds(any());
+        }
+
+        @Test
+        void findDeletedIds_shouldReturnTheTombstones_whenIdsAreGiven() {
+                when(userR2dbcRepository.findDeletedIds(List.of(ID))).thenReturn(Flux.just(ID));
+
+                StepVerifier.create(adapter.findDeletedIds(List.of(ID))).expectNext(ID).verifyComplete();
+        }
+
+        @Test
+        void findDeleted_shouldUseTheFirstPageQuery_whenNoCursorIsGiven() {
+                when(userR2dbcRepository.findDeletedFirst(10)).thenReturn(Flux.just(new DeletedUserRow(ID, DELETED_AT_UTC)));
+
+                StepVerifier.create(adapter.findDeleted(null, 10))
+                                .expectNext(new DeletedUser(ID, DELETED_AT))
+                                .verifyComplete();
+        }
+
+        @Test
+        void findDeleted_shouldUseTheKeysetQuery_whenACursorIsGiven() {
+                UUID next = UUID.randomUUID();
+                when(userR2dbcRepository.findDeletedAfter(DELETED_AT_UTC, ID, 10))
+                                .thenReturn(Flux.just(new DeletedUserRow(next, DELETED_AT_UTC.plusSeconds(1))));
+
+                StepVerifier.create(adapter.findDeleted(new DeletedUser(ID, DELETED_AT), 10))
+                                .expectNext(new DeletedUser(next, DELETED_AT.plusSeconds(1)))
+                                .verifyComplete();
         }
 }

@@ -3,6 +3,7 @@ package com.calendar.users.infrastructure.messaging.adapters;
 import com.calendar.users.exception.TechnicalErrorCode;
 import com.calendar.users.exception.TechnicalException;
 import com.calendar.users.infrastructure.messaging.models.UserCreatedEventDTO;
+import com.calendar.users.infrastructure.messaging.models.UserDeletedEventDTO;
 import com.calendar.users.infrastructure.persistence.models.entities.OutboxEventEntity;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import reactor.test.StepVerifier;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -68,6 +70,22 @@ class KafkaOutboxDispatcherTest {
         ArgumentCaptor<Object> sent = ArgumentCaptor.captor();
         verify(streamBridge).send(eq("userCreated-out-0"), sent.capture());
         assertThat(sent.getValue()).isEqualTo(new UserCreatedEventDTO(userId, "alice", 1111, "pic"));
+    }
+
+    @Test
+    @DisplayName("USER_DELETED goes out with its deletedAt, on its own binding")
+    void dispatch_shouldSendUserDeletedWithItsDeletedAt_whenTheRowIsUserDeleted() {
+        UUID userId = UUID.randomUUID();
+        when(streamBridge.send(anyString(), any())).thenReturn(true);
+
+        StepVerifier.create(dispatcher().dispatch(aRow(userId, "USER_DELETED",
+                        "{\"userId\":\"" + userId + "\",\"deletedAt\":\"2026-10-15T14:03:27.123456Z\"}")))
+                .verifyComplete();
+
+        ArgumentCaptor<Object> sent = ArgumentCaptor.captor();
+        verify(streamBridge).send(eq("userDeleted-out-0"), sent.capture());
+        assertThat(sent.getValue())
+                .isEqualTo(new UserDeletedEventDTO(userId, Instant.parse("2026-10-15T14:03:27.123456Z")));
     }
 
     @Test

@@ -53,6 +53,16 @@ class GlobalErrorHandlerTest {
             return Mono.empty();
         }
 
+        @GetMapping("/user-deleted")
+        Mono<Void> userDeleted() {
+            return Mono.error(new BusinessException(BusinessErrorCode.USER_DELETED));
+        }
+
+        @GetMapping("/reauthenticate")
+        Mono<Void> reauthenticate() {
+            return Mono.error(new BusinessException(BusinessErrorCode.REAUTHENTICATION_REQUIRED));
+        }
+
         @GetMapping("/gone")
         Mono<Void> gone() {
             return Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND));
@@ -190,4 +200,24 @@ class GlobalErrorHandlerTest {
                 .jsonPath("$.code").isEqualTo("USR-REQ-000");
     }
 
+    @Test
+    @DisplayName("a deleted account answers 410 Gone with its own code")
+    void handleBusinessException_shouldAnswerGone_whenTheUserDeletedTheirAccount() {
+        client.get().uri("/user-deleted")
+                .exchange()
+                .expectStatus().isEqualTo(410)
+                .expectBody()
+                .jsonPath("$.status").isEqualTo(410)
+                .jsonPath("$.code").isEqualTo("USR-BUS-012");
+    }
+
+    @Test
+    @DisplayName("a stale sign-in answers 403, never 401: the web app turns a 401 into a plain login")
+    void handleBusinessException_shouldAnswerForbidden_whenReauthenticationIsRequired() {
+        client.get().uri("/reauthenticate")
+                .exchange()
+                .expectStatus().isForbidden()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo("USR-BUS-010");
+    }
 }

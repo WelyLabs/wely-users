@@ -1,6 +1,9 @@
 package com.calendar.users.domain.ports;
 
+import com.calendar.users.domain.models.AccountErasure;
+import com.calendar.users.domain.models.AccountState;
 import com.calendar.users.domain.models.BusinessUser;
+import com.calendar.users.domain.models.DeletedUser;
 import com.calendar.users.domain.models.UserAbout;
 import com.calendar.users.domain.models.IdentityToCheck;
 import com.calendar.users.domain.models.UserPicture;
@@ -8,10 +11,12 @@ import com.calendar.users.domain.models.UserPreferences;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.UUID;
 
+/** Users and their tombstones; reads and updates see live users only. */
 public interface UserRepository {
 
     /** Saves a new user. Other services are told about it (USER_CREATED). */
@@ -19,6 +24,7 @@ public interface UserRepository {
 
     Mono<BusinessUser> getBusinessUserByUserId(UUID userId);
 
+    /** True when a live user holds the handle or the handle is retired. */
     Mono<Boolean> existsByUserNameAndHashtag(String userName, Integer hashTag);
 
     Mono<UUID> findIdByKeycloakId(String keycloakId);
@@ -28,14 +34,11 @@ public interface UserRepository {
 
     Mono<Void> markIdentityChecked(UUID userId);
 
-    /** Deletes a user left by a cancelled registration. Other services are told (USER_DELETED). */
+    /** Deletes a live user left by a cancelled registration and tells other services (USER_DELETED). */
     Mono<Void> deleteOrphan(UUID userId);
 
-    /**
-     * Writes a user's new name and username, and tells other services (USER_MODIFIED). Fails with
-     * USERNAME_TAKEN if the (username, hashtag) pair is someone else's.
-     */
-    Mono<BusinessUser> updateProfile(BusinessUser businessUser);
+    /** Writes the new names and USER_MODIFIED; USERNAME_TAKEN for a handle taken, or retired on a rename. */
+    Mono<BusinessUser> updateProfile(BusinessUser businessUser, String previousUserName);
 
     /** The identity provider's id for this user. */
     Mono<String> findKeycloakIdByUserId(UUID userId);
@@ -58,4 +61,19 @@ public interface UserRepository {
 
     /** Replaces the user's preferences; fails with USER_NOT_FOUND for an unknown user. */
     Mono<UserPreferences> updatePreferences(UUID userId, UserPreferences preferences);
+
+    /**
+     * Turns the user into a tombstone, retires their handle, queues the identity and media cleanup, drops
+     * the user's other outbox events and appends USER_DELETED, all in one transaction.
+     */
+    Mono<AccountErasure> eraseAccount(UUID userId, Instant deletedAt);
+
+    /** Live or tombstone; empty for an unknown id. */
+    Mono<AccountState> findAccountState(UUID userId);
+
+    /** Those of these ids that are tombstones. */
+    Flux<UUID> findDeletedIds(Collection<UUID> userIds);
+
+    /** Tombstones in (deletedAt, userId) order, after the cursor, which may be null. */
+    Flux<DeletedUser> findDeleted(DeletedUser after, int limit);
 }

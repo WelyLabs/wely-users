@@ -40,6 +40,7 @@ public class MediaApiAdapter implements MediaStore {
 
     static final String MEDIA_PATH = "/internal/media";
     static final String URLS_PATH = "/internal/media/urls";
+    static final String PREFIX_PATH = "/internal/media/prefix";
     /** The web app reuses a URL for a little less than this. */
     static final long URL_TTL_SECONDS = 3600;
     static final String INVALID_IMAGE = "MED-BUS-001";
@@ -77,6 +78,17 @@ public class MediaApiAdapter implements MediaStore {
                         .toBodilessEntity())
                 .then()
                 .onErrorMap(error -> translate("delete", error));
+    }
+
+    /** wely-media answers 204 when nothing is stored under the prefix too; a refused prefix is MEDIA_ERROR. */
+    @Override
+    public Mono<Void> deletePrefix(String prefix) {
+        return Mono.defer(() -> client.delete()
+                        .uri(builder -> builder.path(PREFIX_PATH).queryParam("prefix", "{prefix}").build(prefix))
+                        .retrieve()
+                        .toBodilessEntity())
+                .then()
+                .onErrorMap(error -> translate("deletePrefix", error));
     }
 
     /** One call: the callers ask for at most 100 users, below wely-media's 200 keys. */

@@ -1,11 +1,13 @@
 package com.calendar.users.application.rest;
 
+import com.calendar.users.application.dtos.DeletionEligibilityResponse;
 import com.calendar.users.application.dtos.PictureResponse;
 import com.calendar.users.application.dtos.ProvisionUserRequest;
 import com.calendar.users.application.dtos.UpdateProfileRequest;
 import com.calendar.users.application.mappers.ProvisionUserRequestMapper;
 import com.calendar.users.application.mappers.UpdateProfileRequestMapper;
 import com.calendar.users.domain.models.BusinessUser;
+import com.calendar.users.domain.services.AccountDeletionService;
 import com.calendar.users.domain.services.UserService;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
@@ -22,6 +24,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 
+import java.time.Instant;
 import java.util.UUID;
 
 @RestController
@@ -29,13 +32,19 @@ import java.util.UUID;
 @Validated
 public class ProfileController {
 
+    private static final String BUSINESS_ID = "businessId";
+    private static final String AUTH_TIME = "auth_time";
+
     private final UserService userService;
+    private final AccountDeletionService accountDeletionService;
     private final ProvisionUserRequestMapper provisionUserRequestMapper;
     private final UpdateProfileRequestMapper updateProfileRequestMapper;
 
-    public ProfileController(UserService userService, ProvisionUserRequestMapper provisionUserRequestMapper,
+    public ProfileController(UserService userService, AccountDeletionService accountDeletionService,
+                             ProvisionUserRequestMapper provisionUserRequestMapper,
                              UpdateProfileRequestMapper updateProfileRequestMapper) {
         this.userService = userService;
+        this.accountDeletionService = accountDeletionService;
         this.provisionUserRequestMapper = provisionUserRequestMapper;
         this.updateProfileRequestMapper = updateProfileRequestMapper;
     }
@@ -102,4 +111,29 @@ public class ProfileController {
                 .map(ResponseEntity::ok);
     }
 
+    /** Deletes the caller's account; identity and sign-in time come from the token only. */
+    @DeleteMapping
+    public Mono<ResponseEntity<Void>> deleteAccount(@AuthenticationPrincipal Jwt jwt) {
+        UUID userId = UUID.fromString(jwt.getClaimAsString(BUSINESS_ID));
+
+        return accountDeletionService.requestDeletion(userId, authenticatedAt(jwt))
+                .then(Mono.fromSupplier(() -> ResponseEntity.accepted().<Void>build()));
+    }
+
+    /** Whether the caller may delete their account, so the web app never sends a demo visitor to sign in again. */
+    @GetMapping("deletion")
+    public Mono<DeletionEligibilityResponse> deletionEligibility(@AuthenticationPrincipal Jwt jwt) {
+        UUID userId = UUID.fromString(jwt.getClaimAsString(BUSINESS_ID));
+
+        return accountDeletionService.isDeletionAllowed(userId).map(DeletionEligibilityResponse::new);
+    }
+
+    /** Null when the claim is absent or unreadable, which the domain refuses: deletion fails closed. */
+    private static Instant authenticatedAt(Jwt jwt) {
+        try {
+            return jwt.getClaimAsInstant(AUTH_TIME);
+        } catch (IllegalArgumentException unreadable) {
+            return null;
+        }
+    }
 }

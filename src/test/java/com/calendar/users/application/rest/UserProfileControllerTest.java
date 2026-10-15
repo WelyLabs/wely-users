@@ -124,4 +124,16 @@ class UserProfileControllerTest {
 
         verify(userService, never()).friendProfile(any(), any());
     }
+
+    @Test
+    void friendProfile_shouldAnswer410WithUsrBus012_whenTheUserDeletedTheirAccount() {
+        when(jwt.getClaimAsString("businessId")).thenReturn(VIEWER.toString());
+        when(userService.friendProfile(VIEWER, FRIEND))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_DELETED)));
+
+        webTestClient.get().uri("/users/{userId}/profile", FRIEND)
+                .exchange()
+                .expectStatus().isEqualTo(410)
+                .expectBody().jsonPath("$.code").isEqualTo("USR-BUS-012");
+    }
 }

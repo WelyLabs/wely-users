@@ -73,4 +73,25 @@ class AboutControllerTest {
                 .verify();
         verify(userService, never()).updateAbout(any(), any());
     }
+
+    @Test
+    void about_shouldAnswer410_whenTheCallerIsATombstone() {
+        when(userService.about(ME)).thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_DELETED)));
+
+        StepVerifier.create(controller.about(jwt))
+                .expectErrorMatches(error -> error instanceof BusinessException exception
+                        && exception.getErrorCode() == BusinessErrorCode.USER_DELETED)
+                .verify();
+    }
+
+    @Test
+    void updateAbout_shouldAnswer410_whenTheCallerIsATombstone() {
+        when(userService.updateAbout(any(), any()))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_DELETED)));
+
+        StepVerifier.create(controller.updateAbout(jwt, new AboutRequest("Partante", List.of())))
+                .expectErrorMatches(error -> error instanceof BusinessException exception
+                        && exception.getErrorCode() == BusinessErrorCode.USER_DELETED)
+                .verify();
+    }
 }

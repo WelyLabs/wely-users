@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -24,6 +25,8 @@ import java.util.Map;
  */
 @Component
 public class IdentityAuthAdapter implements IdentityProvider {
+
+    static final Duration DELETE_TIMEOUT = Duration.ofSeconds(10);
 
     private final KeycloakAdminApi keycloakAdminApi;
     private final IdentityUserMapper identityUserMapper;
@@ -55,6 +58,16 @@ public class IdentityAuthAdapter implements IdentityProvider {
                         e -> new BusinessException(BusinessErrorCode.USERNAME_TAKEN))
                 .onErrorMap(WebClientResponseException.BadRequest.class,
                         e -> new BusinessException(BusinessErrorCode.PROFILE_INVALID));
+    }
+
+    /** Logs the subject out then deletes it, a 404 meaning done; bounded, as the admin client has no timeout. */
+    @Override
+    public Mono<Void> deleteSubject(String subjectId) {
+        return Mono.defer(() -> keycloakAdminApi.logout(subjectId))
+                .onErrorResume(WebClientResponseException.NotFound.class, e -> Mono.empty())
+                .then(Mono.defer(() -> keycloakAdminApi.deleteUser(subjectId)
+                        .onErrorResume(WebClientResponseException.NotFound.class, e -> Mono.empty())))
+                .timeout(DELETE_TIMEOUT);
     }
 
     private static Map<String, Object> withProfile(Map<String, Object> representation, IdentityUser profile) {

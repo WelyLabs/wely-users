@@ -6,6 +6,7 @@ import java.util.List;
 
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import com.calendar.users.domain.models.AccountState;
 import com.calendar.users.domain.models.UserAbout;
 import com.calendar.users.domain.models.Theme;
 import com.calendar.users.domain.models.UserPreferences;
@@ -88,6 +89,7 @@ class UserServiceTest {
                 // Given
                 UUID userId = UUID.randomUUID();
                 when(userRepository.getBusinessUserByUserId(userId)).thenReturn(Mono.empty());
+                when(userRepository.findAccountState(userId)).thenReturn(Mono.empty());
 
                 // When
                 Mono<BusinessUser> result = userService.readProfile(userId);
@@ -319,7 +321,7 @@ class UserServiceTest {
                 givenCamille();
                 BusinessUser expected = new BusinessUser(USER_ID, "camille_d", 4321, "Cam", "Dupont", "pic.jpg", JOINED);
                 when(identityProvider.updateProfile(any(), any())).thenReturn(Mono.empty());
-                when(userRepository.updateProfile(expected)).thenReturn(Mono.just(expected));
+                when(userRepository.updateProfile(expected, "camille")).thenReturn(Mono.just(expected));
 
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("camille_d", "Cam", "Dupont")))
                                 .expectNext(expected)
@@ -327,14 +329,14 @@ class UserServiceTest {
 
                 InOrder order = inOrder(identityProvider, userRepository);
                 order.verify(identityProvider).updateProfile("kc-camille", new IdentityUser("camille_d", "Cam", "Dupont"));
-                order.verify(userRepository).updateProfile(expected);
+                order.verify(userRepository).updateProfile(expected, "camille");
         }
 
         @Test
         void updateProfile_ShouldLowercaseTheUsername_AsTheIdentityProviderStoresIt() {
                 givenCamille();
                 when(identityProvider.updateProfile(any(), any())).thenReturn(Mono.empty());
-                when(userRepository.updateProfile(any())).thenAnswer(call -> Mono.just(call.getArgument(0)));
+                when(userRepository.updateProfile(any(), any())).thenAnswer(call -> Mono.just(call.getArgument(0)));
 
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("Camille_D", "Cam", "Dupont")))
                                 .expectNextMatches(user -> user.userName().equals("camille_d"))
@@ -354,7 +356,7 @@ class UserServiceTest {
                                                 && business.getErrorCode() == BusinessErrorCode.USERNAME_TAKEN)
                                 .verify();
 
-                verify(userRepository, never()).updateProfile(any());
+                verify(userRepository, never()).updateProfile(any(), any());
                 verify(identityProvider, times(1)).updateProfile(any(), any());
         }
 
@@ -362,7 +364,7 @@ class UserServiceTest {
         void updateProfile_ShouldGiveTheIdentityProviderItsPreviousValuesBack_WhenTheDatabaseRefuses() {
                 givenCamille();
                 when(identityProvider.updateProfile(any(), any())).thenReturn(Mono.empty());
-                when(userRepository.updateProfile(any()))
+                when(userRepository.updateProfile(any(), any()))
                                 .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USERNAME_TAKEN)));
 
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("lea", "Cam", "Dupont")))
@@ -372,7 +374,7 @@ class UserServiceTest {
 
                 InOrder order = inOrder(identityProvider, userRepository);
                 order.verify(identityProvider).updateProfile("kc-camille", new IdentityUser("lea", "Cam", "Dupont"));
-                order.verify(userRepository).updateProfile(any());
+                order.verify(userRepository).updateProfile(any(), any());
                 order.verify(identityProvider).updateProfile("kc-camille", CAMILLE_BEFORE);
         }
 
@@ -384,7 +386,7 @@ class UserServiceTest {
                 when(identityProvider.updateProfile(eq("kc-camille"), any()))
                                 .thenReturn(Mono.empty())
                                 .thenReturn(Mono.error(keycloakDown));
-                when(userRepository.updateProfile(any())).thenReturn(Mono.error(databaseDown));
+                when(userRepository.updateProfile(any(), any())).thenReturn(Mono.error(databaseDown));
 
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("camille_d", "Cam", "Dupont")))
                                 .expectErrorMatches(error -> error == databaseDown
@@ -397,6 +399,7 @@ class UserServiceTest {
         void updateProfile_ShouldError_WhenTheUserDoesNotExist() {
                 when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.empty());
                 when(userRepository.findKeycloakIdByUserId(USER_ID)).thenReturn(Mono.empty());
+                when(userRepository.findAccountState(USER_ID)).thenReturn(Mono.empty());
 
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("camille", "Cam", "Dupont")))
                                 .expectErrorMatches(error -> error instanceof BusinessException business
@@ -404,7 +407,7 @@ class UserServiceTest {
                                 .verify();
 
                 verify(identityProvider, never()).updateProfile(any(), any());
-                verify(userRepository, never()).updateProfile(any());
+                verify(userRepository, never()).updateProfile(any(), any());
         }
 
         // --- pictures --------------------------------------------------------
@@ -568,6 +571,7 @@ class UserServiceTest {
         @Test
         void updatePicture_ShouldError_WhenTheUserDoesNotExist() {
                 when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.empty());
+                when(userRepository.findAccountState(USER_ID)).thenReturn(Mono.empty());
 
                 StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD))
                                 .expectErrorMatches(error -> error instanceof BusinessException business
@@ -665,6 +669,7 @@ class UserServiceTest {
         void about_shouldBeEmpty_whenNothingWasWritten() {
                 UUID userId = UUID.randomUUID();
                 when(userRepository.findAbout(userId)).thenReturn(Mono.empty());
+                when(userRepository.findAccountState(userId)).thenReturn(Mono.just(AccountState.ACTIVE));
 
                 StepVerifier.create(userService.about(userId)).expectNext(UserAbout.EMPTY).verifyComplete();
         }
@@ -684,9 +689,10 @@ class UserServiceTest {
                 UUID userId = UUID.randomUUID();
                 when(userRepository.updateAbout(any(), any()))
                                 .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
+                when(userRepository.findAccountState(userId)).thenReturn(Mono.empty());
 
                 StepVerifier.create(userService.updateAbout(userId, UserAbout.EMPTY))
-                                .expectError(BusinessException.class)
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
                                 .verify();
         }
 
@@ -713,6 +719,7 @@ class UserServiceTest {
                 when(userRepository.getBusinessUserByUserId(FRIEND)).thenReturn(Mono.just(FRIEND_USER));
                 when(friendshipChecker.areFriends(VIEWER.toString(), FRIEND.toString())).thenReturn(Mono.just(true));
                 when(userRepository.findAbout(FRIEND)).thenReturn(Mono.empty());
+                when(userRepository.findAccountState(FRIEND)).thenReturn(Mono.just(AccountState.ACTIVE));
 
                 StepVerifier.create(userService.friendProfile(VIEWER, FRIEND))
                                 .expectNextMatches(profile -> profile.bio() == null && profile.interests().isEmpty())
@@ -735,6 +742,7 @@ class UserServiceTest {
         void friendProfile_shouldReturnTheirOwnProfile_withoutAskingSocial_whenViewerIsTheUser() {
                 when(userRepository.getBusinessUserByUserId(FRIEND)).thenReturn(Mono.just(FRIEND_USER));
                 when(userRepository.findAbout(FRIEND)).thenReturn(Mono.empty());
+                when(userRepository.findAccountState(FRIEND)).thenReturn(Mono.just(AccountState.ACTIVE));
 
                 StepVerifier.create(userService.friendProfile(FRIEND, FRIEND))
                                 .expectNextMatches(profile -> profile.id().equals(FRIEND))
@@ -745,6 +753,7 @@ class UserServiceTest {
         @Test
         void friendProfile_shouldFailWithUserNotFound_whenTheUserIsUnknown() {
                 when(userRepository.getBusinessUserByUserId(FRIEND)).thenReturn(Mono.empty());
+                when(userRepository.findAccountState(FRIEND)).thenReturn(Mono.empty());
 
                 StepVerifier.create(userService.friendProfile(VIEWER, FRIEND))
                                 .expectErrorMatches(error -> error instanceof BusinessException e
@@ -780,6 +789,7 @@ class UserServiceTest {
         void preferences_shouldBeTheDefaults_whenNothingIsStored() {
                 UUID userId = UUID.randomUUID();
                 when(userRepository.findPreferences(userId)).thenReturn(Mono.empty());
+                when(userRepository.findAccountState(userId)).thenReturn(Mono.just(AccountState.ACTIVE));
 
                 StepVerifier.create(userService.preferences(userId)).expectNext(UserPreferences.DEFAULT).verifyComplete();
         }
@@ -799,9 +809,192 @@ class UserServiceTest {
                 UUID userId = UUID.randomUUID();
                 when(userRepository.updatePreferences(any(), any()))
                                 .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
+                when(userRepository.findAccountState(userId)).thenReturn(Mono.empty());
 
                 StepVerifier.create(userService.updatePreferences(userId, UserPreferences.DEFAULT))
-                                .expectError(BusinessException.class)
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
                                 .verify();
+        }
+
+        // --- deleted accounts ------------------------------------------------
+
+        private static boolean isBusiness(Throwable error, BusinessErrorCode code) {
+                return error instanceof BusinessException business && business.getErrorCode() == code;
+        }
+
+        private void givenATombstone(UUID userId) {
+                when(userRepository.findAccountState(userId)).thenReturn(Mono.just(AccountState.DELETED));
+        }
+
+        @Test
+        void readProfile_shouldFailWithUserDeleted_whenTheUserIsATombstone() {
+                when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.empty());
+                givenATombstone(USER_ID);
+
+                StepVerifier.create(userService.readProfile(USER_ID))
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
+                                .verify();
+        }
+
+        @Test
+        void readProfile_shouldFailWithUserNotFound_whenTheUserIsUnknown() {
+                when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.empty());
+                when(userRepository.findAccountState(USER_ID)).thenReturn(Mono.empty());
+
+                StepVerifier.create(userService.readProfile(USER_ID))
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
+                                .verify();
+        }
+
+        @Test
+        void updateProfile_shouldFailWithUserDeletedWithoutCallingTheIdentityProvider_whenTheUserIsATombstone() {
+                when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.empty());
+                when(userRepository.findKeycloakIdByUserId(USER_ID)).thenReturn(Mono.empty());
+                givenATombstone(USER_ID);
+
+                StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("camille", "Cam", "Dupont")))
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
+                                .verify();
+
+                verifyNoInteractions(identityProvider);
+                verify(userRepository, never()).updateProfile(any(), any());
+        }
+
+        @Test
+        void updatePicture_shouldFailWithUserDeletedWithoutStoring_whenTheUserIsATombstone() {
+                when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.empty());
+                givenATombstone(USER_ID);
+
+                StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD))
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
+                                .verify();
+
+                verifyNoInteractions(mediaStore);
+        }
+
+        @Test
+        void about_shouldFailWithUserDeleted_whenTheUserIsATombstone() {
+                when(userRepository.findAbout(USER_ID)).thenReturn(Mono.empty());
+                givenATombstone(USER_ID);
+
+                StepVerifier.create(userService.about(USER_ID))
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
+                                .verify();
+        }
+
+        @Test
+        void about_shouldStillBeEmpty_whenTheUserIsUnknown() {
+                when(userRepository.findAbout(USER_ID)).thenReturn(Mono.empty());
+                when(userRepository.findAccountState(USER_ID)).thenReturn(Mono.empty());
+
+                StepVerifier.create(userService.about(USER_ID)).expectNext(UserAbout.EMPTY).verifyComplete();
+        }
+
+        @Test
+        void updateAbout_shouldFailWithUserDeleted_whenTheUserIsATombstone() {
+                when(userRepository.updateAbout(any(), any()))
+                                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
+                givenATombstone(USER_ID);
+
+                StepVerifier.create(userService.updateAbout(USER_ID, UserAbout.EMPTY))
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
+                                .verify();
+        }
+
+        @Test
+        void updateAbout_shouldNotAskForTheAccountState_whenTheFailureIsNotAMissingUser() {
+                when(userRepository.updateAbout(any(), any()))
+                                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.DATABASE_ERROR)));
+
+                StepVerifier.create(userService.updateAbout(USER_ID, UserAbout.EMPTY))
+                                .expectError(TechnicalException.class)
+                                .verify();
+
+                verify(userRepository, never()).findAccountState(any());
+        }
+
+        @Test
+        void preferences_shouldFailWithUserDeleted_whenTheUserIsATombstone() {
+                when(userRepository.findPreferences(USER_ID)).thenReturn(Mono.empty());
+                givenATombstone(USER_ID);
+
+                StepVerifier.create(userService.preferences(USER_ID))
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
+                                .verify();
+        }
+
+        @Test
+        void preferences_shouldStillBeTheDefaults_whenTheUserIsUnknown() {
+                when(userRepository.findPreferences(USER_ID)).thenReturn(Mono.empty());
+                when(userRepository.findAccountState(USER_ID)).thenReturn(Mono.empty());
+
+                StepVerifier.create(userService.preferences(USER_ID)).expectNext(UserPreferences.DEFAULT).verifyComplete();
+        }
+
+        @Test
+        void updatePreferences_shouldFailWithUserDeleted_whenTheUserIsATombstone() {
+                when(userRepository.updatePreferences(any(), any()))
+                                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
+                givenATombstone(USER_ID);
+
+                StepVerifier.create(userService.updatePreferences(USER_ID, UserPreferences.DEFAULT))
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
+                                .verify();
+        }
+
+        @Test
+        void friendProfile_shouldFailWithUserDeletedBeforeAskingSocial_whenTheUserIsATombstone() {
+                when(userRepository.getBusinessUserByUserId(FRIEND)).thenReturn(Mono.empty());
+                givenATombstone(FRIEND);
+
+                StepVerifier.create(userService.friendProfile(VIEWER, FRIEND))
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
+                                .verify();
+
+                verifyNoInteractions(friendshipChecker);
+        }
+
+        @Test
+        void findBusinessIdByKeycloakId_shouldFailWithUserNotFoundNotUserDeleted_whenTheAccountWasDeleted() {
+                // A 410 here would make the Keycloak mapper fall back on its cached id and mint a token.
+                when(userRepository.findIdByKeycloakId("kc-deleted")).thenReturn(Mono.empty());
+
+                StepVerifier.create(userService.findBusinessIdByKeycloakId("kc-deleted"))
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
+                                .verify();
+
+                verify(userRepository, never()).findAccountState(any());
+        }
+
+        @Test
+        void provisionUser_shouldDrawAnotherHashtag_whenTheDrawnHandleIsTakenOrRetired() {
+                // existsByUserNameAndHashtag answers true for a retired handle too: provisioning draws again.
+                when(userRepository.findIdByKeycloakId("kc-new")).thenReturn(Mono.empty());
+                when(userRepository.existsByUserNameAndHashtag(eq("lea"), anyInt()))
+                                .thenReturn(Mono.just(true))
+                                .thenReturn(Mono.just(true))
+                                .thenReturn(Mono.just(false));
+                when(userRepository.save(any(BusinessUser.class), eq("kc-new"))).thenAnswer(call -> Mono.just(
+                                new BusinessUser(USER_ID, "lea", ((BusinessUser) call.getArgument(0)).hashtag(),
+                                                "Léa", "Martin", null, JOINED)));
+
+                StepVerifier.create(userService.provisionUser("kc-new", new IdentityUser("lea", "Léa", "Martin")))
+                                .expectNext(USER_ID)
+                                .verifyComplete();
+
+                verify(userRepository, times(3)).existsByUserNameAndHashtag(eq("lea"), anyInt());
+        }
+
+        @Test
+        void updateProfile_shouldPassTheCurrentUsername_soTheRepositoryChecksRetirementOnlyOnARename() {
+                givenCamille();
+                when(identityProvider.updateProfile(any(), any())).thenReturn(Mono.empty());
+                when(userRepository.updateProfile(any(), any())).thenAnswer(call -> Mono.just(call.getArgument(0)));
+
+                StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("camille", "Cam", "Dupont")))
+                                .expectNextCount(1)
+                                .verifyComplete();
+
+                verify(userRepository).updateProfile(any(), eq("camille"));
         }
 }

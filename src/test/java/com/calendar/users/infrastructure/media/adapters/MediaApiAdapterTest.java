@@ -228,6 +228,57 @@ class MediaApiAdapterTest {
                 .verify();
     }
 
+    // --- deletePrefix ---------------------------------------------------------
+
+    private static final String AVATARS = "avatars/u1/";
+
+    @Test
+    void deletePrefix_shouldSendThePrefixAsAQueryParameterWithTheSecret_whenCalled() {
+        answer = request -> Mono.just(ClientResponse.create(HttpStatus.NO_CONTENT).build());
+
+        StepVerifier.create(adapter.deletePrefix(AVATARS)).verifyComplete();
+
+        ClientRequest request = sent.getFirst();
+        assertThat(request.method()).isEqualTo(HttpMethod.DELETE);
+        assertThat(request.url().getPath()).isEqualTo("/internal/media/prefix");
+        assertThat(request.url().getQuery()).isEqualTo("prefix=" + AVATARS);
+        assertThat(request.headers().getFirst("X-Internal-Secret")).isEqualTo(SECRET);
+    }
+
+    @Test
+    void deletePrefix_shouldComplete_whenWelyMediaAnswers204() {
+        answer = request -> Mono.just(ClientResponse.create(HttpStatus.NO_CONTENT).build());
+
+        StepVerifier.create(adapter.deletePrefix(AVATARS)).verifyComplete();
+    }
+
+    @Test
+    void deletePrefix_shouldFailAsMediaError_whenWelyMediaRefusesThePrefix() {
+        answerProblem(HttpStatus.FORBIDDEN, "MED-BUS-003");
+
+        StepVerifier.create(adapter.deletePrefix("avatars/"))
+                .expectErrorMatches(MediaApiAdapterTest::isMediaError)
+                .verify();
+    }
+
+    @Test
+    void deletePrefix_shouldFailAsMediaError_whenTheStorageIsDown() {
+        answerProblem(HttpStatus.BAD_GATEWAY, "MED-TEC-001");
+
+        StepVerifier.create(adapter.deletePrefix(AVATARS))
+                .expectErrorMatches(MediaApiAdapterTest::isMediaError)
+                .verify();
+    }
+
+    @Test
+    void deletePrefix_shouldFailAsMediaError_whenWelyMediaIsUnreachable() {
+        answerConnectionRefused();
+
+        StepVerifier.create(adapter.deletePrefix(AVATARS))
+                .expectErrorMatches(MediaApiAdapterTest::isMediaError)
+                .verify();
+    }
+
     // --- urls ----------------------------------------------------------------
 
     @Test

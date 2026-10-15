@@ -1,5 +1,6 @@
 package com.calendar.users.domain.services;
 
+import com.calendar.users.domain.models.AccountState;
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.models.FriendProfile;
 import com.calendar.users.domain.models.IdentityToCheck;
@@ -47,12 +48,13 @@ public class UserService {
         this.friendshipChecker = friendshipChecker;
     }
 
+    /** 410 USR-BUS-012 for a deleted account, 404 for an unknown one. */
     public Mono<BusinessUser> readProfile(UUID userId) {
         return userRepository.getBusinessUserByUserId(userId)
-                .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
+                .switchIfEmpty(Mono.defer(() -> missingUser(userId)));
     }
 
-    /** Read at every login by Keycloak's mapper. Users are created at registration, never here. */
+    /** Read at every login by Keycloak's mapper; 404 for a deleted account too, so the mapper refuses the token. */
     public Mono<UUID> findBusinessIdByKeycloakId(String keycloakId) {
         return userRepository.findIdByKeycloakId(keycloakId)
                 .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
@@ -81,7 +83,7 @@ public class UserService {
 
         return userRepository.getBusinessUserByUserId(userId)
                 .zipWith(userRepository.findKeycloakIdByUserId(userId))
-                .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)))
+                .switchIfEmpty(Mono.defer(() -> missingUser(userId)))
                 .flatMap(found -> {
                     BusinessUser current = found.getT1();
                     String keycloakId = found.getT2();
@@ -92,20 +94,18 @@ public class UserService {
 
                     return identityProvider.updateProfile(keycloakId, after)
                             // Deferred: built eagerly, the write would be prepared even when the provider refused.
-                            .then(Mono.defer(() -> userRepository.updateProfile(changed)
+                            .then(Mono.defer(() -> userRepository.updateProfile(changed, current.userName())
                                     .onErrorResume(error -> undo(keycloakId, before, error))));
                 });
     }
 
     /** The user's bio and interests, as they wrote them; empty when they wrote none. */
     public Mono<UserAbout> about(UUID userId) {
-        return userRepository.findAbout(userId).defaultIfEmpty(UserAbout.EMPTY);
+        return userRepository.findAbout(userId)
+                .switchIfEmpty(Mono.defer(() -> defaultUnlessDeleted(userId, UserAbout.EMPTY)));
     }
 
-    /**
-     * Another user's profile, for their friends only. An unknown user is 404 before anything else;
-     * the viewer asking for themself is not sent to the social graph.
-     */
+    /** Another user's profile for their friends; 404 or 410 come first, and one's own skips the social graph. */
     public Mono<FriendProfile> friendProfile(UUID viewerId, UUID userId) {
         return readProfile(userId)
                 .flatMap(user -> isAllowed(viewerId, userId)
@@ -127,12 +127,14 @@ public class UserService {
      * and the other services have no use for them, so no event is sent.
      */
     public Mono<UserAbout> updateAbout(UUID userId, UserAbout about) {
-        return userRepository.updateAbout(userId, about);
+        return userRepository.updateAbout(userId, about)
+                .onErrorResume(UserService::isUserNotFound, e -> missingUser(userId));
     }
 
     /** The user's preferences; the defaults for a user who never chose. */
     public Mono<UserPreferences> preferences(UUID userId) {
-        return userRepository.findPreferences(userId).defaultIfEmpty(UserPreferences.DEFAULT);
+        return userRepository.findPreferences(userId)
+                .switchIfEmpty(Mono.defer(() -> defaultUnlessDeleted(userId, UserPreferences.DEFAULT)));
     }
 
     /**
@@ -140,7 +142,8 @@ public class UserService {
      * provider and the other services have no use for them, so no event is sent.
      */
     public Mono<UserPreferences> updatePreferences(UUID userId, UserPreferences preferences) {
-        return userRepository.updatePreferences(userId, preferences);
+        return userRepository.updatePreferences(userId, preferences)
+                .onErrorResume(UserService::isUserNotFound, e -> missingUser(userId));
     }
 
     /**
@@ -156,7 +159,7 @@ public class UserService {
      */
     public Mono<String> updatePicture(UUID userId, byte[] upload) {
         return userRepository.getBusinessUserByUserId(userId)
-                .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)))
+                .switchIfEmpty(Mono.defer(() -> missingUser(userId)))
                 .flatMap(current -> {
                     String key = UserPicture.STORED_PREFIX + userId + "/" + UUID.randomUUID() + ".jpg";
                     // Deferred steps: built eagerly, each would run even when the one before failed.
@@ -270,6 +273,24 @@ public class UserService {
                         : userRepository.deleteOrphan(identity.userId()).thenReturn(new OrphanSweep(0, 1, 0)))
                 // Keycloak or the database is down: left unchecked, retried on the next pass.
                 .onErrorResume(e -> Mono.just(new OrphanSweep(0, 0, 1)));
+    }
+
+    /** USER_DELETED (410) for a tombstone, USER_NOT_FOUND (404) otherwise. */
+    private <T> Mono<T> missingUser(UUID userId) {
+        return userRepository.findAccountState(userId)
+                .defaultIfEmpty(AccountState.ACTIVE)
+                .flatMap(state -> Mono.error(new BusinessException(state == AccountState.DELETED
+                        ? BusinessErrorCode.USER_DELETED
+                        : BusinessErrorCode.USER_NOT_FOUND)));
+    }
+
+    /** The default for a user who has nothing stored yet; 410 for a tombstone. */
+    private <T> Mono<T> defaultUnlessDeleted(UUID userId, T fallback) {
+        return userRepository.findAccountState(userId)
+                .defaultIfEmpty(AccountState.ACTIVE)
+                .flatMap(state -> state == AccountState.DELETED
+                        ? Mono.<T>error(new BusinessException(BusinessErrorCode.USER_DELETED))
+                        : Mono.just(fallback));
     }
 
     private static boolean isUserNotFound(Throwable error) {

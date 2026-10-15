@@ -12,6 +12,7 @@ import com.calendar.users.exception.TechnicalException;
 import com.calendar.users.exception.GlobalErrorHandler;
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.models.IdentityUser;
+import com.calendar.users.domain.services.AccountDeletionService;
 import com.calendar.users.domain.services.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,11 +31,13 @@ import org.springframework.web.reactive.result.method.HandlerMethodArgumentResol
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -46,6 +49,9 @@ class ProfileControllerTest {
     @Mock
     private UserService userService;
 
+    @Mock
+    private AccountDeletionService accountDeletionService;
+
     private WebTestClient webTestClient;
     private Jwt mockJwt;
 
@@ -53,7 +59,7 @@ class ProfileControllerTest {
     void setUp() {
         mockJwt = mock(Jwt.class);
 
-        webTestClient = WebTestClient.bindToController(new ProfileController(userService,
+        webTestClient = WebTestClient.bindToController(new ProfileController(userService, accountDeletionService,
                         new ProvisionUserRequestMapperImpl(), new UpdateProfileRequestMapperImpl()))
                 .controllerAdvice(new GlobalErrorHandler())
                 .argumentResolvers(configurer -> configurer.addCustomResolver(new HandlerMethodArgumentResolver() {
@@ -265,5 +271,204 @@ class ProfileControllerTest {
                 .expectStatus().isEqualTo(502)
                 .expectBody()
                 .jsonPath("$.code").isEqualTo("USR-TEC-004");
+    }
+
+    // --- account deletion -------------------------------------------------
+
+    private static final Instant SIGNED_IN = Instant.parse("2026-10-15T14:00:00Z");
+
+    private UUID givenTheCaller() {
+        UUID userId = UUID.randomUUID();
+        when(mockJwt.getClaimAsString("businessId")).thenReturn(userId.toString());
+        return userId;
+    }
+
+    @Test
+    void deleteAccount_shouldAnswer202WithAnEmptyBody_whenTheDeletionIsAccepted() {
+        UUID userId = givenTheCaller();
+        when(mockJwt.getClaimAsInstant("auth_time")).thenReturn(SIGNED_IN);
+        when(accountDeletionService.requestDeletion(userId, SIGNED_IN)).thenReturn(Mono.empty());
+
+        webTestClient.delete()
+                .uri("/profile")
+                .exchange()
+                .expectStatus().isAccepted()
+                .expectBody().isEmpty();
+    }
+
+    @Test
+    void deleteAccount_shouldPassTheBusinessIdAndAuthTimeFromTheToken_whenBothArePresent() {
+        UUID userId = givenTheCaller();
+        when(mockJwt.getClaimAsInstant("auth_time")).thenReturn(SIGNED_IN);
+        when(accountDeletionService.requestDeletion(any(), any())).thenReturn(Mono.empty());
+
+        webTestClient.delete().uri("/profile").exchange().expectStatus().isAccepted();
+
+        verify(accountDeletionService).requestDeletion(userId, SIGNED_IN);
+    }
+
+    @Test
+    void deleteAccount_shouldPassANullAuthTime_whenTheClaimIsMissing() {
+        UUID userId = givenTheCaller();
+        when(mockJwt.getClaimAsInstant("auth_time")).thenReturn(null);
+        when(accountDeletionService.requestDeletion(eq(userId), isNull()))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.REAUTHENTICATION_REQUIRED)));
+
+        webTestClient.delete().uri("/profile").exchange().expectStatus().isForbidden();
+
+        verify(accountDeletionService).requestDeletion(userId, null);
+    }
+
+    @Test
+    void deleteAccount_shouldPassANullAuthTime_whenTheClaimIsNotAnInstant() {
+        // Spring Security throws on an unconvertible claim: read as absent, the check fails closed.
+        UUID userId = givenTheCaller();
+        when(mockJwt.getClaimAsInstant("auth_time")).thenThrow(new IllegalArgumentException("not an instant"));
+        when(accountDeletionService.requestDeletion(eq(userId), isNull()))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.REAUTHENTICATION_REQUIRED)));
+
+        webTestClient.delete().uri("/profile").exchange().expectStatus().isForbidden();
+
+        verify(accountDeletionService).requestDeletion(userId, null);
+    }
+
+    @Test
+    void deleteAccount_shouldAnswer403WithUsrBus010_whenReauthenticationIsRequired() {
+        givenTheCaller();
+        when(accountDeletionService.requestDeletion(any(), any()))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.REAUTHENTICATION_REQUIRED)));
+
+        webTestClient.delete()
+                .uri("/profile")
+                .exchange()
+                .expectStatus().isForbidden()
+                .expectBody().jsonPath("$.code").isEqualTo("USR-BUS-010");
+    }
+
+    @Test
+    void deleteAccount_shouldAnswer403WithUsrBus011_whenTheAccountIsProtected() {
+        givenTheCaller();
+        when(accountDeletionService.requestDeletion(any(), any()))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.ACCOUNT_PROTECTED)));
+
+        webTestClient.delete()
+                .uri("/profile")
+                .exchange()
+                .expectStatus().isForbidden()
+                .expectBody().jsonPath("$.code").isEqualTo("USR-BUS-011");
+    }
+
+    @Test
+    void deleteAccount_shouldAnswer403WithUsrBus014_whenDeletionIsDisabled() {
+        givenTheCaller();
+        when(accountDeletionService.requestDeletion(any(), any()))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.ACCOUNT_DELETION_DISABLED)));
+
+        webTestClient.delete()
+                .uri("/profile")
+                .exchange()
+                .expectStatus().isForbidden()
+                .expectBody().jsonPath("$.code").isEqualTo("USR-BUS-014");
+    }
+
+    @Test
+    void deleteAccount_shouldAnswer404_whenTheUserIsUnknown() {
+        givenTheCaller();
+        when(accountDeletionService.requestDeletion(any(), any()))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
+
+        webTestClient.delete()
+                .uri("/profile")
+                .exchange()
+                .expectStatus().isNotFound()
+                .expectBody().jsonPath("$.code").isEqualTo("USR-BUS-001");
+    }
+
+    @Test
+    void deleteAccount_shouldAnswer502_whenTheDatabaseIsDown() {
+        givenTheCaller();
+        when(accountDeletionService.requestDeletion(any(), any()))
+                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.DATABASE_ERROR)));
+
+        webTestClient.delete()
+                .uri("/profile")
+                .exchange()
+                .expectStatus().isEqualTo(502)
+                .expectBody().jsonPath("$.code").isEqualTo("USR-TEC-002");
+    }
+
+    @Test
+    void deletionEligibility_shouldAnswerAllowedTrue_whenTheAccountMayBeDeleted() {
+        UUID userId = givenTheCaller();
+        when(accountDeletionService.isDeletionAllowed(userId)).thenReturn(Mono.just(true));
+
+        webTestClient.get()
+                .uri("/profile/deletion")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().json("{\"allowed\":true}", true);
+    }
+
+    @Test
+    void deletionEligibility_shouldAnswerAllowedFalse_whenDeletionIsNotAllowed() {
+        UUID userId = givenTheCaller();
+        when(accountDeletionService.isDeletionAllowed(userId)).thenReturn(Mono.just(false));
+
+        webTestClient.get()
+                .uri("/profile/deletion")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().json("{\"allowed\":false}", true);
+    }
+
+    @Test
+    void deletionEligibility_shouldAnswer403WithUsrBus014_whenDeletionIsDisabled() {
+        UUID userId = givenTheCaller();
+        when(accountDeletionService.isDeletionAllowed(userId))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.ACCOUNT_DELETION_DISABLED)));
+
+        webTestClient.get()
+                .uri("/profile/deletion")
+                .exchange()
+                .expectStatus().isForbidden()
+                .expectBody().jsonPath("$.code").isEqualTo("USR-BUS-014");
+    }
+
+    @Test
+    void deletionEligibility_shouldAnswer410_whenTheAccountIsDeleted() {
+        UUID userId = givenTheCaller();
+        when(accountDeletionService.isDeletionAllowed(userId))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_DELETED)));
+
+        webTestClient.get()
+                .uri("/profile/deletion")
+                .exchange()
+                .expectStatus().isEqualTo(410)
+                .expectBody().jsonPath("$.code").isEqualTo("USR-BUS-012");
+    }
+
+    @Test
+    void readProfile_shouldAnswer410WithUsrBus012_whenTheCallerIsATombstone() {
+        UUID userId = givenTheCaller();
+        when(userService.readProfile(userId))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_DELETED)));
+
+        webTestClient.get()
+                .uri("/profile")
+                .exchange()
+                .expectStatus().isEqualTo(410)
+                .expectBody().jsonPath("$.code").isEqualTo("USR-BUS-012");
+    }
+
+    @Test
+    void findBusinessIdByKeycloakId_shouldAnswer404_whenTheAccountWasDeleted() {
+        // Never 410: the Keycloak mapper would read it as an outage and mint a token from its cache.
+        when(userService.findBusinessIdByKeycloakId("kc-deleted"))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
+
+        webTestClient.get()
+                .uri("/profile/resolve/{keycloakId}", "kc-deleted")
+                .exchange()
+                .expectStatus().isNotFound();
     }
 }
