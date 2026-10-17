@@ -124,7 +124,7 @@ class UsersApplicationConfigTest {
     @Test
     void userService_shouldBeAPlainObjectBuiltFromThePorts_whenWired() {
         UserService service = config.userService(mock(UserRepository.class), mock(IdentityProvider.class),
-                mock(MediaStore.class), mock(FriendshipChecker.class));
+                mock(MediaStore.class), mock(FriendshipChecker.class), Clock.systemUTC());
 
         assertThat(service).isNotNull();
         assertThat(UserService.class.getAnnotations()).isEmpty();

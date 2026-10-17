@@ -152,12 +152,13 @@ Toutes les routes sont préfixées par `/user-service` et exposées via la gatew
 
 | Méthode | Route | Auth | Description |
 |---|---|---|---|
-| `GET` | `/profile` | JWT | Profil de l'utilisateur courant (identité lue dans le claim `businessId`) |
+| `GET` | `/profile` | JWT | Profil de l'utilisateur courant (identité lue dans le claim `businessId`), with `birthDate` (`YYYY-MM-DD` or null) and `registrationCompleted` |
+| `PUT` | `/profile/registration` | JWT | Completes the signup, and later changes the birth date: `{"birthDate": "1995-03-12"}`. Stores it, sets `registrationCompleted`, writes `USER_BIRTHDAY`, answers the profile as `GET /profile` does. Idempotent. A missing date is 400 `USR-VAL-001`; a date not in the past or an age outside 13 to 120 is 400 `USR-VAL-002` |
 | `GET` | `/profile/about` | JWT | Présentation de l'utilisateur courant : bio (160 caractères) et centres d'intérêt (5 au plus, 24 caractères chacun) |
 | `PUT` | `/profile/about` | JWT | La remplace ; espaces nettoyés, doublons retirés (« Rando » et « rando »), refus au-delà des limites (`USR-BUS-008`, 400) plutôt que coupure |
 | `GET` | `/profile/preferences` | JWT | Préférences de l'utilisateur courant : `{"theme": "LIGHT" \| "DARK" \| "SYSTEM"}`, `SYSTEM` s'il n'a jamais choisi |
 | `PUT` | `/profile/preferences` | JWT | Les remplace ; un thème absent (`USR-VAL-001`) ou hors des trois (`USR-REQ-000`) est refusé en 400 |
-| `GET` | `/users/{userId}/profile` | JWT | Profil d'un ami (identité, date d'inscription, bio, centres d'intérêt). Amitié vérifiée auprès de `wely-social` avec le jeton de l'appelant : 403 `USR-BUS-009` sinon, 404 `USR-BUS-001` si l'utilisateur est inconnu, 502 `USR-TEC-005` si `wely-social` ne répond pas. Son propre id renvoie son profil sans appel |
+| `GET` | `/users/{userId}/profile` | JWT | Profil d'un ami (identité, date d'inscription, bio, centres d'intérêt, `birthday: {month, day}` or null, never the year). Amitié vérifiée auprès de `wely-social` avec le jeton de l'appelant : 403 `USR-BUS-009` sinon, 404 `USR-BUS-001` si l'utilisateur est inconnu, 502 `USR-TEC-005` si `wely-social` ne répond pas. Son propre id renvoie son profil sans appel |
 | `POST` | `/profile/provision` | `X-Internal-Secret` | **Interne.** Crée l'utilisateur à l'inscription, depuis l'étape d'inscription de Keycloak. Idempotent sur l'UUID Keycloak |
 | `GET` | `/profile/resolve/{keycloakId}` | `X-Internal-Secret` | **Interne.** Lit le `businessId` d'un UUID Keycloak ; 404 s'il est inconnu |
 | `POST` | `/profile/picture` | JWT | Remplace la photo de l'utilisateur courant (multipart `file`, 5 Mo au plus) et répond une URL signée |
@@ -278,6 +279,19 @@ Consommé par [`wely-social`](https://github.com/WelyLabs/wely-social), qui cré
 
 Written in the tombstone's transaction by an account deletion, and by `OrphanUserReaper` for an orphan (`deletedAt` = now). Records sent before `deletedAt` existed carry `userId` only. Consumed by wely-social, wely-chat, wely-events and wely-notifications, which erase the user and keep a permanent marker.
 
+**Topic** `USER_BIRTHDAY` (`USER_BIRTHDAY_TOPIC`) · same partition key, no record key
+
+```json
+{
+  "userId": "550e8400-e29b-41d4-a716-446655440000",
+  "displayName": "Léa",
+  "month": 3,
+  "day": 12
+}
+```
+
+Written with `PUT /profile/registration`, and with every profile update of a user who has a birth date (the name may have changed). `displayName` is the first name, or the username without one; the year never leaves the service. Consumed by wely-events, which upserts the user's yearly birthday event.
+
 ---
 
 ## Account deletion
@@ -359,6 +373,7 @@ Deux hiérarchies distinctes — métier et technique — traduites par `GlobalE
 | `USR-BUS-013` | 400 | Deleted-users cursor not issued by this service |
 | `USR-BUS-014` | 403 | Account deletion is switched off on this deployment |
 | `USR-VAL-001` | 400 | Validation du corps de requête, détail par champ |
+| `USR-VAL-002` | 400 | Birth date not in the past, or an age outside 13 to 120 |
 | `USR-REQ-000` | *repris* | Chemin inconnu, méthode non autorisée |
 | `USR-TEC-001` | 502 | Keycloak injoignable |
 | `USR-TEC-002` | 502 | Base de données injoignable |

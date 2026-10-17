@@ -8,6 +8,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -41,4 +42,10 @@ public class UserEntity {
 
     @Column("joined_date")
     private LocalDateTime joinedDate;
+
+    @Column("birth_date")
+    private LocalDate birthDate;
+
+    @Column("registration_completed")
+    private boolean registrationCompleted;
 }

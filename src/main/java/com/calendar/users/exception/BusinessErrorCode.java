@@ -103,7 +103,14 @@ public enum BusinessErrorCode {
             "USR-BUS-014",
             "Account deletion disabled",
             "Account deletion is not available on this deployment.",
-            HttpStatus.FORBIDDEN);
+            HttpStatus.FORBIDDEN),
+
+    /** A validation rule the domain owns, hence a VAL code from a business exception. */
+    BIRTH_DATE_INVALID(
+            "USR-VAL-002",
+            "Invalid birth date",
+            "The birth date must be in the past and give an age between 13 and 120.",
+            HttpStatus.BAD_REQUEST);
 
     private final String code;
     private final String title;

@@ -26,8 +26,8 @@ public class UsersApplicationConfig {
 
     @Bean
     public UserService userService(UserRepository userRepository, IdentityProvider identityProvider,
-                                   MediaStore mediaStore, FriendshipChecker friendshipChecker) {
-        return new UserService(userRepository, identityProvider, mediaStore, friendshipChecker);
+                                   MediaStore mediaStore, FriendshipChecker friendshipChecker, Clock clock) {
+        return new UserService(userRepository, identityProvider, mediaStore, friendshipChecker, clock);
     }
 
     @Bean

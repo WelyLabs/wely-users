@@ -22,6 +22,7 @@ import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
+import java.time.MonthDay;
 import java.util.List;
 import java.util.UUID;
 
@@ -67,7 +68,7 @@ class UserProfileControllerTest {
     void friendProfile_shouldAnswerTheProfileAsJson_whenTheyAreFriends() {
         when(jwt.getClaimAsString("businessId")).thenReturn(VIEWER.toString());
         when(userService.friendProfile(VIEWER, FRIEND)).thenReturn(Mono.just(
-                new FriendProfile(FRIEND, "lea", 4242, "Léa", "Martin", JOINED, null, List.of())));
+                new FriendProfile(FRIEND, "lea", 4242, "Léa", "Martin", JOINED, null, List.of(), MonthDay.of(3, 12))));
 
         webTestClient.get().uri("/users/{userId}/profile", FRIEND)
                 .exchange()
@@ -76,7 +77,7 @@ class UserProfileControllerTest {
                 .json("""
                         {"id":"22222222-2222-2222-2222-222222222222","userName":"lea","hashtag":4242,
                          "firstName":"Léa","lastName":"Martin","joinedDate":"2026-01-15T10:30:00",
-                         "bio":null,"interests":[]}
+                         "bio":null,"interests":[],"birthday":{"month":3,"day":12}}
                         """, true);
     }
 

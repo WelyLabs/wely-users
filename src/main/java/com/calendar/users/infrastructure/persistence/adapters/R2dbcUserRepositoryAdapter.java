@@ -6,6 +6,7 @@ import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.models.DeletedUser;
 import com.calendar.users.domain.models.UserAbout;
 import com.calendar.users.domain.models.IdentityToCheck;
+import com.calendar.users.domain.models.Registration;
 import com.calendar.users.domain.models.Theme;
 import com.calendar.users.domain.models.UserPicture;
 import com.calendar.users.domain.models.UserPreferences;
@@ -112,7 +113,10 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
                 .then();
     }
 
-    /** Updates the names and writes USER_MODIFIED in one transaction; a rename onto a retired handle fails. */
+    /**
+     * Updates the names and writes USER_MODIFIED, and USER_BIRTHDAY when a birth date is set, in one
+     * transaction; a rename onto a retired handle fails.
+     */
     @Override
     @Transactional
     public Mono<BusinessUser> updateProfile(BusinessUser businessUser, String previousUserName) {
@@ -125,7 +129,27 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
                         : refuseRetiredHandle(businessUser, previousUserName)
                                 .then(Mono.defer(() -> getBusinessUserByUserId(businessUser.id()))))
                 .flatMap(saved -> appendEvent(saved.id(), OutboxEventType.USER_MODIFIED,
-                        kafkaDataMapper.toUserModifiedEventDTO(saved)).thenReturn(saved));
+                        kafkaDataMapper.toUserModifiedEventDTO(saved))
+                        .then(Mono.defer(() -> appendBirthdayEvent(saved)))
+                        .thenReturn(saved));
+    }
+
+    /** The birth date, the completed signup and USER_BIRTHDAY in one transaction. */
+    @Override
+    @Transactional
+    public Mono<BusinessUser> completeRegistration(UUID userId, Registration registration) {
+        return userR2dbcRepository.completeRegistration(userId, registration.birthDate())
+                .flatMap(updated -> updated == 0
+                        ? Mono.<BusinessUser>error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND))
+                        : getBusinessUserByUserId(userId))
+                .flatMap(saved -> appendBirthdayEvent(saved).thenReturn(saved));
+    }
+
+    /** USER_BIRTHDAY for a user with a birth date; nothing otherwise. Consumers upsert, so a repeat is harmless. */
+    private Mono<Long> appendBirthdayEvent(BusinessUser user) {
+        return user.birthDate() == null
+                ? Mono.empty()
+                : appendEvent(user.id(), OutboxEventType.USER_BIRTHDAY, kafkaDataMapper.toUserBirthdayEventDTO(user));
     }
 
     private Mono<Void> refuseRetiredHandle(BusinessUser renamed, String previousUserName) {

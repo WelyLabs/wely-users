@@ -3,8 +3,10 @@ package com.calendar.users.application.rest;
 import com.calendar.users.application.dtos.DeletionEligibilityResponse;
 import com.calendar.users.application.dtos.PictureResponse;
 import com.calendar.users.application.dtos.ProvisionUserRequest;
+import com.calendar.users.application.dtos.RegistrationRequest;
 import com.calendar.users.application.dtos.UpdateProfileRequest;
 import com.calendar.users.application.mappers.ProvisionUserRequestMapper;
+import com.calendar.users.application.mappers.RegistrationRequestMapper;
 import com.calendar.users.application.mappers.UpdateProfileRequestMapper;
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.services.AccountDeletionService;
@@ -39,14 +41,17 @@ public class ProfileController {
     private final AccountDeletionService accountDeletionService;
     private final ProvisionUserRequestMapper provisionUserRequestMapper;
     private final UpdateProfileRequestMapper updateProfileRequestMapper;
+    private final RegistrationRequestMapper registrationRequestMapper;
 
     public ProfileController(UserService userService, AccountDeletionService accountDeletionService,
                              ProvisionUserRequestMapper provisionUserRequestMapper,
-                             UpdateProfileRequestMapper updateProfileRequestMapper) {
+                             UpdateProfileRequestMapper updateProfileRequestMapper,
+                             RegistrationRequestMapper registrationRequestMapper) {
         this.userService = userService;
         this.accountDeletionService = accountDeletionService;
         this.provisionUserRequestMapper = provisionUserRequestMapper;
         this.updateProfileRequestMapper = updateProfileRequestMapper;
+        this.registrationRequestMapper = registrationRequestMapper;
     }
 
     /** Called by Keycloak during registration. Idempotent: a known Keycloak id returns its user. */
@@ -109,6 +114,16 @@ public class ProfileController {
 
         return userService.updateProfile(userId, updateProfileRequestMapper.toProfileUpdate(request))
                 .map(ResponseEntity::ok);
+    }
+
+    /** Completes the caller's signup, or changes their birth date later; answers the profile as GET does. */
+    @PutMapping("registration")
+    public Mono<BusinessUser> completeRegistration(
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody RegistrationRequest request) {
+        UUID userId = UUID.fromString(jwt.getClaimAsString(BUSINESS_ID));
+
+        return userService.completeRegistration(userId, registrationRequestMapper.toRegistration(request));
     }
 
     /** Deletes the caller's account; identity and sign-in time come from the token only. */

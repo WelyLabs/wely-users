@@ -12,6 +12,7 @@ import com.calendar.users.domain.models.Theme;
 import com.calendar.users.domain.models.UserPreferences;
 
 import com.calendar.users.domain.models.BusinessUser;
+import com.calendar.users.domain.models.Registration;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.models.MediaProfile;
 import com.calendar.users.domain.models.StoredMedia;
@@ -43,7 +44,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.MonthDay;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.*;
@@ -710,7 +716,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.friendProfile(VIEWER, FRIEND))
                                 .expectNext(new FriendProfile(FRIEND, "lea", 4242, "Léa", "Martin", FRIEND_JOINED,
-                                                "Partante", List.of("Rando")))
+                                                "Partante", List.of("Rando"), null))
                                 .verifyComplete();
         }
 
@@ -996,5 +1002,74 @@ class UserServiceTest {
                                 .verifyComplete();
 
                 verify(userRepository).updateProfile(any(), eq("camille"));
+        }
+
+        // --- completeRegistration --------------------------------------------
+
+        private static final Clock TODAY = Clock.fixed(Instant.parse("2026-10-18T09:00:00Z"), ZoneOffset.UTC);
+        private static final Registration REGISTRATION = new Registration(LocalDate.of(1995, 3, 12));
+
+        private UserService serviceOn18October() {
+                return new UserService(userRepository, identityProvider, mediaStore, friendshipChecker, TODAY);
+        }
+
+        @Test
+        void completeRegistration_shouldStoreTheRegistration_whenTheBirthDateIsValid() {
+                UUID userId = UUID.randomUUID();
+                BusinessUser registered = new BusinessUser(userId, "lea", 1, "Léa", null, null, null,
+                                REGISTRATION.birthDate(), true);
+                when(userRepository.completeRegistration(userId, REGISTRATION)).thenReturn(Mono.just(registered));
+
+                StepVerifier.create(serviceOn18October().completeRegistration(userId, REGISTRATION))
+                                .expectNext(registered)
+                                .verifyComplete();
+        }
+
+        @Test
+        void completeRegistration_shouldRefuseWithBirthDateInvalid_whenTheUserIsTooYoung() {
+                Registration tooYoung = new Registration(LocalDate.of(2015, 1, 1));
+
+                StepVerifier.create(serviceOn18October().completeRegistration(UUID.randomUUID(), tooYoung))
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.BIRTH_DATE_INVALID))
+                                .verify();
+
+                verify(userRepository, never()).completeRegistration(any(), any());
+        }
+
+        @Test
+        void completeRegistration_shouldAnswerUserDeleted_whenTheUserIsATombstone() {
+                UUID userId = UUID.randomUUID();
+                when(userRepository.completeRegistration(userId, REGISTRATION))
+                                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
+                when(userRepository.findAccountState(userId)).thenReturn(Mono.just(AccountState.DELETED));
+
+                StepVerifier.create(serviceOn18October().completeRegistration(userId, REGISTRATION))
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
+                                .verify();
+        }
+
+        @Test
+        void completeRegistration_shouldAnswerUserNotFound_whenTheUserIsUnknown() {
+                UUID userId = UUID.randomUUID();
+                when(userRepository.completeRegistration(userId, REGISTRATION))
+                                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
+                when(userRepository.findAccountState(userId)).thenReturn(Mono.empty());
+
+                StepVerifier.create(serviceOn18October().completeRegistration(userId, REGISTRATION))
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
+                                .verify();
+        }
+
+        @Test
+        void friendProfile_shouldCarryTheBirthdayWithoutTheYear_whenTheFriendHasABirthDate() {
+                BusinessUser withBirthday = new BusinessUser(FRIEND, "lea", 4242, "Léa", "Martin", null, FRIEND_JOINED,
+                                LocalDate.of(1995, 3, 12), true);
+                when(userRepository.getBusinessUserByUserId(FRIEND)).thenReturn(Mono.just(withBirthday));
+                when(friendshipChecker.areFriends(VIEWER.toString(), FRIEND.toString())).thenReturn(Mono.just(true));
+                when(userRepository.findAbout(FRIEND)).thenReturn(Mono.just(UserAbout.EMPTY));
+
+                StepVerifier.create(userService.friendProfile(VIEWER, FRIEND))
+                                .expectNextMatches(profile -> MonthDay.of(3, 12).equals(profile.birthday()))
+                                .verifyComplete();
         }
 }

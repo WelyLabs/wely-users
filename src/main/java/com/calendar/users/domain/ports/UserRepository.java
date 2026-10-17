@@ -6,6 +6,7 @@ import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.models.DeletedUser;
 import com.calendar.users.domain.models.UserAbout;
 import com.calendar.users.domain.models.IdentityToCheck;
+import com.calendar.users.domain.models.Registration;
 import com.calendar.users.domain.models.UserPicture;
 import com.calendar.users.domain.models.UserPreferences;
 import reactor.core.publisher.Flux;
@@ -37,8 +38,14 @@ public interface UserRepository {
     /** Deletes a live user left by a cancelled registration and tells other services (USER_DELETED). */
     Mono<Void> deleteOrphan(UUID userId);
 
-    /** Writes the new names and USER_MODIFIED; USERNAME_TAKEN for a handle taken, or retired on a rename. */
+    /**
+     * Writes the new names and USER_MODIFIED, plus USER_BIRTHDAY when a birth date is set (the name it
+     * shows may have changed); USERNAME_TAKEN for a handle taken, or retired on a rename.
+     */
     Mono<BusinessUser> updateProfile(BusinessUser businessUser, String previousUserName);
+
+    /** Stores the birth date, marks the signup completed and writes USER_BIRTHDAY; USER_NOT_FOUND for an unknown user. */
+    Mono<BusinessUser> completeRegistration(UUID userId, Registration registration);
 
     /** The identity provider's id for this user. */
     Mono<String> findKeycloakIdByUserId(UUID userId);

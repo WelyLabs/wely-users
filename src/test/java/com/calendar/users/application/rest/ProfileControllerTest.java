@@ -3,8 +3,10 @@ package com.calendar.users.application.rest;
 import com.calendar.users.application.dtos.ProvisionUserRequest;
 import com.calendar.users.application.dtos.UpdateProfileRequest;
 import com.calendar.users.application.mappers.ProvisionUserRequestMapperImpl;
+import com.calendar.users.application.mappers.RegistrationRequestMapperImpl;
 import com.calendar.users.application.mappers.UpdateProfileRequestMapperImpl;
 import com.calendar.users.domain.models.ProfileUpdate;
+import com.calendar.users.domain.models.Registration;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
 import com.calendar.users.exception.TechnicalErrorCode;
@@ -32,6 +34,7 @@ import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -60,7 +63,8 @@ class ProfileControllerTest {
         mockJwt = mock(Jwt.class);
 
         webTestClient = WebTestClient.bindToController(new ProfileController(userService, accountDeletionService,
-                        new ProvisionUserRequestMapperImpl(), new UpdateProfileRequestMapperImpl()))
+                        new ProvisionUserRequestMapperImpl(), new UpdateProfileRequestMapperImpl(),
+                        new RegistrationRequestMapperImpl()))
                 .controllerAdvice(new GlobalErrorHandler())
                 .argumentResolvers(configurer -> configurer.addCustomResolver(new HandlerMethodArgumentResolver() {
                     @Override
@@ -470,5 +474,84 @@ class ProfileControllerTest {
                 .uri("/profile/resolve/{keycloakId}", "kc-deleted")
                 .exchange()
                 .expectStatus().isNotFound();
+    }
+
+    // --- signup completion ---------------------------------------------------
+
+    @Test
+    void readProfile_shouldIncludeTheBirthDateAndTheSignupState() {
+        UUID userId = givenTheCaller();
+        when(userService.readProfile(userId)).thenReturn(Mono.just(new BusinessUser(userId, "lea", 4242, "Léa",
+                "Martin", null, LocalDateTime.of(2026, 1, 15, 10, 30), LocalDate.of(1995, 3, 12), true)));
+
+        webTestClient.get()
+                .uri("/profile")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.birthDate").isEqualTo("1995-03-12")
+                .jsonPath("$.registrationCompleted").isEqualTo(true);
+    }
+
+    @Test
+    void completeRegistration_shouldAnswerTheUpdatedProfile_whenTheBirthDateIsValid() {
+        UUID userId = givenTheCaller();
+        LocalDate birthDate = LocalDate.of(1995, 3, 12);
+        when(userService.completeRegistration(userId, new Registration(birthDate))).thenReturn(Mono.just(
+                new BusinessUser(userId, "lea", 4242, "Léa", "Martin", null, LocalDateTime.of(2026, 1, 15, 10, 30),
+                        birthDate, true)));
+
+        webTestClient.put()
+                .uri("/profile/registration")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"birthDate\":\"1995-03-12\"}")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.birthDate").isEqualTo("1995-03-12")
+                .jsonPath("$.registrationCompleted").isEqualTo(true);
+    }
+
+    @Test
+    void completeRegistration_shouldAnswer400WithUsrVal002_whenTheDomainRefusesTheDate() {
+        UUID userId = givenTheCaller();
+        when(userService.completeRegistration(eq(userId), any()))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.BIRTH_DATE_INVALID)));
+
+        webTestClient.put()
+                .uri("/profile/registration")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"birthDate\":\"2020-03-12\"}")
+                .exchange()
+                .expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.code").isEqualTo("USR-VAL-002");
+    }
+
+    @Test
+    void completeRegistration_shouldAnswer400WithUsrVal001_whenTheBirthDateIsMissing() {
+        webTestClient.put()
+                .uri("/profile/registration")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{}")
+                .exchange()
+                .expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.code").isEqualTo("USR-VAL-001");
+
+        verify(userService, never()).completeRegistration(any(), any());
+    }
+
+    @Test
+    void completeRegistration_shouldAnswer410_whenTheCallerIsATombstone() {
+        UUID userId = givenTheCaller();
+        when(userService.completeRegistration(eq(userId), any()))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_DELETED)));
+
+        webTestClient.put()
+                .uri("/profile/registration")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"birthDate\":\"1995-03-12\"}")
+                .exchange()
+                .expectStatus().isEqualTo(410)
+                .expectBody().jsonPath("$.code").isEqualTo("USR-BUS-012");
     }
 }

@@ -10,7 +10,8 @@ public enum OutboxEventType {
 
     USER_CREATED("userCreated-out-0", UserCreatedEventDTO.class),
     USER_DELETED("userDeleted-out-0", UserDeletedEventDTO.class),
-    USER_MODIFIED("userModified-out-0", UserModifiedEventDTO.class);
+    USER_MODIFIED("userModified-out-0", UserModifiedEventDTO.class),
+    USER_BIRTHDAY("userBirthday-out-0", UserBirthdayEventDTO.class);
 
     private final String destination;
     private final Class<?> payloadClass;

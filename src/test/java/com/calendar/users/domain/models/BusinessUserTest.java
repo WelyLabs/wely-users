@@ -1,5 +1,9 @@
 package com.calendar.users.domain.models;
 
+import java.time.MonthDay;
+
+import java.time.LocalDate;
+
 import org.junit.jupiter.api.Test;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -42,5 +46,37 @@ class BusinessUserTest {
         assertEquals(user1, user2);
         assertEquals(user1.hashCode(), user2.hashCode());
         assertTrue(user1.toString().contains("u"));
+    }
+
+    @Test
+    void businessUser_shouldHaveNoBirthDateAndAnIncompleteSignup_whenBuiltWithoutThem() {
+        BusinessUser user = new BusinessUser(UUID.randomUUID(), "u", 1, "F", "L", null, LocalDateTime.now());
+
+        assertNull(user.birthDate());
+        assertFalse(user.registrationCompleted());
+    }
+
+    @Test
+    void displayName_shouldBeTheFirstName_whenSet() {
+        assertEquals("Léa", new BusinessUser(UUID.randomUUID(), "lea", 1, "Léa", null, null, null).displayName());
+    }
+
+    @Test
+    void displayName_shouldBeTheUserName_whenTheFirstNameIsMissingOrBlank() {
+        assertEquals("lea", new BusinessUser(UUID.randomUUID(), "lea", 1, null, null, null, null).displayName());
+        assertEquals("lea", new BusinessUser(UUID.randomUUID(), "lea", 1, "  ", null, null, null).displayName());
+    }
+
+    @Test
+    void birthday_shouldDropTheYear_whenABirthDateIsSet() {
+        BusinessUser user = new BusinessUser(UUID.randomUUID(), "u", 1, null, null, null, null,
+                LocalDate.of(1995, 3, 12), true);
+
+        assertEquals(MonthDay.of(3, 12), user.birthday());
+    }
+
+    @Test
+    void birthday_shouldBeNull_whenNoBirthDateIsSet() {
+        assertNull(new BusinessUser(UUID.randomUUID(), "u", 1, null, null, null, null).birthday());
     }
 }

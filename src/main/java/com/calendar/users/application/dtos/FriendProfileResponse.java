@@ -4,7 +4,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
-/** A friend's profile: no bio is null, no interest an empty list. */
+/** A friend's profile: no bio is null, no interest an empty list, no birthday null. */
 public record FriendProfileResponse(
         UUID id,
         String userName,
@@ -13,5 +13,6 @@ public record FriendProfileResponse(
         String lastName,
         LocalDateTime joinedDate,
         String bio,
-        List<String> interests
+        List<String> interests,
+        BirthdayResponse birthday
 ) {}

@@ -7,6 +7,7 @@ import com.calendar.users.domain.models.IdentityToCheck;
 import com.calendar.users.domain.models.IdentityUser;
 import com.calendar.users.domain.models.OrphanSweep;
 import com.calendar.users.domain.models.ProfileUpdate;
+import com.calendar.users.domain.models.Registration;
 import com.calendar.users.domain.models.UserAbout;
 import com.calendar.users.domain.models.UserPicture;
 import com.calendar.users.domain.models.UserPreferences;
@@ -20,6 +21,8 @@ import com.calendar.users.exception.BusinessException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashMap;
@@ -39,13 +42,15 @@ public class UserService {
     private final IdentityProvider identityProvider;
     private final MediaStore mediaStore;
     private final FriendshipChecker friendshipChecker;
+    private final Clock clock;
 
     public UserService(UserRepository userRepository, IdentityProvider identityProvider, MediaStore mediaStore,
-                       FriendshipChecker friendshipChecker) {
+                       FriendshipChecker friendshipChecker, Clock clock) {
         this.userRepository = userRepository;
         this.identityProvider = identityProvider;
         this.mediaStore = mediaStore;
         this.friendshipChecker = friendshipChecker;
+        this.clock = clock;
     }
 
     /** 410 USR-BUS-012 for a deleted account, 404 for an unknown one. */
@@ -88,7 +93,8 @@ public class UserService {
                     BusinessUser current = found.getT1();
                     String keycloakId = found.getT2();
                     BusinessUser changed = new BusinessUser(current.id(), userName, current.hashtag(),
-                            update.firstName(), update.lastName(), current.profilePicUrl(), current.joinedDate());
+                            update.firstName(), update.lastName(), current.profilePicUrl(), current.joinedDate(),
+                            current.birthDate(), current.registrationCompleted());
                     IdentityUser before = new IdentityUser(current.userName(), current.firstName(), current.lastName());
                     IdentityUser after = new IdentityUser(userName, update.firstName(), update.lastName());
 
@@ -97,6 +103,16 @@ public class UserService {
                             .then(Mono.defer(() -> userRepository.updateProfile(changed, current.userName())
                                     .onErrorResume(error -> undo(keycloakId, before, error))));
                 });
+    }
+
+    /**
+     * Completes the signup, or changes the birth date later: idempotent. 400 USR-VAL-002 unless the
+     * birth date gives an age of 13 to 120 today; other services learn the birthday (USER_BIRTHDAY).
+     */
+    public Mono<BusinessUser> completeRegistration(UUID userId, Registration registration) {
+        return Mono.fromCallable(() -> registration.validOn(LocalDate.now(clock)))
+                .flatMap(valid -> userRepository.completeRegistration(userId, valid))
+                .onErrorResume(UserService::isUserNotFound, e -> missingUser(userId));
     }
 
     /** The user's bio and interests, as they wrote them; empty when they wrote none. */

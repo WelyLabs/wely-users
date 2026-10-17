@@ -1,5 +1,9 @@
 package com.calendar.users.infrastructure.messaging.mappers;
 
+import java.time.LocalDate;
+
+import com.calendar.users.infrastructure.messaging.models.UserBirthdayEventDTO;
+
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.infrastructure.messaging.models.UserCreatedEventDTO;
 import com.calendar.users.infrastructure.messaging.models.UserModifiedEventDTO;
@@ -51,5 +55,28 @@ class KafkaDataMapperTest {
 
         assertEquals(new UserModifiedEventDTO(id, "camille_d", 4321, "Cam", "Dupont", "pic.jpg"),
                 mapper.toUserModifiedEventDTO(user));
+    }
+
+    @Test
+    void toUserBirthdayEventDTO_shouldCarryTheFirstNameAndTheDayAndMonth_whenTheFirstNameIsSet() {
+        UUID id = UUID.randomUUID();
+        BusinessUser user = new BusinessUser(id, "lea", 4242, "Léa", "Martin", null, LocalDateTime.now(),
+                LocalDate.of(1995, 3, 12), true);
+
+        assertEquals(new UserBirthdayEventDTO(id, "Léa", 3, 12), mapper.toUserBirthdayEventDTO(user));
+    }
+
+    @Test
+    void toUserBirthdayEventDTO_shouldFallBackOnTheUserName_whenNoFirstNameIsSet() {
+        UUID id = UUID.randomUUID();
+        BusinessUser user = new BusinessUser(id, "lea", 4242, null, null, null, LocalDateTime.now(),
+                LocalDate.of(2000, 2, 29), true);
+
+        assertEquals(new UserBirthdayEventDTO(id, "lea", 2, 29), mapper.toUserBirthdayEventDTO(user));
+    }
+
+    @Test
+    void toUserBirthdayEventDTO_shouldReturnNull_whenGivenNull() {
+        assertNull(mapper.toUserBirthdayEventDTO(null));
     }
 }

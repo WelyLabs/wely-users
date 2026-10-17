@@ -10,6 +10,7 @@ import com.calendar.users.domain.models.AccountErasure;
 import com.calendar.users.domain.models.AccountState;
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.models.DeletedUser;
+import com.calendar.users.domain.models.Registration;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
 import org.junit.jupiter.api.BeforeAll;
@@ -38,6 +39,7 @@ import reactor.test.StepVerifier;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -389,6 +391,69 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     }
 
     @Test
+    @DisplayName("a new user has no birth date and has not completed the signup")
+    void save_shouldStartWithoutBirthDate_whenTheUserIsNew() {
+        BusinessUser saved = adapter.save(aUser("new", 1212), "kc-new").block();
+
+        BusinessUser read = adapter.getBusinessUserByUserId(saved.id()).block();
+        assertThat(read.birthDate()).isNull();
+        assertThat(read.registrationCompleted()).isFalse();
+    }
+
+    @Test
+    @DisplayName("completing the signup stores the birth date, flips the flag and writes USER_BIRTHDAY, idempotently")
+    void completeRegistration_shouldStoreTheBirthDateAndWriteTheEvent() {
+        BusinessUser saved = adapter.save(aUser("lea", 1313), "kc-lea").block();
+        Registration registration = new Registration(LocalDate.of(1995, 3, 12));
+
+        BusinessUser registered = adapter.completeRegistration(saved.id(), registration).block();
+        adapter.completeRegistration(saved.id(), registration).block();
+
+        assertThat(registered.birthDate()).isEqualTo(LocalDate.of(1995, 3, 12));
+        assertThat(registered.registrationCompleted()).isTrue();
+        assertThat(outboxTypes()).isEqualTo("USER_CREATED,USER_BIRTHDAY,USER_BIRTHDAY");
+        String payload = databaseClient.sql("SELECT payload FROM outbox_event WHERE type = 'USER_BIRTHDAY' LIMIT 1")
+                .map(row -> row.get(0, String.class))
+                .one()
+                .block();
+        assertThat(payload).contains("\"displayName\":\"First\"", "\"month\":3", "\"day\":12")
+                .doesNotContain("1995");
+    }
+
+    @Test
+    @DisplayName("completing the signup of an unknown user is USER_NOT_FOUND, and writes no event")
+    void completeRegistration_shouldFailAsNotFound_whenTheUserIsUnknown() {
+        StepVerifier.create(adapter.completeRegistration(UUID.randomUUID(), new Registration(LocalDate.of(1995, 3, 12))))
+                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
+                .verify();
+
+        assertThat(count("outbox_event")).isZero();
+    }
+
+    @Test
+    @DisplayName("a profile update of a user with a birth date also writes USER_BIRTHDAY, for the name it shows")
+    void updateProfile_shouldAlsoWriteUserBirthday_whenABirthDateIsSet() {
+        BusinessUser saved = adapter.save(aUser("camille", 1414), "kc-camille").block();
+        adapter.completeRegistration(saved.id(), new Registration(LocalDate.of(1995, 3, 12))).block();
+
+        adapter.updateProfile(new BusinessUser(saved.id(), "camille", 1414, "Cam", "Dupont", null,
+                saved.joinedDate()), "camille").block();
+
+        assertThat(outboxTypes()).isEqualTo("USER_CREATED,USER_BIRTHDAY,USER_MODIFIED,USER_BIRTHDAY");
+    }
+
+    @Test
+    @DisplayName("the database itself refuses a tombstone that keeps a birth date")
+    void tombstoneCheck_shouldRefuseADeletedRow_whenItKeepsABirthDate() {
+        BusinessUser user = aTombstone();
+
+        StepVerifier.create(databaseClient.sql("UPDATE app_user SET birth_date = DATE '1995-03-12' WHERE id = :id")
+                        .bind("id", user.id()).then())
+                .expectError()
+                .verify();
+    }
+
+    @Test
     @DisplayName("the bio and interests round-trip through the text[] column, and a new user has none")
     void updateAbout_shouldRoundTripThroughTheTextArray() {
         BusinessUser user = savedAgo("about", 5555, "kc-about", 0);
@@ -437,7 +502,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
                 .collectList()
                 .block();
 
-        assertThat(applied).startsWith("1", "2", "3", "4", "5", "6");
+        assertThat(applied).startsWith("1", "2", "3", "4", "5", "6", "7");
     }
 
     @Test
@@ -525,6 +590,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         adapter.updatePicture(user.id(), "avatars/" + user.id() + "/a.jpg").block();
         adapter.updateAbout(user.id(), new UserAbout("Partante", List.of("Rando"))).block();
         adapter.updatePreferences(user.id(), new UserPreferences(Theme.DARK)).block();
+        adapter.completeRegistration(user.id(), new Registration(LocalDate.of(1995, 3, 12))).block();
         return user;
     }
 
@@ -557,6 +623,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         assertThat(row.get("profile_pic_url")).isNull();
         assertThat(row.get("bio")).isNull();
         assertThat((Object[]) row.get("interests")).isEmpty();
+        assertThat(row.get("birth_date")).isNull();
         assertThat(row.get("theme")).isEqualTo("SYSTEM");
         assertThat(row.get("joined_date")).isEqualTo(LocalDateTime.ofInstant(deletedAt, ZoneOffset.UTC));
         assertThat(row.get("identity_checked_at")).isNotNull();

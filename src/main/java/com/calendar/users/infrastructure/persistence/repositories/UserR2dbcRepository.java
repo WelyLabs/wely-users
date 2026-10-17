@@ -14,6 +14,7 @@ import org.springframework.stereotype.Repository;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.Collection;
@@ -66,6 +67,14 @@ public interface UserR2dbcRepository extends ReactiveCrudRepository<UserEntity, 
             """)
     Mono<Long> updateProfile(UUID id, String userName, String firstName, String lastName);
 
+    /** Signup completion: stores the birth date and marks the step done. */
+    @Modifying
+    @Query("""
+            UPDATE app_user SET birth_date = :birthDate, registration_completed = TRUE
+             WHERE id = :id AND deleted_at IS NULL
+            """)
+    Mono<Long> completeRegistration(UUID id, LocalDate birthDate);
+
     @Query("SELECT keycloak_id FROM app_user WHERE id = :id AND deleted_at IS NULL")
     Mono<String> findKeycloakIdById(UUID id);
 
@@ -111,6 +120,7 @@ public interface UserR2dbcRepository extends ReactiveCrudRepository<UserEntity, 
                    profile_pic_url = NULL,
                    bio = NULL,
                    interests = '{}',
+                   birth_date = NULL,
                    theme = 'SYSTEM',
                    joined_date = (:deletedAt AT TIME ZONE 'UTC'),
                    identity_checked_at = COALESCE(identity_checked_at, :deletedAt),
