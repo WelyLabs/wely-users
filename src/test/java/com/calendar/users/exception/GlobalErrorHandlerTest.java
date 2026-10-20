@@ -1,5 +1,6 @@
 package com.calendar.users.exception;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,9 +17,12 @@ import jakarta.validation.constraints.NotBlank;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 class GlobalErrorHandlerTest {
 
     private WebTestClient client;
+    private SimpleMeterRegistry meterRegistry;
 
     @RestController
     static class TestController {
@@ -79,8 +83,9 @@ class GlobalErrorHandlerTest {
 
     @BeforeEach
     void setUp() {
+        meterRegistry = new SimpleMeterRegistry();
         client = WebTestClient.bindToController(new TestController())
-                .controllerAdvice(new GlobalErrorHandler())
+                .controllerAdvice(new GlobalErrorHandler(meterRegistry))
                 .validator(new LocalValidatorFactoryBean())
                 .build();
     }
@@ -96,7 +101,7 @@ class GlobalErrorHandlerTest {
                 .expectHeader().contentType(MediaType.APPLICATION_PROBLEM_JSON)
                 .expectBody()
                 .jsonPath("$.title").isEqualTo("Invalid request")
-                .jsonPath("$.code").isEqualTo("USR-VAL-001")
+                .jsonPath("$.code").isEqualTo(GlobalErrorHandler.VALIDATION_ERROR_CODE)
                 .jsonPath("$.errors.userName").exists();
     }
 
@@ -161,7 +166,7 @@ class GlobalErrorHandlerTest {
                 .exchange()
                 .expectStatus().is5xxServerError()
                 .expectBody()
-                .jsonPath("$.code").isEqualTo("USR-TEC-000")
+                .jsonPath("$.code").isEqualTo(GlobalErrorHandler.UNEXPECTED_ERROR_CODE)
                 .jsonPath("$.detail").isEqualTo("The request could not be completed.")
                 // The exception message carried a connection string with a password:
                 // none of that may cross the HTTP boundary.
@@ -185,7 +190,7 @@ class GlobalErrorHandlerTest {
                 .expectBody()
                 .jsonPath("$.status").isEqualTo(404)
                 .jsonPath("$.title").isEqualTo("Not Found")
-                .jsonPath("$.code").isEqualTo("USR-REQ-000");
+                .jsonPath("$.code").isEqualTo(GlobalErrorHandler.REQUEST_ERROR_CODE);
     }
 
     @Test
@@ -197,7 +202,7 @@ class GlobalErrorHandlerTest {
                 .expectBody()
                 .jsonPath("$.status").isEqualTo(405)
                 .jsonPath("$.title").isEqualTo("Method Not Allowed")
-                .jsonPath("$.code").isEqualTo("USR-REQ-000");
+                .jsonPath("$.code").isEqualTo(GlobalErrorHandler.REQUEST_ERROR_CODE);
     }
 
     @Test
@@ -219,5 +224,79 @@ class GlobalErrorHandlerTest {
                 .expectStatus().isForbidden()
                 .expectBody()
                 .jsonPath("$.code").isEqualTo("USR-BUS-010");
+    }
+
+    // --- request id ------------------------------------------------------------
+
+    private void assertCarriesARequestId(String uri) {
+        client.get().uri(uri)
+                .exchange()
+                .expectBody()
+                .jsonPath("$.requestId").value(requestId -> assertThat(requestId.toString()).isNotBlank());
+    }
+
+    @Test
+    @DisplayName("every problem carries the request id that ends its log lines")
+    void handleBusinessException_shouldCarryTheRequestId() {
+        assertCarriesARequestId("/business-error");
+    }
+
+    @Test
+    void handleTechnicalException_shouldCarryTheRequestId() {
+        assertCarriesARequestId("/technical-error");
+    }
+
+    @Test
+    void handleUnexpectedException_shouldCarryTheRequestId() {
+        assertCarriesARequestId("/generic-error");
+    }
+
+    @Test
+    void handleResponseStatusException_shouldCarryTheRequestId() {
+        assertCarriesARequestId("/gone");
+    }
+
+    @Test
+    void handleValidationException_shouldCarryTheRequestId() {
+        client.post().uri("/validated")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"userName\":\"\"}")
+                .exchange()
+                .expectBody()
+                .jsonPath("$.requestId").value(requestId -> assertThat(requestId.toString()).isNotBlank());
+    }
+
+    // --- technical error counter -----------------------------------------------
+
+    private double technicalErrors(String code) {
+        var counter = meterRegistry.find(GlobalErrorHandler.TECHNICAL_ERRORS_METRIC).tag("code", code).counter();
+        return counter == null ? 0 : counter.count();
+    }
+
+    @Test
+    @DisplayName("a dependency failure is counted under its own code")
+    void handleTechnicalException_shouldCountTheFailureUnderItsCode() {
+        client.get().uri("/technical-error").exchange().expectStatus().isEqualTo(502);
+        client.get().uri("/technical-error").exchange().expectStatus().isEqualTo(502);
+
+        assertThat(technicalErrors(TechnicalErrorCode.DATABASE_ERROR.getCode())).isEqualTo(2.0);
+        assertThat(technicalErrors(GlobalErrorHandler.UNEXPECTED_ERROR_CODE)).isZero();
+    }
+
+    @Test
+    @DisplayName("an unexpected failure is counted as USR-TEC-000")
+    void handleUnexpectedException_shouldCountTheFailureAsUnexpected() {
+        client.get().uri("/generic-error").exchange().expectStatus().is5xxServerError();
+
+        assertThat(technicalErrors(GlobalErrorHandler.UNEXPECTED_ERROR_CODE)).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("a business failure is not an incident and is not counted")
+    void handleBusinessException_shouldNotCountATechnicalError() {
+        client.get().uri("/business-error").exchange().expectStatus().isNotFound();
+        client.get().uri("/gone").exchange().expectStatus().isNotFound();
+
+        assertThat(meterRegistry.find(GlobalErrorHandler.TECHNICAL_ERRORS_METRIC).counters()).isEmpty();
     }
 }

@@ -9,7 +9,12 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
+import com.calendar.users.exception.BusinessErrorCode;
+import com.calendar.users.exception.GlobalErrorHandler;
+import com.calendar.users.exception.TechnicalErrorCode;
 import io.swagger.v3.oas.models.OpenAPI;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -83,5 +88,59 @@ class OpenApiConfigTest {
         assertThat(body).isNotNull();
         assertThat(new String(body, java.nio.charset.StandardCharsets.UTF_8))
                 .contains("\"/user-service/");
+    }
+
+    // --- error documentation -------------------------------------------------
+
+    private static final String PROBLEM_JSON = "['application/problem+json']";
+    private static final String PROBLEM_REF = "#/components/schemas/Problem";
+
+    private WebTestClient.BodyContentSpec apiDocs() {
+        return client().get().uri("/v3/api-docs")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody();
+    }
+
+    @Test
+    @DisplayName("the Problem schema documents every field an error body carries")
+    void problemResponsesCustomizer_shouldRegisterTheProblemSchema() {
+        apiDocs()
+                .jsonPath("$.components.schemas.Problem.properties.type.format").isEqualTo("uri")
+                .jsonPath("$.components.schemas.Problem.properties.status").exists()
+                .jsonPath("$.components.schemas.Problem.properties.code.description").value(description ->
+                        assertThat(description.toString()).contains("BUS", "VAL", "REQ", "TEC"))
+                .jsonPath("$.components.schemas.Problem.properties.timestamp.format").isEqualTo("date-time")
+                .jsonPath("$.components.schemas.Problem.properties.requestId").exists()
+                .jsonPath("$.components.schemas.Problem.properties.errors").exists();
+    }
+
+    @Test
+    @DisplayName("the code enum lists the service's codes, read from the enums and the handler")
+    void problemResponsesCustomizer_shouldListEveryErrorCode() {
+        apiDocs().jsonPath("$.components.schemas.Problem.properties.code.enum").value(codes ->
+                assertThat(((List<?>) codes).stream().map(String::valueOf).toList())
+                        .contains(BusinessErrorCode.USER_NOT_FOUND.getCode(),
+                                TechnicalErrorCode.KEYCLOAK_ERROR.getCode(),
+                                GlobalErrorHandler.VALIDATION_ERROR_CODE,
+                                GlobalErrorHandler.REQUEST_ERROR_CODE,
+                                GlobalErrorHandler.UNEXPECTED_ERROR_CODE)
+                        .containsExactlyElementsOf(OpenApiConfig.errorCodes()));
+    }
+
+    @Test
+    @DisplayName("every operation documents its 4XX and 5XX answers as problem+json")
+    void problemResponsesCustomizer_shouldAddProblemResponsesToEveryOperation() {
+        WebTestClient.BodyContentSpec docs = apiDocs();
+        int[] operations = new int[1];
+        docs.jsonPath("$.paths.*.*.responses").value(responses -> operations[0] = ((List<?>) responses).size());
+
+        assertThat(operations[0]).isPositive();
+        for (String range : List.of("4XX", "5XX")) {
+            docs.jsonPath("$.paths.*.*.responses['" + range + "'].content" + PROBLEM_JSON + ".schema['$ref']")
+                    .value(refs -> assertThat((List<?>) refs)
+                            .hasSize(operations[0])
+                            .allMatch(PROBLEM_REF::equals));
+        }
     }
 }

@@ -20,6 +20,7 @@ import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
@@ -166,6 +167,16 @@ class MediaApiAdapterTest {
     }
 
     @Test
+    void store_shouldKeepWelyMediasAnswerAsCause_whenTheStorageIsDown() {
+        answerProblem(HttpStatus.BAD_GATEWAY, "MED-TEC-001");
+
+        StepVerifier.create(adapter.store(KEY, UPLOAD, MediaProfile.AVATAR))
+                .expectErrorSatisfies(error -> assertThat(error.getCause())
+                        .isInstanceOf(WebClientResponseException.BadGateway.class))
+                .verify();
+    }
+
+    @Test
     void store_shouldFailAsMediaError_whenTheErrorBodyIsNotAProblem() {
         answer = request -> Mono.just(ClientResponse.create(HttpStatus.BAD_REQUEST)
                 .header(HttpHeaders.CONTENT_TYPE, MediaType.TEXT_HTML_VALUE)
@@ -187,11 +198,25 @@ class MediaApiAdapterTest {
     }
 
     @Test
+    void store_shouldKeepTheConnectionFailureAsCause_whenWelyMediaIsUnreachable() {
+        answerConnectionRefused();
+
+        StepVerifier.create(adapter.store(KEY, UPLOAD, MediaProfile.AVATAR))
+                .expectErrorSatisfies(error -> assertThat(error.getCause())
+                        .isInstanceOf(WebClientRequestException.class)
+                        .hasRootCauseInstanceOf(ConnectException.class))
+                .verify();
+    }
+
+    @Test
     void store_shouldFailAsMediaError_whenWelyMediaAnswersNoBody() {
         answer = request -> Mono.just(ClientResponse.create(HttpStatus.CREATED).build());
 
         StepVerifier.create(adapter.store(KEY, UPLOAD, MediaProfile.AVATAR))
-                .expectErrorMatches(MediaApiAdapterTest::isMediaError)
+                .expectErrorSatisfies(error -> {
+                    assertThat(isMediaError(error)).isTrue();
+                    assertThat(error.getCause()).isInstanceOf(IllegalStateException.class);
+                })
                 .verify();
     }
 

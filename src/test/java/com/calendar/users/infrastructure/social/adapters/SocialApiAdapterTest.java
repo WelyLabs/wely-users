@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
@@ -18,6 +19,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -112,6 +114,16 @@ class SocialApiAdapterTest {
     }
 
     @Test
+    void areFriends_shouldKeepTheHttpErrorAsCause_whenSocialAnswers500() {
+        status = 500;
+
+        StepVerifier.create(areFriendsAsCaller())
+                .expectErrorSatisfies(error -> assertThat(error.getCause())
+                        .isInstanceOf(WebClientResponseException.InternalServerError.class))
+                .verify();
+    }
+
+    @Test
     void areFriends_shouldReportSocialError_whenSocialAnswers403() {
         status = 403;
 
@@ -127,6 +139,16 @@ class SocialApiAdapterTest {
     }
 
     @Test
+    void areFriends_shouldKeepTheTimeoutAsCause_whenSocialTimesOut() {
+        delayMillis = 1500;
+        adapter = adapterWithTimeout(Duration.ofMillis(300));
+
+        StepVerifier.create(areFriendsAsCaller())
+                .expectErrorSatisfies(error -> assertThat(error.getCause()).isInstanceOf(TimeoutException.class))
+                .verify();
+    }
+
+    @Test
     void areFriends_shouldReportSocialError_whenSocialIsUnreachable() {
         server.stop(0);
 
@@ -136,7 +158,12 @@ class SocialApiAdapterTest {
     @Test
     void areFriends_shouldRefuseWithoutCalling_whenThereIsNoTokenToRelay() {
         StepVerifier.create(adapter.areFriends("me", FRIEND))
-                .expectErrorMatches(SocialApiAdapterTest::isSocialError)
+                .expectErrorSatisfies(error -> {
+                    assertThat(isSocialError(error)).isTrue();
+                    assertThat(error.getCause())
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessage("no authenticated request to relay");
+                })
                 .verify();
 
         assertThat(requestedUri.get()).isNull();

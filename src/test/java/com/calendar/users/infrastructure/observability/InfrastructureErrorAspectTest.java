@@ -60,6 +60,17 @@ class InfrastructureErrorAspectTest {
     }
 
     @Test
+    @DisplayName("the database failure stays attached as the cause, so the incident log shows it")
+    void translatePersistenceFailures_shouldKeepTheOriginalErrorAsCause() throws Throwable {
+        RuntimeException original = new RuntimeException("connection reset");
+        when(joinPoint.proceed()).thenReturn(Mono.error(original));
+
+        StepVerifier.create((Mono<?>) aspect.translatePersistenceFailures(joinPoint))
+                .expectErrorSatisfies(error -> assertThat(error.getCause()).isSameAs(original))
+                .verify();
+    }
+
+    @Test
     @DisplayName("the adapter's business rule passes through: a unique constraint is not an incident")
     void translatePersistenceFailures_shouldLetBusinessFailuresThrough() throws Throwable {
         BusinessException alreadyExists = new BusinessException(BusinessErrorCode.USER_ALREADY_EXISTS);
@@ -97,14 +108,43 @@ class InfrastructureErrorAspectTest {
                 .verify();
     }
 
+    @Test
+    void translateIdentityFailures_shouldKeepTheOriginalErrorAsCause() throws Throwable {
+        RuntimeException original = new RuntimeException("503 from admin API");
+        when(joinPoint.proceed()).thenReturn(Mono.error(original));
+
+        StepVerifier.create((Mono<?>) aspect.translateIdentityFailures(joinPoint))
+                .expectErrorSatisfies(error -> assertThat(error.getCause()).isSameAs(original))
+                .verify();
+    }
+
+    // --- media -------------------------------------------------------------
+
+    @Test
+    @DisplayName("what MediaApiAdapter lets through becomes MEDIA_ERROR, with its cause")
+    void translateMediaFailures_shouldMapToMediaErrorWithTheOriginalCause() throws Throwable {
+        IllegalStateException original = new IllegalStateException("wely-media mapper failed");
+        when(joinPoint.proceed()).thenReturn(Mono.error(original));
+
+        StepVerifier.create((Mono<?>) aspect.translateMediaFailures(joinPoint))
+                .expectErrorSatisfies(error -> {
+                    assertThat(codeOf(error)).isEqualTo(TechnicalErrorCode.MEDIA_ERROR);
+                    assertThat(error.getCause()).isSameAs(original);
+                })
+                .verify();
+    }
+
     // --- shape of the return value -----------------------------------------
 
     @Test
     void translatePersistenceFailures_shouldHandleFluxAsWell() throws Throwable {
-        when(joinPoint.proceed()).thenReturn(Flux.error(new IllegalStateException("pool exhausted")));
+        IllegalStateException original = new IllegalStateException("pool exhausted");
+        when(joinPoint.proceed()).thenReturn(Flux.error(original));
 
         StepVerifier.create((Flux<?>) aspect.translatePersistenceFailures(joinPoint))
-                .expectError(TechnicalException.class)
+                .expectErrorSatisfies(error -> assertThat(error)
+                        .isInstanceOf(TechnicalException.class)
+                        .hasCause(original))
                 .verify();
     }
 
@@ -179,10 +219,13 @@ class InfrastructureErrorAspectTest {
         Object result = aspect.translateIdentityFailures(joinPoint);
 
         StepVerifier.create((Mono<?>) result)
-                .expectErrorSatisfies(error -> assertThat(error)
-                        .isInstanceOf(TechnicalException.class)
-                        .extracting(e -> ((TechnicalException) e).getErrorCode())
-                        .isEqualTo(TechnicalErrorCode.KEYCLOAK_ERROR))
+                .expectErrorSatisfies(error -> {
+                    assertThat(error)
+                            .isInstanceOf(TechnicalException.class)
+                            .extracting(e -> ((TechnicalException) e).getErrorCode())
+                            .isEqualTo(TechnicalErrorCode.KEYCLOAK_ERROR);
+                    assertThat(error.getCause()).isSameAs(serverError);
+                })
                 .verify();
     }
 

@@ -16,6 +16,7 @@ import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.models.IdentityUser;
 import com.calendar.users.domain.services.AccountDeletionService;
 import com.calendar.users.domain.services.UserService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -65,7 +66,7 @@ class ProfileControllerTest {
         webTestClient = WebTestClient.bindToController(new ProfileController(userService, accountDeletionService,
                         new ProvisionUserRequestMapperImpl(), new UpdateProfileRequestMapperImpl(),
                         new RegistrationRequestMapperImpl()))
-                .controllerAdvice(new GlobalErrorHandler())
+                .controllerAdvice(new GlobalErrorHandler(new SimpleMeterRegistry()))
                 .argumentResolvers(configurer -> configurer.addCustomResolver(new HandlerMethodArgumentResolver() {
                     @Override
                     public boolean supportsParameter(MethodParameter parameter) {

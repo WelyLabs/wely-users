@@ -8,6 +8,7 @@ import com.calendar.users.exception.BusinessException;
 import com.calendar.users.exception.GlobalErrorHandler;
 import com.calendar.users.exception.TechnicalErrorCode;
 import com.calendar.users.exception.TechnicalException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -48,7 +49,7 @@ class UserProfileControllerTest {
     @BeforeEach
     void setUp() {
         webTestClient = WebTestClient.bindToController(new UserProfileController(userService, new FriendProfileRestMapperImpl()))
-                .controllerAdvice(new GlobalErrorHandler())
+                .controllerAdvice(new GlobalErrorHandler(new SimpleMeterRegistry()))
                 .argumentResolvers(configurer -> configurer.addCustomResolver(new HandlerMethodArgumentResolver() {
                     @Override
                     public boolean supportsParameter(MethodParameter parameter) {

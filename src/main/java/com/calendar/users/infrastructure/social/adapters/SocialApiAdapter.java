@@ -54,7 +54,7 @@ public class SocialApiAdapter implements FriendshipChecker {
                         .timeout(timeout))
                 .onErrorMap(error -> !(error instanceof TechnicalException), error -> {
                     log.error("wely-social failure checking a friendship: {}", error.getMessage(), error);
-                    return new TechnicalException(TechnicalErrorCode.SOCIAL_ERROR);
+                    return new TechnicalException(TechnicalErrorCode.SOCIAL_ERROR, error);
                 });
     }
 

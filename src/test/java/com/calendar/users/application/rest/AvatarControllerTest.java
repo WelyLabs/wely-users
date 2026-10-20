@@ -3,6 +3,7 @@ package com.calendar.users.application.rest;
 import com.calendar.users.application.dtos.AvatarsRequest;
 import com.calendar.users.domain.services.UserService;
 import com.calendar.users.exception.GlobalErrorHandler;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -33,7 +34,7 @@ class AvatarControllerTest {
     @BeforeEach
     void setUp() {
         webTestClient = WebTestClient.bindToController(new AvatarController(userService))
-                .controllerAdvice(new GlobalErrorHandler())
+                .controllerAdvice(new GlobalErrorHandler(new SimpleMeterRegistry()))
                 .build();
     }
 

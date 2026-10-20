@@ -127,7 +127,7 @@ public class MediaApiAdapter implements MediaStore {
             return new BusinessException(BusinessErrorCode.PICTURE_TOO_LARGE);
         }
         log.error("wely-media failure in {} ({}): {}", operation, code, error.getMessage(), error);
-        return new TechnicalException(TechnicalErrorCode.MEDIA_ERROR);
+        return new TechnicalException(TechnicalErrorCode.MEDIA_ERROR, error);
     }
 
     /** The ProblemDetail's code, or null for no response or a body that is not one. */

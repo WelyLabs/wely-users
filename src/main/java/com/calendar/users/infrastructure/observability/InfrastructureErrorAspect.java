@@ -118,6 +118,6 @@ public class InfrastructureErrorAspect {
         }
 
         log.error("{} failure in {}: {}", dependency, operation, error.getMessage(), error);
-        return new TechnicalException(code);
+        return new TechnicalException(code, error);
     }
 }
