@@ -1,6 +1,8 @@
 package com.calendar.users.infrastructure.observability;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.prometheusmetrics.PrometheusConfig;
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -44,5 +46,16 @@ class MicrometerUsersActivityTest {
 
         assertThat(count("wely.users.deletions", "stage", "completed")).isEqualTo(1.0);
         assertThat(count("wely.users.deletions", "stage", "requested")).isZero();
+    }
+
+    @Test
+    void constructor_shouldExposeTheContractedPrometheusSeries() {
+        PrometheusMeterRegistry prometheus = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+        new MicrometerUsersActivity(prometheus).userSignedUp();
+
+        assertThat(prometheus.scrape())
+                .contains("wely_users_signups_total 1")
+                .contains("wely_users_deletions_total{stage=\"requested\"} 0")
+                .contains("wely_users_deletions_total{stage=\"completed\"} 0");
     }
 }

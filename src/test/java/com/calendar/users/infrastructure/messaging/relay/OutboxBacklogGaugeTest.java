@@ -6,7 +6,10 @@ import com.calendar.users.exception.TechnicalErrorCounter;
 import com.calendar.users.exception.TechnicalException;
 import com.calendar.users.infrastructure.persistence.adapters.R2dbcOutboxEventStoreAdapter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.prometheusmetrics.PrometheusConfig;
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -96,5 +99,20 @@ class OutboxBacklogGaugeTest {
         backlog.stop();
 
         assertThat(backlog.isRunning()).isFalse();
+    }
+
+    @Test
+    @DisplayName("the series Grafana reads is wely_outbox_pending{outbox=\"outbox_event\"}, without a suffix")
+    void refreshOnce_shouldExposeTheContractedPrometheusSeries() {
+        // Off in test contexts (it would poll localhost:5432), so the exposition format is checked here,
+        // with the registry /actuator/prometheus renders.
+        PrometheusMeterRegistry prometheus = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+        when(outboxEventStore.countPending()).thenReturn(Mono.just(5L));
+        OutboxBacklogGauge backlog = new OutboxBacklogGauge(outboxEventStore, new TechnicalErrorCounter(prometheus),
+                prometheus, Duration.ofHours(1));
+
+        StepVerifier.create(backlog.refreshOnce()).expectNext(5L).expectComplete().verify(Duration.ofSeconds(10));
+
+        assertThat(prometheus.scrape()).contains("wely_outbox_pending{outbox=\"outbox_event\"} 5");
     }
 }
