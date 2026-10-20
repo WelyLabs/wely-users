@@ -17,7 +17,7 @@ class ProblemWebExceptionHandlerTest {
 
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private final ProblemWebExceptionHandler handler = new ProblemWebExceptionHandler(
-            new ProblemResponseWriter(new GlobalErrorHandler(meterRegistry), ServerCodecConfigurer.create()));
+            new ProblemResponseWriter(new GlobalErrorHandler(new TechnicalErrorCounter(meterRegistry)), ServerCodecConfigurer.create()));
 
     @Test
     void handle_shouldAnswerOurProblemAndCountIt_whenAFilterFailedTechnically() {
@@ -32,7 +32,8 @@ class ProblemWebExceptionHandlerTest {
                 .contains("\"code\":\"USR-TEC-001\"")
                 .contains("\"requestId\"");
         assertThat(meterRegistry.counter(GlobalErrorHandler.TECHNICAL_ERRORS_METRIC,
-                GlobalErrorHandler.CODE_TAG, "USR-TEC-001").count()).isEqualTo(1.0);
+                GlobalErrorHandler.CODE_TAG, "USR-TEC-001",
+                GlobalErrorHandler.SOURCE_TAG, GlobalErrorHandler.SOURCE_HTTP).count()).isEqualTo(1.0);
     }
 
     @Test

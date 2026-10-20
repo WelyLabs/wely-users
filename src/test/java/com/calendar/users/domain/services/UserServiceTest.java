@@ -255,7 +255,7 @@ class UserServiceTest {
                 when(userRepository.markIdentityChecked(userId)).thenReturn(Mono.empty());
 
                 StepVerifier.create(userService.removeOrphans(CUTOFF, 100))
-                                .expectNext(new OrphanSweep(1, 0, 0))
+                                .expectNext(new OrphanSweep(1, 0, List.of()))
                                 .expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(userRepository, never()).deleteOrphan(any());
@@ -273,7 +273,7 @@ class UserServiceTest {
                 when(userRepository.deleteOrphan(any())).thenReturn(Mono.empty());
 
                 StepVerifier.create(userService.removeOrphans(CUTOFF, 100))
-                                .expectNext(new OrphanSweep(0, 2, 0))
+                                .expectNext(new OrphanSweep(0, 2, List.of()))
                                 .expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(userRepository).deleteOrphan(notFound);
@@ -289,12 +289,12 @@ class UserServiceTest {
                 when(userRepository.findIdentitiesToCheck(CUTOFF, 100)).thenReturn(Flux.just(
                                 new IdentityToCheck(down, "kc-down"), new IdentityToCheck(fine, "kc-fine")));
                 when(identityProvider.getUser("kc-down"))
-                                .thenReturn(Mono.error(new IllegalStateException("keycloak unreachable")));
+                                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.KEYCLOAK_ERROR)));
                 when(identityProvider.getUser("kc-fine")).thenReturn(Mono.just(new IdentityUser("x", "X", "Y")));
                 when(userRepository.markIdentityChecked(fine)).thenReturn(Mono.empty());
 
                 StepVerifier.create(userService.removeOrphans(CUTOFF, 100))
-                                .expectNext(new OrphanSweep(1, 0, 1))
+                                .expectNext(new OrphanSweep(1, 0, List.of("USR-TEC-001")))
                                 .expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(userRepository, never()).deleteOrphan(any());

@@ -10,7 +10,7 @@ import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
 
-/** Client for wely-social. Calls carry the caller's own token, set per request by the adapter. */
+/** Client for wely-social. Calls carry the caller's own token, set per request by the adapter, and the request id. */
 @Configuration
 public class SocialApiClientConfig {
 
@@ -25,6 +25,7 @@ public class SocialApiClientConfig {
         return WebClient.builder()
                 .baseUrl(url)
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .filter(new RequestIdExchangeFilter())
                 .build();
     }
 }

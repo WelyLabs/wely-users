@@ -90,7 +90,7 @@ class GlobalErrorHandlerTest {
     void setUp() {
         meterRegistry = new SimpleMeterRegistry();
         client = WebTestClient.bindToController(new TestController())
-                .controllerAdvice(new GlobalErrorHandler(meterRegistry))
+                .controllerAdvice(new GlobalErrorHandler(new TechnicalErrorCounter(meterRegistry)))
                 .validator(new LocalValidatorFactoryBean())
                 .build();
     }
@@ -274,7 +274,10 @@ class GlobalErrorHandlerTest {
     // --- technical error counter -----------------------------------------------
 
     private double technicalErrors(String code) {
-        var counter = meterRegistry.find(GlobalErrorHandler.TECHNICAL_ERRORS_METRIC).tag(GlobalErrorHandler.CODE_TAG, code).counter();
+        var counter = meterRegistry.find(GlobalErrorHandler.TECHNICAL_ERRORS_METRIC)
+                .tag(GlobalErrorHandler.CODE_TAG, code)
+                .tag(GlobalErrorHandler.SOURCE_TAG, GlobalErrorHandler.SOURCE_HTTP)
+                .counter();
         return counter == null ? 0 : counter.count();
     }
 
@@ -311,7 +314,7 @@ class GlobalErrorHandlerTest {
             MockServerWebExchange.from(MockServerHttpRequest.get("/user-service/profile"));
 
     private ProblemDetail toProblem(Throwable error) {
-        return new GlobalErrorHandler(meterRegistry).toProblem(error, exchange);
+        return new GlobalErrorHandler(new TechnicalErrorCounter(meterRegistry)).toProblem(error, exchange);
     }
 
     @Test

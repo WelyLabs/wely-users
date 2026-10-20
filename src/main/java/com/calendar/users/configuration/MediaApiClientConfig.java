@@ -10,7 +10,7 @@ import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
 
-/** Client for wely-media. Spring Boot 4 no longer auto-configures a WebClient.Builder. */
+/** Client for wely-media, carrying the request id. Spring Boot 4 no longer auto-configures a WebClient.Builder. */
 @Configuration
 public class MediaApiClientConfig {
 
@@ -29,6 +29,7 @@ public class MediaApiClientConfig {
                 .baseUrl(url)
                 .defaultHeader(SECRET_HEADER, secret)
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .filter(new RequestIdExchangeFilter())
                 .build();
     }
 }

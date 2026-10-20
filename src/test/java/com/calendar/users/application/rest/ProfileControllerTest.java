@@ -12,6 +12,7 @@ import com.calendar.users.exception.BusinessException;
 import com.calendar.users.exception.TechnicalErrorCode;
 import com.calendar.users.exception.TechnicalException;
 import com.calendar.users.exception.GlobalErrorHandler;
+import com.calendar.users.exception.TechnicalErrorCounter;
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.models.IdentityUser;
 import com.calendar.users.domain.services.AccountDeletionService;
@@ -66,7 +67,7 @@ class ProfileControllerTest {
         webTestClient = WebTestClient.bindToController(new ProfileController(userService, accountDeletionService,
                         new ProvisionUserRequestMapperImpl(), new UpdateProfileRequestMapperImpl(),
                         new RegistrationRequestMapperImpl()))
-                .controllerAdvice(new GlobalErrorHandler(new SimpleMeterRegistry()))
+                .controllerAdvice(new GlobalErrorHandler(new TechnicalErrorCounter(new SimpleMeterRegistry())))
                 .argumentResolvers(configurer -> configurer.addCustomResolver(new HandlerMethodArgumentResolver() {
                     @Override
                     public boolean supportsParameter(MethodParameter parameter) {

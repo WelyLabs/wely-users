@@ -2,6 +2,8 @@ package com.calendar.users.infrastructure.deletion;
 
 import com.calendar.users.domain.models.DeletionProgress;
 import com.calendar.users.domain.services.AccountDeletionService;
+import com.calendar.users.exception.GlobalErrorHandler;
+import com.calendar.users.exception.TechnicalErrorCounter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -20,6 +22,7 @@ import java.time.Duration;
 public class AccountDeletionWorker implements SmartLifecycle {
 
     private final AccountDeletionService accountDeletionService;
+    private final TechnicalErrorCounter technicalErrors;
     private final Duration pollInterval;
     private final int batchSize;
     private final int alertAfterAttempts;
@@ -28,10 +31,12 @@ public class AccountDeletionWorker implements SmartLifecycle {
 
     public AccountDeletionWorker(
             AccountDeletionService accountDeletionService,
+            TechnicalErrorCounter technicalErrors,
             @Value("${app.account-deletion.worker.poll-interval:5s}") Duration pollInterval,
             @Value("${app.account-deletion.worker.batch-size:20}") int batchSize,
             @Value("${app.account-deletion.worker.alert-after-attempts:5}") int alertAfterAttempts) {
         this.accountDeletionService = accountDeletionService;
+        this.technicalErrors = technicalErrors;
         this.pollInterval = pollInterval;
         this.batchSize = batchSize;
         this.alertAfterAttempts = alertAfterAttempts;
@@ -43,13 +48,17 @@ public class AccountDeletionWorker implements SmartLifecycle {
         loop = Mono.defer(this::runOnce)
                 .onErrorResume(error -> {
                     log.error("Account deletion pass failed; next attempt in {}", pollInterval, error);
+                    technicalErrors.count(error, GlobalErrorHandler.SOURCE_JOB);
                     return Mono.just(Pass.EMPTY);
                 })
                 .repeatWhen(passes -> passes.delayElements(pollInterval))
                 .subscribe(
                         unused -> {
                         },
-                        error -> log.error("Account deletion loop terminated and will not restart", error));
+                        error -> {
+                            log.error("Account deletion loop terminated and will not restart", error);
+                            technicalErrors.count(error, GlobalErrorHandler.SOURCE_JOB);
+                        });
         log.info("Account deletion worker started: every {}, in batches of {}", pollInterval, batchSize);
     }
 
@@ -80,6 +89,7 @@ public class AccountDeletionWorker implements SmartLifecycle {
             case COMPLETED -> log.info("Account deletion {} completed", progress.userId());
             case WAITING -> log.debug("Account deletion {} waiting for its next step", progress.userId());
             case FAILED -> {
+                technicalErrors.count(progress.error(), GlobalErrorHandler.SOURCE_JOB);
                 if (progress.attempts() >= alertAfterAttempts) {
                     log.error("Account deletion {} failed {} times ({}), retrying with backoff",
                             progress.userId(), progress.attempts(), progress.error());

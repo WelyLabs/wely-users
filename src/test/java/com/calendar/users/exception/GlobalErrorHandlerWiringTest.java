@@ -15,6 +15,7 @@ import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.reactive.server.WebTestClient;
+import org.springframework.web.reactive.result.method.annotation.ResponseEntityExceptionHandler;
 import org.springframework.web.server.WebFilter;
 import reactor.core.publisher.Mono;
 
@@ -156,5 +157,59 @@ class GlobalErrorHandlerWiringTest {
     void problemWebExceptionHandler_shouldAnswerOurProblem_whenAWebFilterFails() {
         assertOurProblem(authenticated().get().uri(FILTER_FAILURE_PATH).exchange(),
                 502, TechnicalErrorCode.DATABASE_ERROR.getCode());
+    }
+
+    // --- request id from the gateway -------------------------------------------------
+
+    private static final String GATEWAY_ID = "abcd1234-5678-90ef-abcd-1234567890ef";
+
+    private static void assertCarriesTheGatewaysId(WebTestClient.ResponseSpec response) {
+        response.expectHeader().valueEquals(RequestIds.REQUEST_ID_HEADER, GATEWAY_ID)
+                .expectBody()
+                .jsonPath("$.requestId").isEqualTo(GATEWAY_ID);
+    }
+
+    @Test
+    @DisplayName("a controller-path problem answers under the id the gateway forwarded")
+    void handleResponseStatusException_shouldUseTheGatewaysRequestId() {
+        assertCarriesTheGatewaysId(authenticated().get().uri("/user-service/no-such-path")
+                .header(RequestIds.REQUEST_ID_HEADER, GATEWAY_ID)
+                .exchange());
+    }
+
+    @Test
+    @DisplayName("a security refusal answers under the gateway's id too: the id filter runs before security")
+    void authenticationEntryPoint_shouldUseTheGatewaysRequestId() {
+        assertCarriesTheGatewaysId(anonymous().get().uri("/user-service/profile")
+                .header(RequestIds.REQUEST_ID_HEADER, GATEWAY_ID)
+                .exchange());
+    }
+
+    @Test
+    void problemWebExceptionHandler_shouldUseTheGatewaysRequestId() {
+        assertCarriesTheGatewaysId(authenticated().get().uri(FILTER_FAILURE_PATH)
+                .header(RequestIds.REQUEST_ID_HEADER, GATEWAY_ID)
+                .exchange());
+    }
+
+    @Test
+    @DisplayName("a forged id is replaced, in the problem and on the response alike")
+    void handleResponseStatusException_shouldReplaceAnInvalidRequestId() {
+        authenticated().get().uri("/user-service/no-such-path")
+                .header(RequestIds.REQUEST_ID_HEADER, "bad id!")
+                .exchange()
+                .expectHeader().value(RequestIds.REQUEST_ID_HEADER, header -> assertThat(header).isNotEqualTo("bad id!"))
+                .expectBody()
+                .jsonPath("$.requestId").value(requestId -> assertThat(requestId.toString())
+                        .isNotBlank()
+                        .isNotEqualTo("bad id!"));
+    }
+
+    // --- Boot's own problem-details advice ---------------------------------------------
+
+    @Test
+    @DisplayName("Boot's problem-details advice is not registered: spring.webflux.problemdetails.enabled stays off")
+    void context_shouldNotRegisterBootsProblemDetailsAdvice() {
+        assertThat(context.getBeansOfType(ResponseEntityExceptionHandler.class)).isEmpty();
     }
 }

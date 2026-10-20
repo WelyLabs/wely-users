@@ -1,10 +1,14 @@
 package com.calendar.users.infrastructure.messaging.relay;
 
+import com.calendar.users.exception.GlobalErrorHandler;
 import com.calendar.users.exception.TechnicalErrorCode;
+import com.calendar.users.exception.TechnicalErrorCounter;
 import com.calendar.users.exception.TechnicalException;
 import com.calendar.users.infrastructure.messaging.adapters.KafkaOutboxDispatcher;
 import com.calendar.users.infrastructure.persistence.adapters.R2dbcOutboxEventStoreAdapter;
 import com.calendar.users.infrastructure.persistence.models.entities.OutboxEventEntity;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -67,6 +71,7 @@ class OutboxRelayTest {
     @Mock
     private TransactionalOperator transactionalOperator;
 
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private OutboxRelay relay;
 
     @BeforeEach
@@ -88,8 +93,16 @@ class OutboxRelayTest {
 
     private void startRelay() {
         relay = new OutboxRelay(outboxEventStore, dispatcher, transactionalOperator,
-                FAST, 10, MAX_ATTEMPTS, Duration.ofHours(1), RETENTION);
+                new TechnicalErrorCounter(meterRegistry), FAST, 10, MAX_ATTEMPTS, Duration.ofHours(1), RETENTION);
         relay.start();
+    }
+
+    private double technicalErrors(String code) {
+        Counter counter = meterRegistry.find(GlobalErrorHandler.TECHNICAL_ERRORS_METRIC)
+                .tag(GlobalErrorHandler.CODE_TAG, code)
+                .tag(GlobalErrorHandler.SOURCE_TAG, GlobalErrorHandler.SOURCE_OUTBOX)
+                .counter();
+        return counter == null ? 0 : counter.count();
     }
 
     private static OutboxEventEntity row(long id, int attempts) {
@@ -230,5 +243,51 @@ class OutboxRelayTest {
         return mockingDetails(outboxEventStore).getInvocations().stream()
                 .filter(invocation -> "claimPending".equals(invocation.getMethod().getName()))
                 .count();
+    }
+
+    // --- technical error counter ------------------------------------------------
+
+    @Test
+    @DisplayName("a send Kafka refuses is counted under its code, once per failed attempt")
+    void start_shouldCountAFailedSend_asAnOutboxTechnicalFailure() {
+        OutboxEventEntity failing = row(1, 0);
+        when(outboxEventStore.claimPending(anyInt(), anyInt()))
+                .thenReturn(Flux.just(failing))
+                .thenReturn(Flux.empty());
+        when(dispatcher.dispatch(failing))
+                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.KAFKA_ERROR)));
+
+        startRelay();
+
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                assertThat(technicalErrors("USR-TEC-003")).isEqualTo(1.0));
+    }
+
+    @Test
+    @DisplayName("a pass that fails as a whole — the database down — is counted too")
+    void start_shouldCountAFailedPass_asAnOutboxTechnicalFailure() {
+        when(outboxEventStore.claimPending(anyInt(), anyInt()))
+                .thenReturn(Flux.error(new TechnicalException(TechnicalErrorCode.DATABASE_ERROR)))
+                .thenReturn(Flux.empty());
+
+        startRelay();
+
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                assertThat(technicalErrors("USR-TEC-002")).isGreaterThanOrEqualTo(1.0));
+    }
+
+    @Test
+    @DisplayName("an event no binding knows is a bug, counted as unexpected")
+    void start_shouldCountAnUnknownFailure_asUnexpected() {
+        OutboxEventEntity unknown = row(1, 0);
+        when(outboxEventStore.claimPending(anyInt(), anyInt()))
+                .thenReturn(Flux.just(unknown))
+                .thenReturn(Flux.empty());
+        when(dispatcher.dispatch(unknown)).thenReturn(Mono.error(new IllegalArgumentException("USER_RENAMED")));
+
+        startRelay();
+
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                assertThat(technicalErrors(GlobalErrorHandler.UNEXPECTED_FAILURE_CODE)).isEqualTo(1.0));
     }
 }

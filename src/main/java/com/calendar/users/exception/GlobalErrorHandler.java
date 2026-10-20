@@ -1,6 +1,5 @@
 package com.calendar.users.exception;
 
-import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -28,12 +27,13 @@ import java.util.Map;
  * to invent a fourth shape.
  *
  * <p>Three properties are added beyond the standard fields: {@code code}, the stable
- * identifier a client branches on, {@code timestamp}, and {@code requestId} — the WebFlux
- * request id that also prefixes the framework's log lines and ends every log line here, so a
- * response a user reports leads straight to its logs.
+ * identifier a client branches on, {@code timestamp}, and {@code requestId} — the id the
+ * gateway generated for the request (see {@link RequestIds}), which ends every log line here, so
+ * a response a user reports leads straight to its logs, in every service it went through.
  *
- * <p>Every technical failure answered here also increments {@value #TECHNICAL_ERRORS_METRIC},
- * tagged with its code, so an outage shows on a dashboard before anyone reads a log.
+ * <p>Every technical failure answered here also increments {@value #TECHNICAL_ERRORS_METRIC}
+ * through {@link TechnicalErrorCounter}, tagged with its code and source {@value #SOURCE_HTTP},
+ * so an outage shows on a dashboard before anyone reads a log.
  *
  * <h2>Why first</h2>
  *
@@ -70,13 +70,31 @@ public class GlobalErrorHandler {
     /** Tag of {@link #TECHNICAL_ERRORS_METRIC} carrying the error code. */
     public static final String CODE_TAG = "code";
 
-    /** Problem property holding the WebFlux request id. */
+    /** Tag of {@link #TECHNICAL_ERRORS_METRIC} saying where the failure surfaced; one of the SOURCE_ values. */
+    public static final String SOURCE_TAG = "source";
+
+    /** Answered to an HTTP caller: the advice, the web exception handler, the security writers. */
+    public static final String SOURCE_HTTP = "http";
+
+    /** A Kafka consumer. */
+    public static final String SOURCE_KAFKA = "kafka";
+
+    /** An outbox relay or dispatcher. */
+    public static final String SOURCE_OUTBOX = "outbox";
+
+    /** A deleted-users reconciliation loop. */
+    public static final String SOURCE_RECONCILIATION = "reconciliation";
+
+    /** A scheduled or periodic background job. */
+    public static final String SOURCE_JOB = "job";
+
+    /** Problem property holding the request id, see {@link RequestIds}. */
     public static final String REQUEST_ID_PROPERTY = "requestId";
 
-    private final MeterRegistry meterRegistry;
+    private final TechnicalErrorCounter technicalErrors;
 
-    public GlobalErrorHandler(MeterRegistry meterRegistry) {
-        this.meterRegistry = meterRegistry;
+    public GlobalErrorHandler(TechnicalErrorCounter technicalErrors) {
+        this.technicalErrors = technicalErrors;
     }
 
     /**
@@ -99,7 +117,7 @@ public class GlobalErrorHandler {
 
         // Expected outcome, not an incident: logged at WARN, and without a stack trace.
         log.warn("Business failure {} on {} (request {})", error.getCode(), exchange.getRequest().getPath(),
-                exchange.getRequest().getId());
+                RequestIds.of(exchange));
 
         return problem(error.getHttpStatus(), error.getCode(), error.getTitle(), error.getDetail(),
                 exchange);
@@ -112,8 +130,8 @@ public class GlobalErrorHandler {
         // A dependency is down: ERROR with the cause, because someone has to act on it.
         // The previous version logged these at WARN, which hid them.
         log.error("Technical failure {} on {} (request {})", error.getCode(), exchange.getRequest().getPath(),
-                exchange.getRequest().getId(), ex);
-        countTechnicalError(error.getCode());
+                RequestIds.of(exchange), ex);
+        technicalErrors.count(ex, SOURCE_HTTP);
 
         return problem(error.getHttpStatus(), error.getCode(), error.getTitle(), error.getDetail(),
                 exchange);
@@ -128,7 +146,7 @@ public class GlobalErrorHandler {
                 .forEach(error -> fieldErrors.put(error.getField(), error.getDefaultMessage()));
 
         log.debug("Validation failure {} on {} (request {})", VALIDATION_FAILED_CODE,
-                exchange.getRequest().getPath(), exchange.getRequest().getId());
+                exchange.getRequest().getPath(), RequestIds.of(exchange));
 
         ProblemDetail problem = problem(HttpStatus.BAD_REQUEST, VALIDATION_FAILED_CODE,
                 "Invalid request", "One or more fields are invalid.", exchange);
@@ -150,7 +168,7 @@ public class GlobalErrorHandler {
     public ProblemDetail handleResponseStatusException(ResponseStatusException ex,
                                                        ServerWebExchange exchange) {
         HttpStatus status = HttpStatus.valueOf(ex.getStatusCode().value());
-        log.debug("{} on {} (request {})", status, exchange.getRequest().getPath(), exchange.getRequest().getId());
+        log.debug("{} on {} (request {})", status, exchange.getRequest().getPath(), RequestIds.of(exchange));
 
         return problem(status, REQUEST_REFUSED_CODE, status.getReasonPhrase(),
                 "The request could not be served as sent.", exchange);
@@ -168,8 +186,8 @@ public class GlobalErrorHandler {
 
     private ProblemDetail unexpected(Throwable ex, ServerWebExchange exchange) {
         log.error("Unhandled failure {} on {} (request {})", UNEXPECTED_FAILURE_CODE, exchange.getRequest().getPath(),
-                exchange.getRequest().getId(), ex);
-        countTechnicalError(UNEXPECTED_FAILURE_CODE);
+                RequestIds.of(exchange), ex);
+        technicalErrors.count(ex, SOURCE_HTTP);
 
         return problem(HttpStatus.INTERNAL_SERVER_ERROR, UNEXPECTED_FAILURE_CODE,
                 "Unexpected error", "The request could not be completed.", exchange);
@@ -183,12 +201,8 @@ public class GlobalErrorHandler {
         problem.setInstance(URI.create(exchange.getRequest().getPath().value()));
         problem.setProperty("code", code);
         problem.setProperty("timestamp", Instant.now().toString());
-        problem.setProperty(REQUEST_ID_PROPERTY, exchange.getRequest().getId());
+        problem.setProperty(REQUEST_ID_PROPERTY, RequestIds.of(exchange));
 
         return problem;
-    }
-
-    private void countTechnicalError(String code) {
-        meterRegistry.counter(TECHNICAL_ERRORS_METRIC, CODE_TAG, code).increment();
     }
 }

@@ -14,7 +14,7 @@ import com.calendar.users.domain.ports.MediaStore;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
-import com.calendar.users.exception.TechnicalException;
+import com.calendar.users.exception.ErrorCodes;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -128,7 +128,7 @@ public class AccountDeletionService {
                 })
                 .onErrorResume(error -> Mono.just(
                         new DeletionProgress(job.userId(), DeletionProgress.Status.FAILED, job.attempts() + 1,
-                                errorCode(error))));
+                                ErrorCodes.of(error))));
     }
 
     private Mono<Step> deleteIdentity(AccountDeletionJob job) {
@@ -158,7 +158,7 @@ public class AccountDeletionService {
         Throwable failure = identity.error() != null ? identity.error() : media.error();
         if (failure != null) {
             int attempts = job.attempts() + 1;
-            String code = errorCode(failure);
+            String code = ErrorCodes.of(failure);
             return jobs.recordFailure(job.userId(), code, now.plus(policy.retryDelay(attempts)))
                     .thenReturn(new DeletionProgress(job.userId(), DeletionProgress.Status.FAILED, attempts, code));
         }
@@ -166,17 +166,6 @@ public class AccountDeletionService {
                 ? DeletionProgress.Status.COMPLETED
                 : DeletionProgress.Status.WAITING;
         return Mono.just(new DeletionProgress(job.userId(), status, job.attempts(), null));
-    }
-
-    /** A stable code to store and log: never a message, a URL or an id. */
-    private static String errorCode(Throwable error) {
-        if (error instanceof BusinessException business) {
-            return business.getErrorCode().getCode();
-        }
-        if (error instanceof TechnicalException technical) {
-            return technical.getErrorCode().getCode();
-        }
-        return error.getClass().getSimpleName();
     }
 
     /** One step of a job on this pass; error is set when it failed. */

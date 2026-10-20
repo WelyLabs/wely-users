@@ -4,6 +4,7 @@ import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.GlobalErrorHandler;
+import com.calendar.users.exception.TechnicalErrorCounter;
 import com.calendar.users.exception.ProblemResponseWriter;
 import com.calendar.users.exception.TechnicalErrorCode;
 import com.calendar.users.exception.TechnicalException;
@@ -211,7 +212,7 @@ class WebFluxSecurityConfigTest {
     @DisplayName("with no reader secret configured, every call to the listing is refused")
     void readerSecretFilter_shouldAnswer401_whenNoReaderSecretIsConfigured() {
         ProblemResponseWriter problems = new ProblemResponseWriter(
-                new GlobalErrorHandler(new SimpleMeterRegistry()), ServerCodecConfigurer.create());
+                new GlobalErrorHandler(new TechnicalErrorCounter(new SimpleMeterRegistry())), ServerCodecConfigurer.create());
         WebFilter filter = new WebFluxSecurityConfig("http://issuer", "http://jwks", VALID_SECRET, "")
                 .internalSecretWebFilter(problems);
         AtomicBoolean reached = new AtomicBoolean();
@@ -343,7 +344,8 @@ class WebFluxSecurityConfigTest {
                 .expectStatus().isOk()
                 .expectBody(String.class).value(body -> assertThat(body)
                         .contains("wely_errors_technical_total{")
-                        .contains("code=\"USR-TEC-002\""));
+                        .contains("code=\"USR-TEC-002\"")
+                        .contains("source=\"http\""));
     }
 
     @Test

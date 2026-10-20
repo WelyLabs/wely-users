@@ -17,7 +17,7 @@ class ProblemResponseWriterTest {
 
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private final ProblemResponseWriter writer =
-            new ProblemResponseWriter(new GlobalErrorHandler(meterRegistry), ServerCodecConfigurer.create());
+            new ProblemResponseWriter(new GlobalErrorHandler(new TechnicalErrorCounter(meterRegistry)), ServerCodecConfigurer.create());
 
     private static MockServerWebExchange exchange() {
         return MockServerWebExchange.from(MockServerHttpRequest.get("/user-service/profile"));
@@ -38,7 +38,8 @@ class ProblemResponseWriterTest {
                 .contains("\"requestId\":\"" + exchange.getRequest().getId() + "\"")
                 .contains("\"instance\":\"/user-service/profile\"");
         assertThat(meterRegistry.counter(GlobalErrorHandler.TECHNICAL_ERRORS_METRIC,
-                GlobalErrorHandler.CODE_TAG, "USR-TEC-002").count()).isEqualTo(1.0);
+                GlobalErrorHandler.CODE_TAG, "USR-TEC-002",
+                GlobalErrorHandler.SOURCE_TAG, GlobalErrorHandler.SOURCE_HTTP).count()).isEqualTo(1.0);
     }
 
     @Test

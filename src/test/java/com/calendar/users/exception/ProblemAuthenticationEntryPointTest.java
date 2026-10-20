@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ProblemAuthenticationEntryPointTest {
 
     private final ProblemAuthenticationEntryPoint entryPoint = new ProblemAuthenticationEntryPoint(
-            new ProblemResponseWriter(new GlobalErrorHandler(new SimpleMeterRegistry()), ServerCodecConfigurer.create()));
+            new ProblemResponseWriter(new GlobalErrorHandler(new TechnicalErrorCounter(new SimpleMeterRegistry())), ServerCodecConfigurer.create()));
 
     private static MockServerWebExchange exchange() {
         return MockServerWebExchange.from(MockServerHttpRequest.get("/user-service/profile"));

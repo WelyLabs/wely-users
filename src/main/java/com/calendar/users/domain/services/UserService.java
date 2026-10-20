@@ -18,6 +18,7 @@ import com.calendar.users.domain.ports.MediaStore;
 import com.calendar.users.domain.ports.UserRepository;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
+import com.calendar.users.exception.ErrorCodes;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -285,10 +286,10 @@ public class UserService {
                 .defaultIfEmpty(false)
                 .onErrorResume(UserService::isUserNotFound, e -> Mono.just(false))
                 .flatMap(exists -> exists
-                        ? userRepository.markIdentityChecked(identity.userId()).thenReturn(new OrphanSweep(1, 0, 0))
-                        : userRepository.deleteOrphan(identity.userId()).thenReturn(new OrphanSweep(0, 1, 0)))
+                        ? userRepository.markIdentityChecked(identity.userId()).thenReturn(new OrphanSweep(1, 0, List.of()))
+                        : userRepository.deleteOrphan(identity.userId()).thenReturn(new OrphanSweep(0, 1, List.of())))
                 // Keycloak or the database is down: left unchecked, retried on the next pass.
-                .onErrorResume(e -> Mono.just(new OrphanSweep(0, 0, 1)));
+                .onErrorResume(e -> Mono.just(OrphanSweep.failure(ErrorCodes.of(e))));
     }
 
     /** USER_DELETED (410) for a tombstone, USER_NOT_FOUND (404) otherwise. */

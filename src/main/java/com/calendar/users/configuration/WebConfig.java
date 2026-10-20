@@ -2,12 +2,18 @@ package com.calendar.users.configuration;
 
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.method.HandlerTypePredicate;
-import org.springframework.web.reactive.config.EnableWebFlux;
 import org.springframework.web.reactive.config.PathMatchConfigurer;
 import org.springframework.web.reactive.config.WebFluxConfigurer;
 
+/**
+ * Adds this service's path prefix on top of Boot's WebFlux auto-configuration.
+ *
+ * <p>Deliberately not {@code @EnableWebFlux}: that annotation switches Boot's WebFlux
+ * auto-configuration off entirely, and with it every {@code spring.webflux.*} property — the
+ * multipart in-memory limit was silently 256 KB instead of the configured 6 MB — and Boot's
+ * codecs. Boot still applies this {@link WebFluxConfigurer}.
+ */
 @Configuration
-@EnableWebFlux
 public class WebConfig implements WebFluxConfigurer {
 
     @Override

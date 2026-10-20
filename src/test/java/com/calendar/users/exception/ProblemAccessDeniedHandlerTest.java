@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ProblemAccessDeniedHandlerTest {
 
     private final ProblemAccessDeniedHandler handler = new ProblemAccessDeniedHandler(
-            new ProblemResponseWriter(new GlobalErrorHandler(new SimpleMeterRegistry()), ServerCodecConfigurer.create()));
+            new ProblemResponseWriter(new GlobalErrorHandler(new TechnicalErrorCounter(new SimpleMeterRegistry())), ServerCodecConfigurer.create()));
 
     @Test
     void handle_shouldAnswerOurProblemWithTheBearerChallenge_whenTheRequestIsRefused() {

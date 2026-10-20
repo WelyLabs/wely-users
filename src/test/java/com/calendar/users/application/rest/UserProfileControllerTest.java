@@ -6,6 +6,7 @@ import com.calendar.users.domain.services.UserService;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
 import com.calendar.users.exception.GlobalErrorHandler;
+import com.calendar.users.exception.TechnicalErrorCounter;
 import com.calendar.users.exception.TechnicalErrorCode;
 import com.calendar.users.exception.TechnicalException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -49,7 +50,7 @@ class UserProfileControllerTest {
     @BeforeEach
     void setUp() {
         webTestClient = WebTestClient.bindToController(new UserProfileController(userService, new FriendProfileRestMapperImpl()))
-                .controllerAdvice(new GlobalErrorHandler(new SimpleMeterRegistry()))
+                .controllerAdvice(new GlobalErrorHandler(new TechnicalErrorCounter(new SimpleMeterRegistry())))
                 .argumentResolvers(configurer -> configurer.addCustomResolver(new HandlerMethodArgumentResolver() {
                     @Override
                     public boolean supportsParameter(MethodParameter parameter) {

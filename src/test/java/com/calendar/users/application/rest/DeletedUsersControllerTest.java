@@ -2,6 +2,7 @@ package com.calendar.users.application.rest;
 
 import com.calendar.users.domain.services.AccountDeletionService;
 import com.calendar.users.exception.GlobalErrorHandler;
+import com.calendar.users.exception.TechnicalErrorCounter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,7 +39,7 @@ class DeletedUsersControllerTest {
     @BeforeEach
     void setUp() {
         client = WebTestClient.bindToController(new DeletedUsersController(accountDeletionService))
-                .controllerAdvice(new GlobalErrorHandler(new SimpleMeterRegistry()))
+                .controllerAdvice(new GlobalErrorHandler(new TechnicalErrorCounter(new SimpleMeterRegistry())))
                 .validator(new LocalValidatorFactoryBean())
                 .build();
     }

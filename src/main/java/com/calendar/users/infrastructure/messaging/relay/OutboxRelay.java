@@ -1,5 +1,7 @@
 package com.calendar.users.infrastructure.messaging.relay;
 
+import com.calendar.users.exception.GlobalErrorHandler;
+import com.calendar.users.exception.TechnicalErrorCounter;
 import com.calendar.users.infrastructure.messaging.adapters.KafkaOutboxDispatcher;
 import com.calendar.users.infrastructure.persistence.adapters.R2dbcOutboxEventStoreAdapter;
 import com.calendar.users.infrastructure.persistence.models.entities.OutboxEventEntity;
@@ -34,6 +36,7 @@ public class OutboxRelay implements SmartLifecycle {
     private final R2dbcOutboxEventStoreAdapter outboxEventStore;
     private final KafkaOutboxDispatcher dispatcher;
     private final TransactionalOperator transactionalOperator;
+    private final TechnicalErrorCounter technicalErrors;
 
     private final Duration pollInterval;
     private final int batchSize;
@@ -47,6 +50,7 @@ public class OutboxRelay implements SmartLifecycle {
             R2dbcOutboxEventStoreAdapter outboxEventStore,
             KafkaOutboxDispatcher dispatcher,
             TransactionalOperator transactionalOperator,
+            TechnicalErrorCounter technicalErrors,
             @Value("${app.outbox.relay.poll-interval:2s}") Duration pollInterval,
             @Value("${app.outbox.relay.batch-size:100}") int batchSize,
             @Value("${app.outbox.relay.max-attempts:5}") int maxAttempts,
@@ -55,6 +59,7 @@ public class OutboxRelay implements SmartLifecycle {
         this.outboxEventStore = outboxEventStore;
         this.dispatcher = dispatcher;
         this.transactionalOperator = transactionalOperator;
+        this.technicalErrors = technicalErrors;
         this.pollInterval = pollInterval;
         this.batchSize = batchSize;
         this.maxAttempts = maxAttempts;
@@ -100,13 +105,17 @@ public class OutboxRelay implements SmartLifecycle {
         return Mono.defer(pass)
                 .onErrorResume(error -> {
                     log.error("Outbox {} pass failed; next attempt in {}", name, period, error);
+                    technicalErrors.count(error, GlobalErrorHandler.SOURCE_OUTBOX);
                     return Mono.just(0L);
                 })
                 .repeatWhen(passes -> passes.delayElements(period))
                 .subscribe(
                         count -> {
                         },
-                        error -> log.error("Outbox {} loop terminated and will not restart", name, error));
+                        error -> {
+                            log.error("Outbox {} loop terminated and will not restart", name, error);
+                            technicalErrors.count(error, GlobalErrorHandler.SOURCE_OUTBOX);
+                        });
     }
 
     /** One pass: claim, send, mark. Returns how many events were published. */
@@ -155,6 +164,7 @@ public class OutboxRelay implements SmartLifecycle {
         OutboxEventEntity event = pass.failure().event();
         Throwable error = pass.failure().error();
         int attempt = event.getAttempts() + 1;
+        technicalErrors.count(error, GlobalErrorHandler.SOURCE_OUTBOX);
 
         if (attempt >= maxAttempts) {
             log.error("Outbox event {} ({}) failed {} times and will no longer be retried: {}",
