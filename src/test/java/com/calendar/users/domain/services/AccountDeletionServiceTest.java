@@ -11,6 +11,7 @@ import com.calendar.users.domain.ports.AccountDeletionRepository;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.MediaStore;
 import com.calendar.users.domain.ports.UserRepository;
+import com.calendar.users.domain.ports.UsersActivity;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
 import com.calendar.users.exception.TechnicalErrorCode;
@@ -39,6 +40,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -56,6 +58,7 @@ class AccountDeletionServiceTest {
     @Mock private AccountDeletionRepository jobs;
     @Mock private IdentityProvider identityProvider;
     @Mock private MediaStore mediaStore;
+    @Mock private UsersActivity activity;
 
     private final AccountDeletionPolicy policy = policy(true);
 
@@ -66,7 +69,7 @@ class AccountDeletionServiceTest {
 
     private AccountDeletionService switchedOff() {
         return new AccountDeletionService(users, jobs, identityProvider, mediaStore, policy(false),
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                Clock.fixed(NOW, ZoneOffset.UTC), activity);
     }
 
     private AccountDeletionService service;
@@ -74,7 +77,7 @@ class AccountDeletionServiceTest {
     @BeforeEach
     void setUp() {
         service = new AccountDeletionService(users, jobs, identityProvider, mediaStore, policy,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                Clock.fixed(NOW, ZoneOffset.UTC), activity);
     }
 
     private static boolean isBusiness(Throwable error, BusinessErrorCode code) {
@@ -94,6 +97,8 @@ class AccountDeletionServiceTest {
                 .verify(Duration.ofSeconds(10));
 
         verifyNoInteractions(users, jobs, identityProvider, mediaStore);
+
+        verify(activity, never()).deletionRequested();
     }
 
     @Test
@@ -174,6 +179,8 @@ class AccountDeletionServiceTest {
         StepVerifier.create(service.requestDeletion(USER, SIGNED_IN)).expectComplete().verify(Duration.ofSeconds(10));
 
         verify(users).eraseAccount(USER, Instant.parse("2026-10-15T14:03:27.123456Z"));
+
+        verify(activity).deletionRequested();
     }
 
     @Test
@@ -183,6 +190,9 @@ class AccountDeletionServiceTest {
         when(users.eraseAccount(eq(USER), any())).thenReturn(Mono.just(AccountErasure.ALREADY_ERASED));
 
         StepVerifier.create(service.requestDeletion(USER, SIGNED_IN)).expectComplete().verify(Duration.ofSeconds(10));
+
+        // The request that erased it first was the one counted.
+        verify(activity, never()).deletionRequested();
     }
 
     @Test
@@ -193,6 +203,8 @@ class AccountDeletionServiceTest {
         StepVerifier.create(service.requestDeletion(USER, NOW.minus(Duration.ofHours(1)))).expectComplete().verify(Duration.ofSeconds(10));
 
         verify(users, never()).eraseAccount(any(), any());
+
+        verify(activity, never()).deletionRequested();
     }
 
     @Test
@@ -203,6 +215,8 @@ class AccountDeletionServiceTest {
         StepVerifier.create(service.requestDeletion(USER, SIGNED_IN))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
                 .verify(Duration.ofSeconds(10));
+
+        verify(activity, never()).deletionRequested();
     }
 
     @Test
@@ -214,6 +228,8 @@ class AccountDeletionServiceTest {
         StepVerifier.create(service.requestDeletion(USER, SIGNED_IN))
                 .expectError(TechnicalException.class)
                 .verify(Duration.ofSeconds(10));
+
+        verify(activity, never()).deletionRequested();
     }
 
     @Test
@@ -230,7 +246,7 @@ class AccountDeletionServiceTest {
     void requestDeletion_shouldNotReadTheClockBeforeSubscription_whenBuilt() {
         Clock clock = mock(Clock.class);
         AccountDeletionService lazy = new AccountDeletionService(users, jobs, identityProvider, mediaStore,
-                policy, clock);
+                policy, clock, activity);
 
         lazy.requestDeletion(USER, SIGNED_IN);
 
@@ -363,6 +379,8 @@ class AccountDeletionServiceTest {
 
         verify(jobs).markIdentityDeleted(USER);
         verify(jobs, never()).markMediaDeleted(any());
+
+        verify(activity, never()).deletionCompleted();
     }
 
     @Test
@@ -411,6 +429,8 @@ class AccountDeletionServiceTest {
         StepVerifier.create(service.processDueDeletions(20))
                 .expectNext(new DeletionProgress(USER, DeletionProgress.Status.COMPLETED, 0, null))
                 .expectComplete().verify(Duration.ofSeconds(10));
+
+        verify(activity).deletionCompleted();
     }
 
     @Test
@@ -442,6 +462,8 @@ class AccountDeletionServiceTest {
         verify(mediaStore).deletePrefix(AVATARS);
         verify(jobs).markMediaDeleted(USER);
         verify(jobs, never()).markIdentityDeleted(any());
+
+        verify(activity, never()).deletionCompleted();
     }
 
     @Test
@@ -541,6 +563,9 @@ class AccountDeletionServiceTest {
                 .expectNext(new DeletionProgress(USER, DeletionProgress.Status.FAILED, 1, "USR-TEC-002"))
                 .expectNext(new DeletionProgress(other, DeletionProgress.Status.COMPLETED, 0, null))
                 .expectComplete().verify(Duration.ofSeconds(10));
+
+        // The completed job only, not the failed one.
+        verify(activity, times(1)).deletionCompleted();
     }
 
     @Test

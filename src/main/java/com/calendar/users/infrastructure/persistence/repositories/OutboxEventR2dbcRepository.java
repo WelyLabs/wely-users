@@ -43,6 +43,9 @@ public interface OutboxEventR2dbcRepository extends ReactiveCrudRepository<Outbo
 
     Mono<Long> deleteByPublishedAtBefore(OffsetDateTime cutoff);
 
+    /** Rows not sent yet, parked ones included; served by the partial index idx_outbox_event_pending. */
+    Mono<Long> countByPublishedAtIsNull();
+
     /** Pending, parked and published alike; a row the relay holds locked is waited for, so it goes out first. */
     @Modifying
     @Query("DELETE FROM outbox_event WHERE aggregate_id = :aggregateId AND type <> :keptType")

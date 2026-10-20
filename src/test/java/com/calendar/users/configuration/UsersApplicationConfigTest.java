@@ -10,6 +10,7 @@ import com.calendar.users.domain.ports.FriendshipChecker;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.MediaStore;
 import com.calendar.users.domain.ports.UserRepository;
+import com.calendar.users.domain.ports.UsersActivity;
 import com.calendar.users.domain.services.AccountDeletionService;
 import com.calendar.users.domain.services.UserService;
 import org.junit.jupiter.api.Test;
@@ -115,7 +116,7 @@ class UsersApplicationConfigTest {
                 mock(AccountDeletionRepository.class), mock(IdentityProvider.class), mock(MediaStore.class),
                 config.accountDeletionPolicy(true, "", Duration.ZERO, Duration.ZERO, Duration.ZERO,
                         Duration.ZERO, Duration.ZERO),
-                Clock.systemUTC());
+                Clock.systemUTC(), mock(UsersActivity.class));
 
         assertThat(service).isNotNull();
         assertThat(AccountDeletionService.class.getAnnotations()).isEmpty();
@@ -124,7 +125,7 @@ class UsersApplicationConfigTest {
     @Test
     void userService_shouldBeAPlainObjectBuiltFromThePorts_whenWired() {
         UserService service = config.userService(mock(UserRepository.class), mock(IdentityProvider.class),
-                mock(MediaStore.class), mock(FriendshipChecker.class), Clock.systemUTC());
+                mock(MediaStore.class), mock(FriendshipChecker.class), Clock.systemUTC(), mock(UsersActivity.class));
 
         assertThat(service).isNotNull();
         assertThat(UserService.class.getAnnotations()).isEmpty();

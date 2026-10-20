@@ -31,6 +31,7 @@ import org.mockito.ArgumentCaptor;
 import com.calendar.users.domain.models.ProfileUpdate;
 import org.mockito.InOrder;
 import com.calendar.users.domain.ports.UserRepository;
+import com.calendar.users.domain.ports.UsersActivity;
 import com.calendar.users.domain.models.IdentityToCheck;
 import com.calendar.users.domain.models.OrphanSweep;
 import reactor.core.publisher.Flux;
@@ -70,6 +71,9 @@ class UserServiceTest {
 
         @Mock
         private FriendshipChecker friendshipChecker;
+
+        @Mock
+        private UsersActivity usersActivity;
 
 
         @InjectMocks
@@ -166,6 +170,8 @@ class UserServiceTest {
                 // Bounded: ten attempts, then it gives up. No save is attempted.
                 verify(userRepository, times(10)).existsByUserNameAndHashtag(eq("léa"), anyInt());
                 verify(userRepository, never()).save(any(), anyString());
+
+                verify(usersActivity, never()).userSignedUp();
         }
 
         @Test
@@ -186,6 +192,8 @@ class UserServiceTest {
 
                 verify(userRepository).save(argThat(user -> user.userName().equals("léa")
                                 && user.firstName().equals("Léa") && user.lastName().equals("Martin")), eq(kcId));
+
+                verify(usersActivity).userSignedUp();
         }
 
         @Test
@@ -198,6 +206,9 @@ class UserServiceTest {
                                 .expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(userRepository, never()).save(any(), anyString());
+
+                // A retried provisioning is not a new signup.
+                verify(usersActivity, never()).userSignedUp();
         }
 
         @Test
@@ -213,6 +224,9 @@ class UserServiceTest {
                 StepVerifier.create(userService.provisionUser("kc-1", new IdentityUser("léa", "Léa", "Martin")))
                                 .expectNext(winnerId)
                                 .expectComplete().verify(Duration.ofSeconds(10));
+
+                // Counted once, by the call that created the user.
+                verify(usersActivity, never()).userSignedUp();
         }
 
         @Test
@@ -242,6 +256,8 @@ class UserServiceTest {
                                 .verify(Duration.ofSeconds(10));
 
                 verify(userRepository, times(1)).findIdByKeycloakId("kc-1");
+
+                verify(usersActivity, never()).userSignedUp();
         }
 
         private static final LocalDateTime CUTOFF = LocalDateTime.of(2026, 10, 11, 1, 0);
@@ -1011,7 +1027,7 @@ class UserServiceTest {
         private static final Registration REGISTRATION = new Registration(LocalDate.of(1995, 3, 12));
 
         private UserService serviceOn18October() {
-                return new UserService(userRepository, identityProvider, mediaStore, friendshipChecker, TODAY);
+                return new UserService(userRepository, identityProvider, mediaStore, friendshipChecker, TODAY, usersActivity);
         }
 
         @Test

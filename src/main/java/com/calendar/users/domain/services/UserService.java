@@ -16,6 +16,7 @@ import com.calendar.users.domain.ports.FriendshipChecker;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.MediaStore;
 import com.calendar.users.domain.ports.UserRepository;
+import com.calendar.users.domain.ports.UsersActivity;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
 import com.calendar.users.exception.ErrorCodes;
@@ -44,14 +45,16 @@ public class UserService {
     private final MediaStore mediaStore;
     private final FriendshipChecker friendshipChecker;
     private final Clock clock;
+    private final UsersActivity activity;
 
     public UserService(UserRepository userRepository, IdentityProvider identityProvider, MediaStore mediaStore,
-                       FriendshipChecker friendshipChecker, Clock clock) {
+                       FriendshipChecker friendshipChecker, Clock clock, UsersActivity activity) {
         this.userRepository = userRepository;
         this.identityProvider = identityProvider;
         this.mediaStore = mediaStore;
         this.friendshipChecker = friendshipChecker;
         this.clock = clock;
+        this.activity = activity;
     }
 
     /** 410 USR-BUS-012 for a deleted account, 404 for an unknown one. */
@@ -266,7 +269,9 @@ public class UserService {
                         null,
                         LocalDateTime.now()))
                 .flatMap(newUser -> userRepository.save(newUser, keycloakId))
-                .map(BusinessUser::id);
+                .map(BusinessUser::id)
+                // Only once the row is saved: the loser of a concurrent provisioning fails above.
+                .doOnNext(created -> activity.userSignedUp());
     }
 
     /**

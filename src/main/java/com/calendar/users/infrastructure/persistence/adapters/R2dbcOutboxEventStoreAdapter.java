@@ -55,6 +55,11 @@ public class R2dbcOutboxEventStoreAdapter {
         return outboxEventRepository.recordFailure(id, truncate(error));
     }
 
+    /** Events not published yet, those the relay gave up on included: the outbox backlog. */
+    public Mono<Long> countPending() {
+        return outboxEventRepository.countByPublishedAtIsNull();
+    }
+
     public Mono<Long> purgePublishedBefore(Instant cutoff) {
         return outboxEventRepository.deleteByPublishedAtBefore(OffsetDateTime.ofInstant(cutoff, ZoneOffset.UTC));
     }

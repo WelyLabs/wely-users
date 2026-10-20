@@ -180,6 +180,20 @@ class R2dbcOutboxEventStoreAdapterIntegrationTest {
     }
 
     @Test
+    @DisplayName("the backlog counts every unpublished event, parked ones included, and no published one")
+    void countPending_shouldCountUnpublishedEventsOnly() {
+        long published = append("USER_CREATED", "{\"n\":1}");
+        long parked = append("USER_CREATED", "{\"n\":2}");
+        append("USER_CREATED", "{\"n\":3}");
+        adapter.markPublished(List.of(published)).block();
+        for (int attempt = 0; attempt < 5; attempt++) {
+            adapter.recordFailure(parked, "refused").block();
+        }
+
+        assertThat(adapter.countPending().block()).isEqualTo(2L);
+    }
+
+    @Test
     @DisplayName("an event that used up its attempts stops being claimed and stays in the table")
     void claimPending_shouldSkipExhaustedEvents() {
         // The poison message. Read in id order, it would otherwise be first on every pass

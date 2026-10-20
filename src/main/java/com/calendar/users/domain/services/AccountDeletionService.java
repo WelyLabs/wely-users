@@ -12,6 +12,7 @@ import com.calendar.users.domain.ports.AccountDeletionRepository;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.MediaStore;
 import com.calendar.users.domain.ports.UserRepository;
+import com.calendar.users.domain.ports.UsersActivity;
 import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
 import com.calendar.users.exception.ErrorCodes;
@@ -36,16 +37,18 @@ public class AccountDeletionService {
     private final MediaStore mediaStore;
     private final AccountDeletionPolicy policy;
     private final Clock clock;
+    private final UsersActivity activity;
 
     public AccountDeletionService(UserRepository users, AccountDeletionRepository jobs,
                                   IdentityProvider identityProvider, MediaStore mediaStore,
-                                  AccountDeletionPolicy policy, Clock clock) {
+                                  AccountDeletionPolicy policy, Clock clock, UsersActivity activity) {
         this.users = users;
         this.jobs = jobs;
         this.identityProvider = identityProvider;
         this.mediaStore = mediaStore;
         this.policy = policy;
         this.clock = clock;
+        this.activity = activity;
     }
 
     /** 403 while deletion is off, false for a protected account, 410 for a tombstone, 404 for an unknown id. */
@@ -88,9 +91,12 @@ public class AccountDeletionService {
             return Mono.error(new BusinessException(BusinessErrorCode.REAUTHENTICATION_REQUIRED));
         }
         return users.eraseAccount(userId, now.truncatedTo(ChronoUnit.MICROS))
-                .flatMap(erasure -> erasure == AccountErasure.UNKNOWN_USER
-                        ? Mono.<Void>error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND))
-                        : Mono.<Void>empty());
+                .flatMap(erasure -> switch (erasure) {
+                    case UNKNOWN_USER -> Mono.<Void>error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND));
+                    // ALREADY_ERASED: a concurrent request erased it first and was counted.
+                    case ERASED -> Mono.<Void>fromRunnable(activity::deletionRequested);
+                    case ALREADY_ERASED -> Mono.<Void>empty();
+                });
     }
 
     /** Those of these ids whose account was deleted. */
@@ -125,6 +131,11 @@ public class AccountDeletionService {
                     return deleteIdentity(job)
                             .flatMap(identity -> purgeMedia(job, now)
                                     .flatMap(media -> settle(job, now, identity, media)));
+                })
+                .doOnNext(progress -> {
+                    if (progress.status() == DeletionProgress.Status.COMPLETED) {
+                        activity.deletionCompleted();
+                    }
                 })
                 .onErrorResume(error -> Mono.just(
                         new DeletionProgress(job.userId(), DeletionProgress.Status.FAILED, job.attempts() + 1,

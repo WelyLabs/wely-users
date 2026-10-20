@@ -6,6 +6,7 @@ import com.calendar.users.domain.ports.FriendshipChecker;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.MediaStore;
 import com.calendar.users.domain.ports.UserRepository;
+import com.calendar.users.domain.ports.UsersActivity;
 import com.calendar.users.domain.services.AccountDeletionService;
 import com.calendar.users.domain.services.UserService;
 import lombok.extern.slf4j.Slf4j;
@@ -26,8 +27,9 @@ public class UsersApplicationConfig {
 
     @Bean
     public UserService userService(UserRepository userRepository, IdentityProvider identityProvider,
-                                   MediaStore mediaStore, FriendshipChecker friendshipChecker, Clock clock) {
-        return new UserService(userRepository, identityProvider, mediaStore, friendshipChecker, clock);
+                                   MediaStore mediaStore, FriendshipChecker friendshipChecker, Clock clock,
+                                   UsersActivity usersActivity) {
+        return new UserService(userRepository, identityProvider, mediaStore, friendshipChecker, clock, usersActivity);
     }
 
     @Bean
@@ -54,9 +56,10 @@ public class UsersApplicationConfig {
     public AccountDeletionService accountDeletionService(UserRepository userRepository,
                                                          AccountDeletionRepository accountDeletionRepository,
                                                          IdentityProvider identityProvider, MediaStore mediaStore,
-                                                         AccountDeletionPolicy accountDeletionPolicy, Clock clock) {
+                                                         AccountDeletionPolicy accountDeletionPolicy, Clock clock,
+                                                         UsersActivity usersActivity) {
         return new AccountDeletionService(userRepository, accountDeletionRepository, identityProvider, mediaStore,
-                accountDeletionPolicy, clock);
+                accountDeletionPolicy, clock, usersActivity);
     }
 
     /** Comma- or space-separated UUIDs; an invalid entry fails the startup rather than leaving an account unprotected. */

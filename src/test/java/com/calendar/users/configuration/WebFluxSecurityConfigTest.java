@@ -12,6 +12,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
@@ -71,6 +72,9 @@ class WebFluxSecurityConfigTest {
 
     @Autowired
     private WebFluxSecurityConfig config;
+
+    @Value("${local.server.port}")
+    private int port;
 
     @MockitoBean
     private ReactiveJwtDecoder jwtDecoder;
@@ -346,6 +350,26 @@ class WebFluxSecurityConfigTest {
                         .contains("wely_errors_technical_total{")
                         .contains("code=\"USR-TEC-002\"")
                         .contains("source=\"http\""));
+    }
+
+    @Test
+    @DisplayName("Prometheus serves the latency buckets and the product metrics the dashboards read")
+    void apiHttpSecurity_shouldExposeLatencyBucketsAndProductMetrics() {
+        // A real server: the HTTP observation is set on the server's handler, not on a context-bound client.
+        WebTestClient server = WebTestClient.bindToServer()
+                .baseUrl("http://localhost:" + port)
+                .responseTimeout(Duration.ofSeconds(30))
+                .build();
+        server.get().uri("/actuator/health/liveness").exchange().expectStatus().isOk();
+
+        server.get().uri("/actuator/prometheus")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(String.class).value(body -> assertThat(body)
+                        .containsPattern("http_server_requests_seconds_bucket\\{[^}]*le=\"0\\.25\"")
+                        .contains("wely_users_signups_total")
+                        .contains("wely_users_deletions_total{stage=\"requested\"}")
+                        .contains("wely_users_deletions_total{stage=\"completed\"}"));
     }
 
     @Test
