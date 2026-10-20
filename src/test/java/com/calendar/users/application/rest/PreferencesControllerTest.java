@@ -18,6 +18,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import java.time.Duration;
 import java.util.UUID;
 
 import static org.mockito.Mockito.when;
@@ -47,7 +48,7 @@ class PreferencesControllerTest {
 
         StepVerifier.create(controller.preferences(jwt))
                 .expectNext(new PreferencesResponse(Theme.DARK))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -57,7 +58,7 @@ class PreferencesControllerTest {
 
         StepVerifier.create(controller.updatePreferences(jwt, new PreferencesRequest(Theme.LIGHT)))
                 .expectNext(new PreferencesResponse(Theme.LIGHT))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -68,7 +69,7 @@ class PreferencesControllerTest {
         StepVerifier.create(controller.updatePreferences(jwt, new PreferencesRequest(Theme.DARK)))
                 .expectErrorMatches(error -> error instanceof BusinessException exception
                         && exception.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -78,7 +79,7 @@ class PreferencesControllerTest {
         StepVerifier.create(controller.preferences(jwt))
                 .expectErrorMatches(error -> error instanceof BusinessException exception
                         && exception.getErrorCode() == BusinessErrorCode.USER_DELETED)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -89,6 +90,6 @@ class PreferencesControllerTest {
         StepVerifier.create(controller.updatePreferences(jwt, new PreferencesRequest(Theme.DARK)))
                 .expectErrorMatches(error -> error instanceof BusinessException exception
                         && exception.getErrorCode() == BusinessErrorCode.USER_DELETED)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 }

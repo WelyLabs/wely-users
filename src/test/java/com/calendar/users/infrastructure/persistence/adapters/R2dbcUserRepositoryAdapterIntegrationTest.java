@@ -150,7 +150,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
                     assertThat(((BusinessException) error).getErrorCode())
                             .isEqualTo(BusinessErrorCode.USER_ALREADY_EXISTS);
                 })
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -161,7 +161,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
 
         StepVerifier.create(adapter.save(aUser("alice", 2222), "keycloak-other-alice"))
                 .expectNextCount(1)
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -174,7 +174,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
 
         StepVerifier.create(adapter.save(aUser("bob", 2222), "keycloak-alice"))
                 .expectError(BusinessException.class)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -184,7 +184,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
 
         StepVerifier.create(adapter.findIdByKeycloakId("keycloak-alice"))
                 .expectNext(saved.id())
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -192,7 +192,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     void findIdByKeycloakId_shouldBeEmptyForAnUnknownSubject() {
         // UserService reads this emptiness as "provision the user", so an accidental null or a
         // zero UUID would silently stop just-in-time provisioning.
-        StepVerifier.create(adapter.findIdByKeycloakId("nobody")).verifyComplete();
+        StepVerifier.create(adapter.findIdByKeycloakId("nobody")).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -201,11 +201,11 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         adapter.save(aUser("alice", 1111), "keycloak-alice").block();
 
         StepVerifier.create(adapter.existsByUserNameAndHashtag("alice", 1111))
-                .expectNext(true).verifyComplete();
+                .expectNext(true).expectComplete().verify(Duration.ofSeconds(10));
         StepVerifier.create(adapter.existsByUserNameAndHashtag("alice", 2222))
-                .expectNext(false).verifyComplete();
+                .expectNext(false).expectComplete().verify(Duration.ofSeconds(10));
         StepVerifier.create(adapter.existsByUserNameAndHashtag("bob", 1111))
-                .expectNext(false).verifyComplete();
+                .expectNext(false).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -218,13 +218,13 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
                     assertThat(found.userName()).isEqualTo("alice");
                     assertThat(found.hashtag()).isEqualTo(1111);
                 })
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
     @DisplayName("an unknown id yields nothing")
     void getBusinessUserByUserId_shouldBeEmptyForAnUnknownId() {
-        StepVerifier.create(adapter.getBusinessUserByUserId(UUID.randomUUID())).verifyComplete();
+        StepVerifier.create(adapter.getBusinessUserByUserId(UUID.randomUUID())).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -265,7 +265,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         try {
             StepVerifier.create(adapter.save(aUser("alice", 1111), "keycloak-alice"))
                     .expectError()
-                    .verify();
+                    .verify(Duration.ofSeconds(10));
 
             assertThat(count("app_user")).isZero();
             assertThat(count("outbox_event")).isZero();
@@ -281,7 +281,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
 
         StepVerifier.create(adapter.save(aUser("alice", 1111), "keycloak-bob"))
                 .expectError(BusinessException.class)
-                .verify();
+                .verify(Duration.ofSeconds(10));
 
         assertThat(count("app_user")).isEqualTo(1L);
         assertThat(count("outbox_event")).isEqualTo(1L);
@@ -307,7 +307,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
                     assertThat(identity.keycloakId()).isEqualTo("kc-older");
                 })
                 .assertNext(identity -> assertThat(identity.userId()).isEqualTo(old.id()))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -318,7 +318,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
 
         StepVerifier.create(adapter.findIdentitiesToCheck(LocalDateTime.now(), 1))
                 .expectNextCount(1)
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -372,7 +372,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         assertThat(updated.firstName()).isEqualTo("Cam");
         assertThat(updated.hashtag()).isEqualTo(4321);
         assertThat(outboxTypes()).isEqualTo("USER_CREATED,USER_MODIFIED");
-        StepVerifier.create(adapter.findKeycloakIdByUserId(saved.id())).expectNext("kc-camille").verifyComplete();
+        StepVerifier.create(adapter.findKeycloakIdByUserId(saved.id())).expectNext("kc-camille").expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -385,7 +385,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
                         null, camille.joinedDate()), "camille"))
                 .expectErrorMatches(error -> error instanceof BusinessException business
                         && business.getErrorCode() == BusinessErrorCode.USERNAME_TAKEN)
-                .verify();
+                .verify(Duration.ofSeconds(10));
 
         assertThat(outboxTypes()).isEqualTo("USER_CREATED,USER_CREATED");
     }
@@ -425,7 +425,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     void completeRegistration_shouldFailAsNotFound_whenTheUserIsUnknown() {
         StepVerifier.create(adapter.completeRegistration(UUID.randomUUID(), new Registration(LocalDate.of(1995, 3, 12))))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
-                .verify();
+                .verify(Duration.ofSeconds(10));
 
         assertThat(count("outbox_event")).isZero();
     }
@@ -450,7 +450,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         StepVerifier.create(databaseClient.sql("UPDATE app_user SET birth_date = DATE '1995-03-12' WHERE id = :id")
                         .bind("id", user.id()).then())
                 .expectError()
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -458,13 +458,13 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     void updateAbout_shouldRoundTripThroughTheTextArray() {
         BusinessUser user = savedAgo("about", 5555, "kc-about", 0);
 
-        StepVerifier.create(adapter.findAbout(user.id())).expectNext(UserAbout.EMPTY).verifyComplete();
+        StepVerifier.create(adapter.findAbout(user.id())).expectNext(UserAbout.EMPTY).expectComplete().verify(Duration.ofSeconds(10));
 
         adapter.updateAbout(user.id(), new UserAbout("Partante", List.of("Rando", "Jeux de société"))).block();
 
         StepVerifier.create(adapter.findAbout(user.id()))
                 .expectNext(new UserAbout("Partante", List.of("Rando", "Jeux de société")))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -472,13 +472,13 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     void updatePreferences_shouldRoundTripTheTheme() {
         BusinessUser user = savedAgo("prefs", 6666, "kc-prefs", 0);
 
-        StepVerifier.create(adapter.findPreferences(user.id())).expectNext(UserPreferences.DEFAULT).verifyComplete();
+        StepVerifier.create(adapter.findPreferences(user.id())).expectNext(UserPreferences.DEFAULT).expectComplete().verify(Duration.ofSeconds(10));
 
         adapter.updatePreferences(user.id(), new UserPreferences(Theme.DARK)).block();
 
         StepVerifier.create(adapter.findPreferences(user.id()))
                 .expectNext(new UserPreferences(Theme.DARK))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -489,7 +489,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         StepVerifier.create(databaseClient.sql("UPDATE app_user SET theme = 'PINK' WHERE id = :id")
                         .bind("id", user.id()).then())
                 .expectError()
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -612,7 +612,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
 
         StepVerifier.create(adapter.eraseAccount(user.id(), deletedAt))
                 .expectNext(AccountErasure.ERASED)
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
 
         Map<String, Object> row = rowOf(user.id());
         assertThat(row.get("keycloak_id")).isEqualTo("deleted:" + user.id());
@@ -711,7 +711,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         databaseClient.sql("ALTER TABLE outbox_event ADD CONSTRAINT refuse_deleted CHECK (type <> 'USER_DELETED') NOT VALID")
                 .then().block();
         try {
-            StepVerifier.create(adapter.eraseAccount(user.id(), now())).expectError().verify();
+            StepVerifier.create(adapter.eraseAccount(user.id(), now())).expectError().verify(Duration.ofSeconds(10));
 
             assertThat(rowOf(user.id()).get("user_name")).isEqualTo("alice");
             assertThat(rowOf(user.id()).get("deleted_at")).isNull();
@@ -746,7 +746,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
 
         StepVerifier.create(adapter.eraseAccount(user.id(), now()))
                 .expectNext(AccountErasure.ALREADY_ERASED)
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
 
         assertThat(eventsOfType("USER_DELETED")).isEqualTo(1L);
     }
@@ -755,7 +755,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     void eraseAccount_shouldReturnUnknownUser_whenNoRowExists() {
         StepVerifier.create(adapter.eraseAccount(UUID.randomUUID(), now()))
                 .expectNext(AccountErasure.UNKNOWN_USER)
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
 
         assertThat(count("outbox_event")).isZero();
     }
@@ -768,7 +768,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         StepVerifier.create(databaseClient.sql("UPDATE app_user SET first_name = 'Alice' WHERE id = :id")
                         .bind("id", user.id()).then())
                 .expectError()
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -779,7 +779,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         StepVerifier.create(databaseClient.sql("UPDATE account_deletion SET identity_deleted_at = now() WHERE user_id = :id")
                         .bind("id", user.id()).then())
                 .expectError()
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -788,9 +788,9 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         BusinessUser user = adapter.save(aUser("Alice", 1111), "kc-alice").block();
         adapter.eraseAccount(user.id(), now()).block();
 
-        StepVerifier.create(adapter.existsByUserNameAndHashtag("alice", 1111)).expectNext(true).verifyComplete();
-        StepVerifier.create(adapter.existsByUserNameAndHashtag("Alice", 1111)).expectNext(true).verifyComplete();
-        StepVerifier.create(adapter.existsByUserNameAndHashtag("alice", 2222)).expectNext(false).verifyComplete();
+        StepVerifier.create(adapter.existsByUserNameAndHashtag("alice", 1111)).expectNext(true).expectComplete().verify(Duration.ofSeconds(10));
+        StepVerifier.create(adapter.existsByUserNameAndHashtag("Alice", 1111)).expectNext(true).expectComplete().verify(Duration.ofSeconds(10));
+        StepVerifier.create(adapter.existsByUserNameAndHashtag("alice", 2222)).expectNext(false).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -803,7 +803,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         StepVerifier.create(adapter.updateProfile(new BusinessUser(camille.id(), "lea", 4321, "Cam", "Dupont",
                         null, camille.joinedDate()), "camille"))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USERNAME_TAKEN))
-                .verify();
+                .verify(Duration.ofSeconds(10));
 
         assertThat(rowOf(camille.id()).get("user_name")).isEqualTo("camille");
         assertThat(eventsOfType("USER_MODIFIED")).isZero();
@@ -819,7 +819,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         StepVerifier.create(adapter.updateProfile(new BusinessUser(legacy.id(), "Lea", 4321, "Léa", "Martin",
                         null, legacy.joinedDate()), "Lea"))
                 .expectNextMatches(user -> user.firstName().equals("Léa"))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -829,7 +829,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         StepVerifier.create(adapter.updateProfile(new BusinessUser(user.id(), "alice", 1111, "A", "B", null,
                         user.joinedDate()), "alice"))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
-                .verify();
+                .verify(Duration.ofSeconds(10));
         assertThat(eventsOfType("USER_MODIFIED")).isZero();
     }
 
@@ -839,7 +839,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
 
         StepVerifier.create(adapter.updatePicture(user.id(), "avatars/" + user.id() + "/late.jpg"))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
-                .verify();
+                .verify(Duration.ofSeconds(10));
         assertThat(eventsOfType("USER_MODIFIED")).isZero();
     }
 
@@ -849,8 +849,8 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
 
         StepVerifier.create(adapter.updateAbout(user.id(), new UserAbout("Back", List.of())))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
-                .verify();
-        StepVerifier.create(adapter.findAbout(user.id())).verifyComplete();
+                .verify(Duration.ofSeconds(10));
+        StepVerifier.create(adapter.findAbout(user.id())).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -859,16 +859,16 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
 
         StepVerifier.create(adapter.updatePreferences(user.id(), new UserPreferences(Theme.DARK)))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
-                .verify();
-        StepVerifier.create(adapter.findPreferences(user.id())).verifyComplete();
+                .verify(Duration.ofSeconds(10));
+        StepVerifier.create(adapter.findPreferences(user.id())).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
     void getBusinessUserByUserId_shouldBeEmpty_whenTheUserIsATombstone() {
         BusinessUser user = aTombstone();
 
-        StepVerifier.create(adapter.getBusinessUserByUserId(user.id())).verifyComplete();
-        StepVerifier.create(adapter.findKeycloakIdByUserId(user.id())).verifyComplete();
+        StepVerifier.create(adapter.getBusinessUserByUserId(user.id())).expectComplete().verify(Duration.ofSeconds(10));
+        StepVerifier.create(adapter.findKeycloakIdByUserId(user.id())).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -876,8 +876,8 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     void findIdByKeycloakId_shouldBeEmpty_forTheOriginalAndThePlaceholderIds() {
         BusinessUser user = aTombstone();
 
-        StepVerifier.create(adapter.findIdByKeycloakId("kc-alice")).verifyComplete();
-        StepVerifier.create(adapter.findIdByKeycloakId("deleted:" + user.id())).verifyComplete();
+        StepVerifier.create(adapter.findIdByKeycloakId("kc-alice")).expectComplete().verify(Duration.ofSeconds(10));
+        StepVerifier.create(adapter.findIdByKeycloakId("deleted:" + user.id())).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -888,7 +888,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         databaseClient.sql("UPDATE app_user SET identity_checked_at = NULL WHERE id = :id")
                 .bind("id", user.id()).then().block();
 
-        StepVerifier.create(adapter.findIdentitiesToCheck(LocalDateTime.now().plusDays(1), 10)).verifyComplete();
+        StepVerifier.create(adapter.findIdentitiesToCheck(LocalDateTime.now().plusDays(1), 10)).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -899,7 +899,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
 
         StepVerifier.create(adapter.findPictures(List.of(gone.id(), live.id())))
                 .assertNext(picture -> assertThat(picture.userId()).isEqualTo(live.id()))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -907,9 +907,9 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         BusinessUser live = adapter.save(aUser("bob", 2222), "kc-bob").block();
         BusinessUser gone = aTombstone();
 
-        StepVerifier.create(adapter.findAccountState(live.id())).expectNext(AccountState.ACTIVE).verifyComplete();
-        StepVerifier.create(adapter.findAccountState(gone.id())).expectNext(AccountState.DELETED).verifyComplete();
-        StepVerifier.create(adapter.findAccountState(UUID.randomUUID())).verifyComplete();
+        StepVerifier.create(adapter.findAccountState(live.id())).expectNext(AccountState.ACTIVE).expectComplete().verify(Duration.ofSeconds(10));
+        StepVerifier.create(adapter.findAccountState(gone.id())).expectNext(AccountState.DELETED).expectComplete().verify(Duration.ofSeconds(10));
+        StepVerifier.create(adapter.findAccountState(UUID.randomUUID())).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -946,6 +946,6 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
 
         StepVerifier.create(adapter.findDeletedIds(List.of(live.id(), gone.id(), UUID.randomUUID())))
                 .expectNext(gone.id())
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 }

@@ -91,7 +91,7 @@ class AccountDeletionServiceTest {
     void requestDeletion_shouldRefuse_whenDeletionIsDisabled() {
         StepVerifier.create(switchedOff().requestDeletion(USER, SIGNED_IN))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.ACCOUNT_DELETION_DISABLED))
-                .verify();
+                .verify(Duration.ofSeconds(10));
 
         verifyNoInteractions(users, jobs, identityProvider, mediaStore);
     }
@@ -100,14 +100,14 @@ class AccountDeletionServiceTest {
     void requestDeletion_shouldCheckTheSwitchBeforeTheDemoGuard_whenDeletionIsDisabled() {
         StepVerifier.create(switchedOff().requestDeletion(DEMO, null))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.ACCOUNT_DELETION_DISABLED))
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
     void requestDeletion_shouldFailWithAccountProtected_whenTheUserIsADemoAccount() {
         StepVerifier.create(service.requestDeletion(DEMO, SIGNED_IN))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.ACCOUNT_PROTECTED))
-                .verify();
+                .verify(Duration.ofSeconds(10));
 
         verifyNoInteractions(users);
     }
@@ -116,7 +116,7 @@ class AccountDeletionServiceTest {
     void requestDeletion_shouldCheckTheDemoGuardFirst_whenAuthTimeIsAlsoMissing() {
         StepVerifier.create(service.requestDeletion(DEMO, null))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.ACCOUNT_PROTECTED))
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -125,7 +125,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(service.requestDeletion(USER, null))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.REAUTHENTICATION_REQUIRED))
-                .verify();
+                .verify(Duration.ofSeconds(10));
 
         verify(users, never()).eraseAccount(any(), any());
     }
@@ -136,7 +136,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(service.requestDeletion(USER, NOW.minusSeconds(301)))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.REAUTHENTICATION_REQUIRED))
-                .verify();
+                .verify(Duration.ofSeconds(10));
 
         verify(users, never()).eraseAccount(any(), any());
     }
@@ -146,7 +146,7 @@ class AccountDeletionServiceTest {
         givenALiveAccount();
         when(users.eraseAccount(eq(USER), any())).thenReturn(Mono.just(AccountErasure.ERASED));
 
-        StepVerifier.create(service.requestDeletion(USER, NOW.minusSeconds(300))).verifyComplete();
+        StepVerifier.create(service.requestDeletion(USER, NOW.minusSeconds(300))).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -155,7 +155,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(service.requestDeletion(USER, NOW.plusSeconds(61)))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.REAUTHENTICATION_REQUIRED))
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -163,7 +163,7 @@ class AccountDeletionServiceTest {
         givenALiveAccount();
         when(users.eraseAccount(eq(USER), any())).thenReturn(Mono.just(AccountErasure.ERASED));
 
-        StepVerifier.create(service.requestDeletion(USER, NOW.plusSeconds(60))).verifyComplete();
+        StepVerifier.create(service.requestDeletion(USER, NOW.plusSeconds(60))).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -171,7 +171,7 @@ class AccountDeletionServiceTest {
         givenALiveAccount();
         when(users.eraseAccount(eq(USER), any())).thenReturn(Mono.just(AccountErasure.ERASED));
 
-        StepVerifier.create(service.requestDeletion(USER, SIGNED_IN)).verifyComplete();
+        StepVerifier.create(service.requestDeletion(USER, SIGNED_IN)).expectComplete().verify(Duration.ofSeconds(10));
 
         verify(users).eraseAccount(USER, Instant.parse("2026-10-15T14:03:27.123456Z"));
     }
@@ -182,7 +182,7 @@ class AccountDeletionServiceTest {
         givenALiveAccount();
         when(users.eraseAccount(eq(USER), any())).thenReturn(Mono.just(AccountErasure.ALREADY_ERASED));
 
-        StepVerifier.create(service.requestDeletion(USER, SIGNED_IN)).verifyComplete();
+        StepVerifier.create(service.requestDeletion(USER, SIGNED_IN)).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -190,7 +190,7 @@ class AccountDeletionServiceTest {
         // The 202 of the first deletion was lost: the retry must not send the user back to a login that fails.
         when(users.findAccountState(USER)).thenReturn(Mono.just(AccountState.DELETED));
 
-        StepVerifier.create(service.requestDeletion(USER, NOW.minus(Duration.ofHours(1)))).verifyComplete();
+        StepVerifier.create(service.requestDeletion(USER, NOW.minus(Duration.ofHours(1)))).expectComplete().verify(Duration.ofSeconds(10));
 
         verify(users, never()).eraseAccount(any(), any());
     }
@@ -202,7 +202,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(service.requestDeletion(USER, SIGNED_IN))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -213,7 +213,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(service.requestDeletion(USER, SIGNED_IN))
                 .expectError(TechnicalException.class)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -221,7 +221,7 @@ class AccountDeletionServiceTest {
         givenALiveAccount();
         when(users.eraseAccount(eq(USER), any())).thenReturn(Mono.just(AccountErasure.ERASED));
 
-        StepVerifier.create(service.requestDeletion(USER, SIGNED_IN)).verifyComplete();
+        StepVerifier.create(service.requestDeletion(USER, SIGNED_IN)).expectComplete().verify(Duration.ofSeconds(10));
 
         verifyNoInteractions(identityProvider, mediaStore, jobs);
     }
@@ -243,14 +243,14 @@ class AccountDeletionServiceTest {
     void isDeletionAllowed_shouldFailWithAccountDeletionDisabledWithoutReadingTheDatabase_whenSwitchedOff() {
         StepVerifier.create(switchedOff().isDeletionAllowed(USER))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.ACCOUNT_DELETION_DISABLED))
-                .verify();
+                .verify(Duration.ofSeconds(10));
 
         verifyNoInteractions(users);
     }
 
     @Test
     void isDeletionAllowed_shouldAnswerFalseWithoutReadingTheDatabase_whenTheUserIsProtected() {
-        StepVerifier.create(service.isDeletionAllowed(DEMO)).expectNext(false).verifyComplete();
+        StepVerifier.create(service.isDeletionAllowed(DEMO)).expectNext(false).expectComplete().verify(Duration.ofSeconds(10));
 
         verifyNoInteractions(users);
     }
@@ -259,7 +259,7 @@ class AccountDeletionServiceTest {
     void isDeletionAllowed_shouldAnswerTrue_whenTheAccountIsActive() {
         givenALiveAccount();
 
-        StepVerifier.create(service.isDeletionAllowed(USER)).expectNext(true).verifyComplete();
+        StepVerifier.create(service.isDeletionAllowed(USER)).expectNext(true).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -268,7 +268,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(service.isDeletionAllowed(USER))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -277,7 +277,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(service.isDeletionAllowed(USER))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     // --- deletedAmong ---------------------------------------------------------
@@ -287,12 +287,12 @@ class AccountDeletionServiceTest {
         UUID live = UUID.randomUUID();
         when(users.findDeletedIds(List.of(USER, live))).thenReturn(Flux.just(USER));
 
-        StepVerifier.create(service.deletedAmong(List.of(USER, live))).expectNext(Set.of(USER)).verifyComplete();
+        StepVerifier.create(service.deletedAmong(List.of(USER, live))).expectNext(Set.of(USER)).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
     void deletedAmong_shouldNotQuery_whenNoIdIsGiven() {
-        StepVerifier.create(service.deletedAmong(List.of())).expectNext(Set.of()).verifyComplete();
+        StepVerifier.create(service.deletedAmong(List.of())).expectNext(Set.of()).expectComplete().verify(Duration.ofSeconds(10));
 
         verifyNoInteractions(users);
     }
@@ -312,7 +312,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(service.deletedUsers(null, 2))
                 .expectNext(new DeletedUsersPage(List.of(a, b), b))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -323,7 +323,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(service.deletedUsers(after, 2))
                 .expectNext(new DeletedUsersPage(List.of(a), null))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -332,7 +332,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(service.deletedUsers(null, 500))
                 .expectNext(new DeletedUsersPage(List.of(), null))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
 
         verify(users).findDeleted(null, 501);
     }
@@ -359,7 +359,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(service.processDueDeletions(20))
                 .expectNext(new DeletionProgress(USER, DeletionProgress.Status.WAITING, 0, null))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
 
         verify(jobs).markIdentityDeleted(USER);
         verify(jobs, never()).markMediaDeleted(any());
@@ -371,7 +371,7 @@ class AccountDeletionServiceTest {
         when(mediaStore.deletePrefix(anyString())).thenReturn(Mono.empty());
         when(jobs.postpone(eq(USER), any())).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.processDueDeletions(20)).expectNextCount(1).verifyComplete();
+        StepVerifier.create(service.processDueDeletions(20)).expectNextCount(1).expectComplete().verify(Duration.ofSeconds(10));
 
         verify(mediaStore).deletePrefix("avatars/11111111-1111-1111-1111-111111111111/");
     }
@@ -384,7 +384,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(service.processDueDeletions(20))
                 .expectNext(new DeletionProgress(USER, DeletionProgress.Status.COMPLETED, 0, null))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
 
         verify(jobs, never()).postpone(any(), any());
     }
@@ -395,7 +395,7 @@ class AccountDeletionServiceTest {
         when(mediaStore.deletePrefix(AVATARS)).thenReturn(Mono.empty());
         when(jobs.markMediaDeleted(USER)).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.processDueDeletions(20)).expectNextCount(1).verifyComplete();
+        StepVerifier.create(service.processDueDeletions(20)).expectNextCount(1).expectComplete().verify(Duration.ofSeconds(10));
 
         verifyNoInteractions(identityProvider);
     }
@@ -410,7 +410,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(service.processDueDeletions(20))
                 .expectNext(new DeletionProgress(USER, DeletionProgress.Status.COMPLETED, 0, null))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -423,7 +423,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(switchedOff().processDueDeletions(20))
                 .expectNext(new DeletionProgress(USER, DeletionProgress.Status.COMPLETED, 0, null))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -437,7 +437,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(service.processDueDeletions(20))
                 .expectNext(new DeletionProgress(USER, DeletionProgress.Status.FAILED, 1, "USR-TEC-001"))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
 
         verify(mediaStore).deletePrefix(AVATARS);
         verify(jobs).markMediaDeleted(USER);
@@ -451,7 +451,7 @@ class AccountDeletionServiceTest {
                 .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.KEYCLOAK_ERROR)));
         when(jobs.recordFailure(eq(USER), anyString(), any())).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.processDueDeletions(20)).expectNextCount(1).verifyComplete();
+        StepVerifier.create(service.processDueDeletions(20)).expectNextCount(1).expectComplete().verify(Duration.ofSeconds(10));
 
         verify(jobs).recordFailure(USER, "USR-TEC-001", NOW.plusSeconds(5));
     }
@@ -465,7 +465,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(service.processDueDeletions(20))
                 .expectNext(new DeletionProgress(USER, DeletionProgress.Status.FAILED, 1, "USR-TEC-004"))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
 
         verify(jobs, never()).postpone(any(), any());
     }
@@ -477,7 +477,7 @@ class AccountDeletionServiceTest {
                 .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.KEYCLOAK_ERROR)));
         when(jobs.recordFailure(eq(USER), anyString(), any())).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.processDueDeletions(20)).expectNextCount(1).verifyComplete();
+        StepVerifier.create(service.processDueDeletions(20)).expectNextCount(1).expectComplete().verify(Duration.ofSeconds(10));
 
         verify(jobs).recordFailure(USER, "USR-TEC-001", NOW.plusSeconds(20));
     }
@@ -489,7 +489,7 @@ class AccountDeletionServiceTest {
                 .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.KEYCLOAK_ERROR)));
         when(jobs.recordFailure(eq(USER), anyString(), any())).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.processDueDeletions(20)).expectNextCount(1).verifyComplete();
+        StepVerifier.create(service.processDueDeletions(20)).expectNextCount(1).expectComplete().verify(Duration.ofSeconds(10));
 
         verify(jobs).recordFailure(USER, "USR-TEC-001", NOW.plus(Duration.ofHours(1)));
     }
@@ -504,7 +504,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(service.processDueDeletions(20))
                 .expectNext(new DeletionProgress(USER, DeletionProgress.Status.FAILED, 6, "USR-TEC-001"))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
 
         verify(jobs).recordFailure(USER, "USR-TEC-001", NOW.plusSeconds(160));
     }
@@ -516,7 +516,7 @@ class AccountDeletionServiceTest {
                 .thenReturn(Mono.error(new IllegalStateException("https://keycloak/admin/users/kc-1 refused")));
         when(jobs.recordFailure(eq(USER), anyString(), any())).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.processDueDeletions(20)).expectNextCount(1).verifyComplete();
+        StepVerifier.create(service.processDueDeletions(20)).expectNextCount(1).expectComplete().verify(Duration.ofSeconds(10));
 
         ArgumentCaptor<String> stored = ArgumentCaptor.captor();
         verify(jobs).recordFailure(eq(USER), stored.capture(), any());
@@ -540,14 +540,14 @@ class AccountDeletionServiceTest {
         StepVerifier.create(service.processDueDeletions(20))
                 .expectNext(new DeletionProgress(USER, DeletionProgress.Status.FAILED, 1, "USR-TEC-002"))
                 .expectNext(new DeletionProgress(other, DeletionProgress.Status.COMPLETED, 0, null))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
     void processDueDeletions_shouldReturnNothing_whenNoJobIsDue() {
         when(jobs.claimDue(20)).thenReturn(Flux.empty());
 
-        StepVerifier.create(service.processDueDeletions(20)).verifyComplete();
+        StepVerifier.create(service.processDueDeletions(20)).expectComplete().verify(Duration.ofSeconds(10));
 
         verifyNoInteractions(identityProvider, mediaStore);
     }

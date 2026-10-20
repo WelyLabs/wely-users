@@ -4,6 +4,9 @@ import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
 import com.calendar.users.exception.TechnicalErrorCode;
 import com.calendar.users.exception.TechnicalException;
+import com.calendar.users.configuration.KeycloakClientConfig;
+import com.sun.net.httpserver.HttpServer;
+import io.r2dbc.spi.ConnectionFactories;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.Signature;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,10 +21,23 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.oauth2.client.InMemoryReactiveOAuth2AuthorizedClientService;
+import org.springframework.security.oauth2.client.registration.ClientRegistration;
+import org.springframework.security.oauth2.client.registration.InMemoryReactiveClientRegistrationRepository;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
+
+import java.io.OutputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.Base64;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
@@ -56,7 +72,7 @@ class InfrastructureErrorAspectTest {
         StepVerifier.create((Mono<?>) aspect.translatePersistenceFailures(joinPoint))
                 .expectErrorMatches(error -> error instanceof TechnicalException
                         && codeOf(error) == TechnicalErrorCode.DATABASE_ERROR)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -67,7 +83,7 @@ class InfrastructureErrorAspectTest {
 
         StepVerifier.create((Mono<?>) aspect.translatePersistenceFailures(joinPoint))
                 .expectErrorSatisfies(error -> assertThat(error.getCause()).isSameAs(original))
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -80,7 +96,7 @@ class InfrastructureErrorAspectTest {
         // the aspect to rewrite it, a duplicate handle would answer 500 instead of 409.
         StepVerifier.create((Mono<?>) aspect.translatePersistenceFailures(joinPoint))
                 .expectErrorMatches(error -> error == alreadyExists)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -90,7 +106,7 @@ class InfrastructureErrorAspectTest {
 
         StepVerifier.create((Mono<?>) aspect.translatePersistenceFailures(joinPoint))
                 .expectErrorMatches(error -> error == already)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     // --- identity ----------------------------------------------------------
@@ -105,7 +121,7 @@ class InfrastructureErrorAspectTest {
         StepVerifier.create((Mono<?>) aspect.translateIdentityFailures(joinPoint))
                 .expectErrorMatches(error -> error instanceof TechnicalException
                         && codeOf(error) == TechnicalErrorCode.KEYCLOAK_ERROR)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -115,7 +131,7 @@ class InfrastructureErrorAspectTest {
 
         StepVerifier.create((Mono<?>) aspect.translateIdentityFailures(joinPoint))
                 .expectErrorSatisfies(error -> assertThat(error.getCause()).isSameAs(original))
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     // --- media -------------------------------------------------------------
@@ -131,7 +147,7 @@ class InfrastructureErrorAspectTest {
                     assertThat(codeOf(error)).isEqualTo(TechnicalErrorCode.MEDIA_ERROR);
                     assertThat(error.getCause()).isSameAs(original);
                 })
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     // --- shape of the return value -----------------------------------------
@@ -145,7 +161,7 @@ class InfrastructureErrorAspectTest {
                 .expectErrorSatisfies(error -> assertThat(error)
                         .isInstanceOf(TechnicalException.class)
                         .hasCause(original))
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -157,7 +173,7 @@ class InfrastructureErrorAspectTest {
 
         StepVerifier.create(wrapped)
                 .expectNext("value")
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -206,7 +222,7 @@ class InfrastructureErrorAspectTest {
                         .isInstanceOf(BusinessException.class)
                         .extracting(e -> ((BusinessException) e).getErrorCode())
                         .isEqualTo(BusinessErrorCode.USER_NOT_FOUND))
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -226,7 +242,106 @@ class InfrastructureErrorAspectTest {
                             .isEqualTo(TechnicalErrorCode.KEYCLOAK_ERROR);
                     assertThat(error.getCause()).isSameAs(serverError);
                 })
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
+
+    // --- secrets in the logged cause ---------------------------------------
+    //
+    // The ERROR line logs the whole cause chain. These build the real driver and client
+    // failures around the secrets this service holds — the PostgreSQL password, the Keycloak
+    // client secret — and check that the printed chain never carries them: the R2DBC driver
+    // names host and port only, and the client secret travels in the token request, never in
+    // a message. User-info in a client's base URL does reach the chain (Reactor's checkpoint
+    // prints it); logback-spring.xml masks that, see LogbackSpringXmlTest.
+
+    private static final String SECRET = "s3cr3t";
+
+    private static String stackTrace(Throwable error) {
+        StringWriter out = new StringWriter();
+        error.printStackTrace(new PrintWriter(out));
+        return out.toString();
+    }
+
+    private Throwable translatedPersistenceFailure(Mono<?> failing) throws Throwable {
+        when(joinPoint.proceed()).thenReturn(failing);
+        return ((Mono<?>) aspect.translatePersistenceFailures(joinPoint))
+                .materialize().block(Duration.ofSeconds(20)).getThrowable();
+    }
+
+    private Throwable translatedIdentityFailure(Mono<?> failing) throws Throwable {
+        when(joinPoint.proceed()).thenReturn(failing);
+        return ((Mono<?>) aspect.translateIdentityFailures(joinPoint))
+                .materialize().block(Duration.ofSeconds(20)).getThrowable();
+    }
+
+    @Test
+    @DisplayName("a PostgreSQL connection failure does not print the password of the connection string")
+    void translatePersistenceFailures_shouldNotLeakTheDatabasePassword_whenPostgresIsUnreachable() throws Throwable {
+        Mono<?> connect = Mono.from(ConnectionFactories
+                .get("r2dbc:postgresql://wely:" + SECRET + "@127.0.0.1:1/users?connectTimeout=PT1S")
+                .create());
+
+        Throwable error = translatedPersistenceFailure(connect);
+
+        assertThat(error).isInstanceOf(TechnicalException.class).hasCauseInstanceOf(RuntimeException.class);
+        assertThat(stackTrace(error)).doesNotContain(SECRET);
+    }
+
+    private static WebClient keycloakAdminClient(String baseUrl, String tokenUri) {
+        ClientRegistration registration = ClientRegistration.withRegistrationId("wely-users-api-client")
+                .clientId("wely-users-api")
+                .clientSecret(SECRET)
+                .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+                .tokenUri(tokenUri)
+                .build();
+        var registrations = new InMemoryReactiveClientRegistrationRepository(registration);
+        KeycloakClientConfig config = new KeycloakClientConfig();
+        return config.keycloakAdminWebClient(baseUrl, config.authorizedClientManager(
+                registrations, new InMemoryReactiveOAuth2AuthorizedClientService(registrations)));
+    }
+
+    private static void assertNoClientSecret(Throwable error) {
+        String basicCredentials = Base64.getEncoder()
+                .encodeToString(("wely-users-api:" + SECRET).getBytes(StandardCharsets.UTF_8));
+
+        assertThat(error).isInstanceOf(TechnicalException.class).hasCauseInstanceOf(RuntimeException.class);
+        assertThat(stackTrace(error)).doesNotContain(SECRET).doesNotContain(basicCredentials);
+    }
+
+    @Test
+    @DisplayName("an unreachable Keycloak token endpoint does not print the client secret")
+    void translateIdentityFailures_shouldNotLeakTheClientSecret_whenKeycloakIsUnreachable() throws Throwable {
+        WebClient client = keycloakAdminClient(
+                "http://wely:" + SECRET + "@127.0.0.1:1/admin/realms/wely-realm",
+                "http://127.0.0.1:1/token?client_secret=" + SECRET);
+
+        assertNoClientSecret(translatedIdentityFailure(
+                client.get().uri("/users?secret=" + SECRET).retrieve().bodyToMono(String.class)));
+    }
+
+    @Test
+    @DisplayName("Keycloak refusing the client credentials does not print them")
+    void translateIdentityFailures_shouldNotLeakTheClientSecret_whenKeycloakRefusesIt() throws Throwable {
+        HttpServer keycloak = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        keycloak.createContext("/", exchange -> {
+            byte[] body = "{\"error\":\"invalid_client\",\"error_description\":\"Invalid client credentials\"}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(401, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+        keycloak.start();
+        try {
+            String base = "http://127.0.0.1:" + keycloak.getAddress().getPort();
+            WebClient client = keycloakAdminClient(base + "/admin/realms/wely-realm", base + "/token");
+
+            assertNoClientSecret(translatedIdentityFailure(
+                    client.get().uri("/users").retrieve().bodyToMono(String.class)));
+        } finally {
+            keycloak.stop(0);
+        }
+    }
 }

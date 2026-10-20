@@ -2,6 +2,11 @@ package com.calendar.users.exception;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
+import org.springframework.http.ProblemDetail;
+import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
+import org.springframework.mock.web.server.MockServerWebExchange;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -101,7 +106,7 @@ class GlobalErrorHandlerTest {
                 .expectHeader().contentType(MediaType.APPLICATION_PROBLEM_JSON)
                 .expectBody()
                 .jsonPath("$.title").isEqualTo("Invalid request")
-                .jsonPath("$.code").isEqualTo(GlobalErrorHandler.VALIDATION_ERROR_CODE)
+                .jsonPath("$.code").isEqualTo(GlobalErrorHandler.VALIDATION_FAILED_CODE)
                 .jsonPath("$.errors.userName").exists();
     }
 
@@ -166,7 +171,7 @@ class GlobalErrorHandlerTest {
                 .exchange()
                 .expectStatus().is5xxServerError()
                 .expectBody()
-                .jsonPath("$.code").isEqualTo(GlobalErrorHandler.UNEXPECTED_ERROR_CODE)
+                .jsonPath("$.code").isEqualTo(GlobalErrorHandler.UNEXPECTED_FAILURE_CODE)
                 .jsonPath("$.detail").isEqualTo("The request could not be completed.")
                 // The exception message carried a connection string with a password:
                 // none of that may cross the HTTP boundary.
@@ -190,7 +195,7 @@ class GlobalErrorHandlerTest {
                 .expectBody()
                 .jsonPath("$.status").isEqualTo(404)
                 .jsonPath("$.title").isEqualTo("Not Found")
-                .jsonPath("$.code").isEqualTo(GlobalErrorHandler.REQUEST_ERROR_CODE);
+                .jsonPath("$.code").isEqualTo(GlobalErrorHandler.REQUEST_REFUSED_CODE);
     }
 
     @Test
@@ -202,7 +207,7 @@ class GlobalErrorHandlerTest {
                 .expectBody()
                 .jsonPath("$.status").isEqualTo(405)
                 .jsonPath("$.title").isEqualTo("Method Not Allowed")
-                .jsonPath("$.code").isEqualTo(GlobalErrorHandler.REQUEST_ERROR_CODE);
+                .jsonPath("$.code").isEqualTo(GlobalErrorHandler.REQUEST_REFUSED_CODE);
     }
 
     @Test
@@ -269,7 +274,7 @@ class GlobalErrorHandlerTest {
     // --- technical error counter -----------------------------------------------
 
     private double technicalErrors(String code) {
-        var counter = meterRegistry.find(GlobalErrorHandler.TECHNICAL_ERRORS_METRIC).tag("code", code).counter();
+        var counter = meterRegistry.find(GlobalErrorHandler.TECHNICAL_ERRORS_METRIC).tag(GlobalErrorHandler.CODE_TAG, code).counter();
         return counter == null ? 0 : counter.count();
     }
 
@@ -280,7 +285,7 @@ class GlobalErrorHandlerTest {
         client.get().uri("/technical-error").exchange().expectStatus().isEqualTo(502);
 
         assertThat(technicalErrors(TechnicalErrorCode.DATABASE_ERROR.getCode())).isEqualTo(2.0);
-        assertThat(technicalErrors(GlobalErrorHandler.UNEXPECTED_ERROR_CODE)).isZero();
+        assertThat(technicalErrors(GlobalErrorHandler.UNEXPECTED_FAILURE_CODE)).isZero();
     }
 
     @Test
@@ -288,7 +293,7 @@ class GlobalErrorHandlerTest {
     void handleUnexpectedException_shouldCountTheFailureAsUnexpected() {
         client.get().uri("/generic-error").exchange().expectStatus().is5xxServerError();
 
-        assertThat(technicalErrors(GlobalErrorHandler.UNEXPECTED_ERROR_CODE)).isEqualTo(1.0);
+        assertThat(technicalErrors(GlobalErrorHandler.UNEXPECTED_FAILURE_CODE)).isEqualTo(1.0);
     }
 
     @Test
@@ -298,5 +303,64 @@ class GlobalErrorHandlerTest {
         client.get().uri("/gone").exchange().expectStatus().isNotFound();
 
         assertThat(meterRegistry.find(GlobalErrorHandler.TECHNICAL_ERRORS_METRIC).counters()).isEmpty();
+    }
+
+    // --- toProblem: failures outside controllers ---------------------------------
+
+    private final MockServerWebExchange exchange =
+            MockServerWebExchange.from(MockServerHttpRequest.get("/user-service/profile"));
+
+    private ProblemDetail toProblem(Throwable error) {
+        return new GlobalErrorHandler(meterRegistry).toProblem(error, exchange);
+    }
+
+    @Test
+    void toProblem_shouldMapABusinessFailureToItsCode() {
+        ProblemDetail problem = toProblem(new BusinessException(BusinessErrorCode.ACCESS_DENIED));
+
+        assertThat(problem.getStatus()).isEqualTo(403);
+        assertThat(problem.getProperties())
+                .containsEntry("code", "USR-REQ-002")
+                .containsEntry(GlobalErrorHandler.REQUEST_ID_PROPERTY, exchange.getRequest().getId());
+    }
+
+    @Test
+    void toProblem_shouldMapATechnicalFailureToItsCode_andCountIt() {
+        ProblemDetail problem = toProblem(new TechnicalException(TechnicalErrorCode.SOCIAL_ERROR));
+
+        assertThat(problem.getStatus()).isEqualTo(502);
+        assertThat(problem.getProperties()).containsEntry("code", "USR-TEC-005");
+        assertThat(technicalErrors("USR-TEC-005")).isEqualTo(1.0);
+    }
+
+    @Test
+    void toProblem_shouldKeepTheFrameworkStatus_whenTheFailureIsAResponseStatus() {
+        ProblemDetail problem = toProblem(new ResponseStatusException(HttpStatus.NOT_FOUND));
+
+        assertThat(problem.getStatus()).isEqualTo(404);
+        assertThat(problem.getProperties()).containsEntry("code", GlobalErrorHandler.REQUEST_REFUSED_CODE);
+    }
+
+    @Test
+    void toProblem_shouldAnswerTheUnexpectedProblem_andCountIt_whenTheFailureIsUnknown() {
+        ProblemDetail problem = toProblem(new AssertionError("not even an Exception"));
+
+        assertThat(problem.getStatus()).isEqualTo(500);
+        assertThat(problem.getProperties()).containsEntry("code", GlobalErrorHandler.UNEXPECTED_FAILURE_CODE);
+        assertThat(technicalErrors(GlobalErrorHandler.UNEXPECTED_FAILURE_CODE)).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("the advice runs before Boot's problem-details advice, which sits at order 0")
+    void globalErrorHandler_shouldBeOrderedFirst() {
+        assertThat(GlobalErrorHandler.class.getAnnotation(Order.class).value()).isEqualTo(Ordered.HIGHEST_PRECEDENCE);
+    }
+
+    @Test
+    void handlerCodes_shouldListTheThreeLiteralCodes() {
+        assertThat(GlobalErrorHandler.HANDLER_CODES).containsExactly(
+                GlobalErrorHandler.VALIDATION_FAILED_CODE,
+                GlobalErrorHandler.REQUEST_REFUSED_CODE,
+                GlobalErrorHandler.UNEXPECTED_FAILURE_CODE);
     }
 }

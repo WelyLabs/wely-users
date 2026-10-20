@@ -35,10 +35,7 @@ class BusinessErrorCodeTest {
 
     @Test
     void values_shouldNotReuseAHandlerCode_whenTheHandlerWritesItAsALiteral() {
-        assertThat(codes()).doesNotContain(
-                GlobalErrorHandler.VALIDATION_ERROR_CODE,
-                GlobalErrorHandler.REQUEST_ERROR_CODE,
-                GlobalErrorHandler.UNEXPECTED_ERROR_CODE);
+        assertThat(codes()).doesNotContainAnyElementsOf(GlobalErrorHandler.HANDLER_CODES);
     }
 
     @Test

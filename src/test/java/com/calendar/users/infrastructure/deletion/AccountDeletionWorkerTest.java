@@ -92,7 +92,7 @@ class AccountDeletionWorkerTest {
 
         StepVerifier.create(worker(Duration.ofHours(1)).runOnce())
                 .expectNext(new AccountDeletionWorker.Pass(1, 1, 2))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -101,7 +101,7 @@ class AccountDeletionWorkerTest {
 
         StepVerifier.create(worker(Duration.ofHours(1)).runOnce())
                 .expectNext(AccountDeletionWorker.Pass.EMPTY)
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test

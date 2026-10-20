@@ -9,6 +9,7 @@ import com.calendar.users.exception.TechnicalErrorCode;
 import com.calendar.users.exception.TechnicalException;
 import com.calendar.users.infrastructure.media.mappers.MediaApiMapperImpl;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -24,7 +25,10 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.net.ConnectException;
+import java.time.Duration;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
@@ -97,7 +101,7 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.store(KEY, UPLOAD, MediaProfile.AVATAR))
                 .expectNext(new StoredMedia(KEY, 512, 512))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -127,7 +131,7 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.store(KEY, UPLOAD, MediaProfile.AVATAR))
                 .expectErrorMatches(error -> hasCode(error, BusinessErrorCode.PICTURE_INVALID))
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -136,7 +140,7 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.store(KEY, UPLOAD, MediaProfile.AVATAR))
                 .expectErrorMatches(error -> hasCode(error, BusinessErrorCode.PICTURE_TOO_LARGE))
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -145,7 +149,7 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.store(KEY, UPLOAD, MediaProfile.AVATAR))
                 .expectErrorMatches(MediaApiAdapterTest::isMediaError)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -154,7 +158,7 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.store(KEY, UPLOAD, MediaProfile.AVATAR))
                 .expectErrorMatches(MediaApiAdapterTest::isMediaError)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -163,7 +167,7 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.store(KEY, UPLOAD, MediaProfile.AVATAR))
                 .expectErrorMatches(MediaApiAdapterTest::isMediaError)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -173,7 +177,7 @@ class MediaApiAdapterTest {
         StepVerifier.create(adapter.store(KEY, UPLOAD, MediaProfile.AVATAR))
                 .expectErrorSatisfies(error -> assertThat(error.getCause())
                         .isInstanceOf(WebClientResponseException.BadGateway.class))
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -185,7 +189,7 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.store(KEY, UPLOAD, MediaProfile.AVATAR))
                 .expectErrorMatches(MediaApiAdapterTest::isMediaError)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -194,7 +198,7 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.store(KEY, UPLOAD, MediaProfile.AVATAR))
                 .expectErrorMatches(MediaApiAdapterTest::isMediaError)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -205,7 +209,7 @@ class MediaApiAdapterTest {
                 .expectErrorSatisfies(error -> assertThat(error.getCause())
                         .isInstanceOf(WebClientRequestException.class)
                         .hasRootCauseInstanceOf(ConnectException.class))
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -217,7 +221,7 @@ class MediaApiAdapterTest {
                     assertThat(isMediaError(error)).isTrue();
                     assertThat(error.getCause()).isInstanceOf(IllegalStateException.class);
                 })
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     // --- delete --------------------------------------------------------------
@@ -226,7 +230,7 @@ class MediaApiAdapterTest {
     void delete_shouldSendTheKeyAsAQueryParameter_withTheSecret() {
         answer = request -> Mono.just(ClientResponse.create(HttpStatus.NO_CONTENT).build());
 
-        StepVerifier.create(adapter.delete(KEY)).verifyComplete();
+        StepVerifier.create(adapter.delete(KEY)).expectComplete().verify(Duration.ofSeconds(10));
 
         ClientRequest request = sent.getFirst();
         assertThat(request.method()).isEqualTo(HttpMethod.DELETE);
@@ -241,7 +245,7 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.delete(KEY))
                 .expectErrorMatches(MediaApiAdapterTest::isMediaError)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -250,7 +254,7 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.delete(KEY))
                 .expectErrorMatches(MediaApiAdapterTest::isMediaError)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     // --- deletePrefix ---------------------------------------------------------
@@ -261,7 +265,7 @@ class MediaApiAdapterTest {
     void deletePrefix_shouldSendThePrefixAsAQueryParameterWithTheSecret_whenCalled() {
         answer = request -> Mono.just(ClientResponse.create(HttpStatus.NO_CONTENT).build());
 
-        StepVerifier.create(adapter.deletePrefix(AVATARS)).verifyComplete();
+        StepVerifier.create(adapter.deletePrefix(AVATARS)).expectComplete().verify(Duration.ofSeconds(10));
 
         ClientRequest request = sent.getFirst();
         assertThat(request.method()).isEqualTo(HttpMethod.DELETE);
@@ -274,7 +278,7 @@ class MediaApiAdapterTest {
     void deletePrefix_shouldComplete_whenWelyMediaAnswers204() {
         answer = request -> Mono.just(ClientResponse.create(HttpStatus.NO_CONTENT).build());
 
-        StepVerifier.create(adapter.deletePrefix(AVATARS)).verifyComplete();
+        StepVerifier.create(adapter.deletePrefix(AVATARS)).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -283,7 +287,7 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.deletePrefix("avatars/"))
                 .expectErrorMatches(MediaApiAdapterTest::isMediaError)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -292,7 +296,7 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.deletePrefix(AVATARS))
                 .expectErrorMatches(MediaApiAdapterTest::isMediaError)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -301,7 +305,7 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.deletePrefix(AVATARS))
                 .expectErrorMatches(MediaApiAdapterTest::isMediaError)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     // --- urls ----------------------------------------------------------------
@@ -312,7 +316,7 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.urls(List.of(KEY)))
                 .expectNext(Map.of(KEY, "https://media/signed"))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -336,7 +340,7 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.urls(List.of(KEY)))
                 .expectNext(Map.of())
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -345,7 +349,7 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.urls(List.of(KEY)))
                 .expectNext(Map.of())
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -354,7 +358,7 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.urls(List.of(KEY)))
                 .expectErrorMatches(MediaApiAdapterTest::isMediaError)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -363,6 +367,38 @@ class MediaApiAdapterTest {
 
         StepVerifier.create(adapter.urls(List.of(KEY)))
                 .expectErrorMatches(MediaApiAdapterTest::isMediaError)
-                .verify();
+                .verify(Duration.ofSeconds(10));
+    }
+
+    // --- secrets in the logged cause -------------------------------------------
+
+    private static String stackTrace(MediaApiAdapter adapter) {
+        Throwable error = adapter.urls(List.of(KEY)).materialize().block(Duration.ofSeconds(20)).getThrowable();
+        assertThat(isMediaError(error)).isTrue();
+        assertThat(error.getCause()).isInstanceOf(WebClientRequestException.class);
+        StringWriter trace = new StringWriter();
+        error.printStackTrace(new PrintWriter(trace));
+        return trace.toString();
+    }
+
+    @Test
+    @DisplayName("an unreachable wely-media does not print the shared secret header in the logged chain")
+    void urls_shouldNotLeakTheSharedSecret_whenWelyMediaIsUnreachable() {
+        // A real client and a real connection failure: the ERROR line prints this whole chain.
+        String secret = "s3cr3t";
+        WebClient client = new MediaApiClientConfig().mediaApiWebClient("http://127.0.0.1:1", secret);
+
+        assertThat(stackTrace(new MediaApiAdapter(client, new MediaApiMapperImpl()))).doesNotContain(secret);
+    }
+
+    @Test
+    @DisplayName("user-info in the base URL does reach the chain: logback-spring.xml masks it")
+    void urls_shouldCarryTheBaseUrlUserInfo_whenItIsConfigured() {
+        // Evidence for the masking in logback-spring.xml, proven in LogbackSpringXmlTest:
+        // Reactor's checkpoint line prints the request URI with its user-info.
+        WebClient client = new MediaApiClientConfig().mediaApiWebClient("http://wely:s3cr3t@127.0.0.1:1", "secret");
+
+        assertThat(stackTrace(new MediaApiAdapter(client, new MediaApiMapperImpl())))
+                .contains("Request to POST http://wely:s3cr3t@127.0.0.1:1/internal/media/urls");
     }
 }

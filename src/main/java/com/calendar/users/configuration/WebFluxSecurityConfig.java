@@ -1,10 +1,14 @@
 package com.calendar.users.configuration;
 
+import com.calendar.users.exception.BusinessErrorCode;
+import com.calendar.users.exception.BusinessException;
+import com.calendar.users.exception.ProblemAccessDeniedHandler;
+import com.calendar.users.exception.ProblemAuthenticationEntryPoint;
+import com.calendar.users.exception.ProblemResponseWriter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.config.web.server.SecurityWebFiltersOrder;
@@ -57,11 +61,18 @@ public class WebFluxSecurityConfig {
     }
 
     @Bean
-    public SecurityWebFilterChain apiHttpSecurity(ServerHttpSecurity http) {
+    public SecurityWebFilterChain apiHttpSecurity(ServerHttpSecurity http,
+                                                  ProblemResponseWriter problems,
+                                                  ProblemAuthenticationEntryPoint authenticationEntryPoint,
+                                                  ProblemAccessDeniedHandler accessDeniedHandler) {
         return http
                 .cors(Customizer.withDefaults())
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
-                .addFilterAt(internalSecretWebFilter(), SecurityWebFiltersOrder.AUTHENTICATION)
+                .addFilterAt(internalSecretWebFilter(problems), SecurityWebFiltersOrder.AUTHENTICATION)
+                // Refusals answer in the same problem shape as every other error.
+                .exceptionHandling(handling -> handling
+                        .authenticationEntryPoint(authenticationEntryPoint)
+                        .accessDeniedHandler(accessDeniedHandler))
                 .authorizeExchange((authorize) -> authorize
                         // Guarded by their secret in the filter below, which uses the same matchers.
                         .matchers(KEYCLOAK_CALLBACKS, DELETED_USERS_READER).permitAll()
@@ -69,13 +80,21 @@ public class WebFluxSecurityConfig {
                         // Kubernetes probes: the kubelet carries no token. Only the two
                         // health groups are opened, not /actuator as a whole.
                         .pathMatchers("/actuator/health/liveness", "/actuator/health/readiness").permitAll()
+                        // Prometheus scrapes without a token. The Service is ClusterIP only, the
+                        // gateway routes /api/v1/<service>/** to /<service>/** and never
+                        // /actuator/**, and metrics hold counts and tags, no user data. Only this
+                        // endpoint is opened, not /actuator as a whole.
+                        .pathMatchers(HttpMethod.GET, "/actuator/prometheus").permitAll()
                         // OpenAPI. These paths are not routed by the gateway — it forwards
                         // /api/v1/<service>/** and /rsocket only — so opening them here makes
                         // the documentation reachable in-cluster and in dev, and nowhere else.
                         .pathMatchers("/v3/api-docs", "/v3/api-docs/**", "/swagger-ui/**",
                                       "/swagger-ui.html", "/webjars/swagger-ui/**").permitAll()
                         .anyExchange().authenticated())
-                .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()))
+                .oauth2ResourceServer(oauth2 -> oauth2
+                        .authenticationEntryPoint(authenticationEntryPoint)
+                        .accessDeniedHandler(accessDeniedHandler)
+                        .jwt(Customizer.withDefaults()))
                 .build();
     }
 
@@ -91,8 +110,8 @@ public class WebFluxSecurityConfig {
         return jwtDecoder;
     }
 
-    /** 401 for an internal path whose secret is missing or wrong; every other request passes through. */
-    WebFilter internalSecretWebFilter() {
+    /** 401 problem for an internal path whose secret is missing or wrong; every other request passes through. */
+    WebFilter internalSecretWebFilter(ProblemResponseWriter problems) {
         return (exchange, chain) -> {
             if (HttpMethod.OPTIONS.equals(exchange.getRequest().getMethod())) {
                 return chain.filter(exchange);
@@ -101,7 +120,8 @@ public class WebFluxSecurityConfig {
             return requiredSecret(exchange)
                     .flatMap(required -> required.isEmpty() || secretMatches(candidate, required.get())
                             ? chain.filter(exchange)
-                            : unauthorized(exchange));
+                            : problems.write(exchange,
+                                    new BusinessException(BusinessErrorCode.AUTHENTICATION_REQUIRED)));
         };
     }
 
@@ -114,11 +134,6 @@ public class WebFluxSecurityConfig {
                                 .map(reader -> reader.isMatch()
                                         ? Optional.of(deletedUsersReaderSecret)
                                         : Optional.<String>empty()));
-    }
-
-    private static Mono<Void> unauthorized(ServerWebExchange exchange) {
-        exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
-        return exchange.getResponse().setComplete();
     }
 
     /** Constant-time, so response timing leaks no matching prefix; a blank expected secret matches nothing. */

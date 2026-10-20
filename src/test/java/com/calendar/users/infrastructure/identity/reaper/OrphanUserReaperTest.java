@@ -32,7 +32,7 @@ class OrphanUserReaperTest {
         when(userService.removeOrphans(any(), anyInt())).thenReturn(Mono.just(new OrphanSweep(1, 1, 0)));
         LocalDateTime before = LocalDateTime.now().minusMinutes(15);
 
-        StepVerifier.create(reaper(Duration.ofHours(1)).sweepOnce()).verifyComplete();
+        StepVerifier.create(reaper(Duration.ofHours(1)).sweepOnce()).expectComplete().verify(Duration.ofSeconds(10));
 
         LocalDateTime after = LocalDateTime.now().minusMinutes(15);
         ArgumentCaptor<LocalDateTime> cutoff = ArgumentCaptor.captor();

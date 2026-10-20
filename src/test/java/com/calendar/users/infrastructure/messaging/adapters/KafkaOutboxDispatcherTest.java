@@ -16,6 +16,7 @@ import reactor.test.StepVerifier;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -65,7 +66,7 @@ class KafkaOutboxDispatcherTest {
         when(streamBridge.send(anyString(), any())).thenReturn(true);
 
         StepVerifier.create(dispatcher().dispatch(aRow(userId, "USER_CREATED", aPayload(userId))))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
 
         ArgumentCaptor<Object> sent = ArgumentCaptor.captor();
         verify(streamBridge).send(eq("userCreated-out-0"), sent.capture());
@@ -80,7 +81,7 @@ class KafkaOutboxDispatcherTest {
 
         StepVerifier.create(dispatcher().dispatch(aRow(userId, "USER_DELETED",
                         "{\"userId\":\"" + userId + "\",\"deletedAt\":\"2026-10-15T14:03:27.123456Z\"}")))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
 
         ArgumentCaptor<Object> sent = ArgumentCaptor.captor();
         verify(streamBridge).send(eq("userDeleted-out-0"), sent.capture());
@@ -99,7 +100,7 @@ class KafkaOutboxDispatcherTest {
         StepVerifier.create(dispatcher().dispatch(aRow(userId, "USER_CREATED", aPayload(userId))))
                 .expectErrorMatches(error -> error instanceof TechnicalException technical
                         && technical.getErrorCode() == TechnicalErrorCode.KAFKA_ERROR)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -109,7 +110,7 @@ class KafkaOutboxDispatcherTest {
         // a bug. Either way, sending it somewhere plausible would be worse than failing.
         StepVerifier.create(dispatcher().dispatch(aRow(UUID.randomUUID(), "USER_RENAMED", "{}")))
                 .expectError(IllegalArgumentException.class)
-                .verify();
+                .verify(Duration.ofSeconds(10));
 
         verify(streamBridge, never()).send(anyString(), any());
     }
@@ -121,7 +122,7 @@ class KafkaOutboxDispatcherTest {
         // it and take the loop down with it.
         StepVerifier.create(dispatcher().dispatch(aRow(UUID.randomUUID(), "USER_CREATED", "not json")))
                 .expectError()
-                .verify();
+                .verify(Duration.ofSeconds(10));
 
         verify(streamBridge, never()).send(anyString(), any());
     }

@@ -14,6 +14,7 @@ import com.calendar.users.exception.GlobalErrorHandler;
 import com.calendar.users.exception.TechnicalErrorCode;
 import io.swagger.v3.oas.models.OpenAPI;
 
+import java.time.Duration;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -39,7 +40,10 @@ class OpenApiConfigTest {
     private int port;
 
     private WebTestClient client() {
-        return WebTestClient.bindToServer().baseUrl("http://localhost:" + port).build();
+        return WebTestClient.bindToServer()
+                .baseUrl("http://localhost:" + port)
+                .responseTimeout(Duration.ofSeconds(30))
+                .build();
     }
 
     @Test
@@ -122,9 +126,9 @@ class OpenApiConfigTest {
                 assertThat(((List<?>) codes).stream().map(String::valueOf).toList())
                         .contains(BusinessErrorCode.USER_NOT_FOUND.getCode(),
                                 TechnicalErrorCode.KEYCLOAK_ERROR.getCode(),
-                                GlobalErrorHandler.VALIDATION_ERROR_CODE,
-                                GlobalErrorHandler.REQUEST_ERROR_CODE,
-                                GlobalErrorHandler.UNEXPECTED_ERROR_CODE)
+                                GlobalErrorHandler.VALIDATION_FAILED_CODE,
+                                GlobalErrorHandler.REQUEST_REFUSED_CODE,
+                                GlobalErrorHandler.UNEXPECTED_FAILURE_CODE)
                         .containsExactlyElementsOf(OpenApiConfig.errorCodes()));
     }
 

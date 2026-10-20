@@ -27,6 +27,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -113,7 +114,7 @@ class UserServiceIntegrationTest {
 
         StepVerifier.create(userService.updateProfile(camille.id(), new ProfileUpdate("lea", "Cam", "Dupont")))
                 .expectError(BusinessException.class)
-                .verify();
+                .verify(Duration.ofSeconds(10));
 
         assertThat(userRepository.getBusinessUserByUserId(camille.id()).block().userName()).isEqualTo("camille");
         assertThat(modifiedEvents()).isZero();
@@ -129,7 +130,7 @@ class UserServiceIntegrationTest {
         // lea#4321 is taken in the database: the unique (user_name, hashtag) constraint refuses.
         StepVerifier.create(userService.updateProfile(camille.id(), new ProfileUpdate("lea", "Cam", "Dupont")))
                 .expectError(BusinessException.class)
-                .verify();
+                .verify(Duration.ofSeconds(10));
 
         BusinessUser after = userRepository.getBusinessUserByUserId(camille.id()).block();
         assertThat(after.userName()).isEqualTo("camille");

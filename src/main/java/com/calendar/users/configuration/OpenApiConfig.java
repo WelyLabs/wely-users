@@ -78,9 +78,7 @@ public class OpenApiConfig {
         return Stream.of(
                         Arrays.stream(BusinessErrorCode.values()).map(BusinessErrorCode::getCode),
                         Arrays.stream(TechnicalErrorCode.values()).map(TechnicalErrorCode::getCode),
-                        Stream.of(GlobalErrorHandler.VALIDATION_ERROR_CODE,
-                                GlobalErrorHandler.REQUEST_ERROR_CODE,
-                                GlobalErrorHandler.UNEXPECTED_ERROR_CODE))
+                        GlobalErrorHandler.HANDLER_CODES.stream())
                 .flatMap(codes -> codes)
                 .distinct()
                 .sorted()

@@ -16,6 +16,8 @@ import reactor.test.StepVerifier;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -87,14 +89,14 @@ class SocialApiAdapterTest {
 
     @Test
     void areFriends_shouldBeTrue_whenSocialFindsTheFriendship() {
-        StepVerifier.create(areFriendsAsCaller()).expectNext(true).verifyComplete();
+        StepVerifier.create(areFriendsAsCaller()).expectNext(true).expectComplete().verify(Duration.ofSeconds(10));
 
         assertThat(requestedUri.get()).isEqualTo("/social-service/relationships/" + FRIEND);
     }
 
     @Test
     void areFriends_shouldRelayTheCallersBearerToken() {
-        StepVerifier.create(areFriendsAsCaller()).expectNext(true).verifyComplete();
+        StepVerifier.create(areFriendsAsCaller()).expectNext(true).expectComplete().verify(Duration.ofSeconds(10));
 
         assertThat(authorization.get()).isEqualTo("Bearer " + TOKEN);
     }
@@ -103,14 +105,14 @@ class SocialApiAdapterTest {
     void areFriends_shouldBeFalse_whenSocialAnswers404() {
         status = 404;
 
-        StepVerifier.create(areFriendsAsCaller()).expectNext(false).verifyComplete();
+        StepVerifier.create(areFriendsAsCaller()).expectNext(false).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
     void areFriends_shouldReportSocialError_whenSocialAnswers500() {
         status = 500;
 
-        StepVerifier.create(areFriendsAsCaller()).expectErrorMatches(SocialApiAdapterTest::isSocialError).verify();
+        StepVerifier.create(areFriendsAsCaller()).expectErrorMatches(SocialApiAdapterTest::isSocialError).verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -120,14 +122,14 @@ class SocialApiAdapterTest {
         StepVerifier.create(areFriendsAsCaller())
                 .expectErrorSatisfies(error -> assertThat(error.getCause())
                         .isInstanceOf(WebClientResponseException.InternalServerError.class))
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
     void areFriends_shouldReportSocialError_whenSocialAnswers403() {
         status = 403;
 
-        StepVerifier.create(areFriendsAsCaller()).expectErrorMatches(SocialApiAdapterTest::isSocialError).verify();
+        StepVerifier.create(areFriendsAsCaller()).expectErrorMatches(SocialApiAdapterTest::isSocialError).verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -135,7 +137,7 @@ class SocialApiAdapterTest {
         delayMillis = 1500;
         adapter = adapterWithTimeout(Duration.ofMillis(300));
 
-        StepVerifier.create(areFriendsAsCaller()).expectErrorMatches(SocialApiAdapterTest::isSocialError).verify();
+        StepVerifier.create(areFriendsAsCaller()).expectErrorMatches(SocialApiAdapterTest::isSocialError).verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -145,14 +147,14 @@ class SocialApiAdapterTest {
 
         StepVerifier.create(areFriendsAsCaller())
                 .expectErrorSatisfies(error -> assertThat(error.getCause()).isInstanceOf(TimeoutException.class))
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
     void areFriends_shouldReportSocialError_whenSocialIsUnreachable() {
         server.stop(0);
 
-        StepVerifier.create(areFriendsAsCaller()).expectErrorMatches(SocialApiAdapterTest::isSocialError).verify();
+        StepVerifier.create(areFriendsAsCaller()).expectErrorMatches(SocialApiAdapterTest::isSocialError).verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -164,8 +166,22 @@ class SocialApiAdapterTest {
                             .isInstanceOf(IllegalStateException.class)
                             .hasMessage("no authenticated request to relay");
                 })
-                .verify();
+                .verify(Duration.ofSeconds(10));
 
         assertThat(requestedUri.get()).isNull();
+    }
+
+    @Test
+    void areFriends_shouldNotLeakTheRelayedToken_whenSocialFails() {
+        // The caller's token is relayed to wely-social: a failure's logged chain must not carry it.
+        status = 500;
+
+        StepVerifier.create(areFriendsAsCaller())
+                .expectErrorSatisfies(error -> {
+                    StringWriter trace = new StringWriter();
+                    error.printStackTrace(new PrintWriter(trace));
+                    assertThat(trace.toString()).doesNotContain(TOKEN);
+                })
+                .verify(Duration.ofSeconds(10));
     }
 }

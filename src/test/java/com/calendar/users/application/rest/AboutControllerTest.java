@@ -17,6 +17,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 
@@ -52,7 +53,7 @@ class AboutControllerTest {
 
         StepVerifier.create(controller.about(jwt))
                 .expectNext(new AboutResponse("Partante", List.of("Rando")))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -62,7 +63,7 @@ class AboutControllerTest {
 
         StepVerifier.create(controller.updateAbout(jwt, new AboutRequest("  Partante ", List.of("Rando", "rando"))))
                 .expectNext(new AboutResponse("Partante", List.of("Rando")))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -70,7 +71,7 @@ class AboutControllerTest {
         StepVerifier.create(controller.updateAbout(jwt, new AboutRequest(null, List.of("a", "b", "c", "d", "e", "f"))))
                 .expectErrorMatches(error -> error instanceof BusinessException exception
                         && exception.getErrorCode() == BusinessErrorCode.ABOUT_INVALID)
-                .verify();
+                .verify(Duration.ofSeconds(10));
         verify(userService, never()).updateAbout(any(), any());
     }
 
@@ -81,7 +82,7 @@ class AboutControllerTest {
         StepVerifier.create(controller.about(jwt))
                 .expectErrorMatches(error -> error instanceof BusinessException exception
                         && exception.getErrorCode() == BusinessErrorCode.USER_DELETED)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -92,6 +93,6 @@ class AboutControllerTest {
         StepVerifier.create(controller.updateAbout(jwt, new AboutRequest("Partante", List.of())))
                 .expectErrorMatches(error -> error instanceof BusinessException exception
                         && exception.getErrorCode() == BusinessErrorCode.USER_DELETED)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 }

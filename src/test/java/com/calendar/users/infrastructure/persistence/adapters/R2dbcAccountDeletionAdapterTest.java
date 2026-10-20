@@ -52,14 +52,14 @@ class R2dbcAccountDeletionAdapterTest {
 
         StepVerifier.create(adapter.claimDue(20))
                 .expectNext(new AccountDeletionJob(USER, "kc-1", AT, false, false, 2))
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
     void markIdentityDeleted_shouldDelegate_whenCalled() {
         when(repository.markIdentityDeleted(USER)).thenReturn(Mono.just(1L));
 
-        StepVerifier.create(adapter.markIdentityDeleted(USER)).verifyComplete();
+        StepVerifier.create(adapter.markIdentityDeleted(USER)).expectComplete().verify(Duration.ofSeconds(10));
 
         verify(repository).markIdentityDeleted(USER);
     }
@@ -68,7 +68,7 @@ class R2dbcAccountDeletionAdapterTest {
     void markMediaDeleted_shouldDelegate_whenCalled() {
         when(repository.markMediaDeleted(USER)).thenReturn(Mono.just(1L));
 
-        StepVerifier.create(adapter.markMediaDeleted(USER)).verifyComplete();
+        StepVerifier.create(adapter.markMediaDeleted(USER)).expectComplete().verify(Duration.ofSeconds(10));
 
         verify(repository).markMediaDeleted(USER);
     }
@@ -77,7 +77,7 @@ class R2dbcAccountDeletionAdapterTest {
     void postpone_shouldDelegateWithTheGivenInstant_whenCalled() {
         when(repository.postpone(USER, AT_UTC)).thenReturn(Mono.just(1L));
 
-        StepVerifier.create(adapter.postpone(USER, AT)).verifyComplete();
+        StepVerifier.create(adapter.postpone(USER, AT)).expectComplete().verify(Duration.ofSeconds(10));
 
         verify(repository).postpone(USER, AT_UTC);
     }
@@ -86,7 +86,7 @@ class R2dbcAccountDeletionAdapterTest {
     void recordFailure_shouldStoreTheCodeAndTheRetryTime_whenItIsShort() {
         when(repository.recordFailure(USER, "USR-TEC-001", AT_UTC)).thenReturn(Mono.just(1L));
 
-        StepVerifier.create(adapter.recordFailure(USER, "USR-TEC-001", AT)).verifyComplete();
+        StepVerifier.create(adapter.recordFailure(USER, "USR-TEC-001", AT)).expectComplete().verify(Duration.ofSeconds(10));
 
         verify(repository).recordFailure(USER, "USR-TEC-001", AT_UTC);
     }
@@ -96,7 +96,7 @@ class R2dbcAccountDeletionAdapterTest {
         when(repository.recordFailure(eq(USER), org.mockito.ArgumentMatchers.anyString(), eq(AT_UTC)))
                 .thenReturn(Mono.just(1L));
 
-        StepVerifier.create(adapter.recordFailure(USER, "x".repeat(5000), AT)).verifyComplete();
+        StepVerifier.create(adapter.recordFailure(USER, "x".repeat(5000), AT)).expectComplete().verify(Duration.ofSeconds(10));
 
         ArgumentCaptor<String> stored = ArgumentCaptor.captor();
         verify(repository).recordFailure(eq(USER), stored.capture(), eq(AT_UTC));

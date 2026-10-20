@@ -1,5 +1,6 @@
 package com.calendar.users.infrastructure.persistence.adapters;
 
+import java.time.Duration;
 import java.time.LocalDate;
 
 import com.calendar.users.infrastructure.messaging.models.UserBirthdayEventDTO;
@@ -121,7 +122,7 @@ class R2dbcUserRepositoryAdapterTest {
                 // Then
                 StepVerifier.create(result)
                                 .expectNext(user)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(entity).setKeycloakId("kc-123");
                 ArgumentCaptor<String> payload = ArgumentCaptor.captor();
@@ -148,7 +149,7 @@ class R2dbcUserRepositoryAdapterTest {
                 // When / Then: the error reaches the caller, so the transaction rolls back
                 StepVerifier.create(adapter.save(user, "kc-123"))
                                 .expectError(IllegalStateException.class)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -170,7 +171,7 @@ class R2dbcUserRepositoryAdapterTest {
                                 .expectErrorMatches(throwable -> throwable instanceof BusinessException &&
                                                 ((BusinessException) throwable)
                                                                 .getErrorCode() == BusinessErrorCode.USER_ALREADY_EXISTS)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 verify(outboxEventStore, never()).append(any(), anyString(), anyString());
         }
@@ -188,7 +189,7 @@ class R2dbcUserRepositoryAdapterTest {
                 // Then
                 StepVerifier.create(result)
                                 .expectNext(id)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
 
@@ -203,7 +204,7 @@ class R2dbcUserRepositoryAdapterTest {
                 // Then
                 StepVerifier.create(result)
                                 .expectNext(true)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
 
@@ -223,7 +224,7 @@ class R2dbcUserRepositoryAdapterTest {
                 // Then
                 StepVerifier.create(result)
                                 .expectNext(user)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
 
@@ -237,7 +238,7 @@ class R2dbcUserRepositoryAdapterTest {
 
                 StepVerifier.create(adapter.findIdentitiesToCheck(cutoff, 10))
                                 .expectNext(new IdentityToCheck(id, "kc-1"))
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -245,7 +246,7 @@ class R2dbcUserRepositoryAdapterTest {
                 UUID id = UUID.randomUUID();
                 when(userR2dbcRepository.markIdentityChecked(id)).thenReturn(Mono.just(1L));
 
-                StepVerifier.create(adapter.markIdentityChecked(id)).verifyComplete();
+                StepVerifier.create(adapter.markIdentityChecked(id)).expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(userR2dbcRepository).markIdentityChecked(id);
         }
@@ -258,7 +259,7 @@ class R2dbcUserRepositoryAdapterTest {
                 when(outboxEventStore.deleteOtherEventsOf(id, "USER_DELETED")).thenReturn(Mono.just(2L));
                 when(outboxEventStore.append(any(UUID.class), anyString(), anyString())).thenReturn(Mono.just(1L));
 
-                StepVerifier.create(adapter.deleteOrphan(id)).verifyComplete();
+                StepVerifier.create(adapter.deleteOrphan(id)).expectComplete().verify(Duration.ofSeconds(10));
 
                 InOrder order = inOrder(userR2dbcRepository, outboxEventStore);
                 order.verify(userR2dbcRepository).deleteLiveById(id);
@@ -275,7 +276,7 @@ class R2dbcUserRepositoryAdapterTest {
                 UUID id = UUID.randomUUID();
                 when(userR2dbcRepository.deleteLiveById(id)).thenReturn(Mono.just(0L));
 
-                StepVerifier.create(adapter.deleteOrphan(id)).verifyComplete();
+                StepVerifier.create(adapter.deleteOrphan(id)).expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(outboxEventStore, never()).deleteOtherEventsOf(any(), anyString());
                 verify(outboxEventStore, never()).append(any(), anyString(), anyString());
@@ -292,7 +293,7 @@ class R2dbcUserRepositoryAdapterTest {
 
                 StepVerifier.create(adapter.deleteOrphan(id))
                                 .expectError(IllegalStateException.class)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         // --- updateProfile ---------------------------------------------------
@@ -312,7 +313,7 @@ class R2dbcUserRepositoryAdapterTest {
                 when(kafkaDataMapper.toUserModifiedEventDTO(RENAMED)).thenReturn(event);
                 when(outboxEventStore.append(any(UUID.class), anyString(), anyString())).thenReturn(Mono.just(1L));
 
-                StepVerifier.create(adapter.updateProfile(RENAMED, "camille")).expectNext(RENAMED).verifyComplete();
+                StepVerifier.create(adapter.updateProfile(RENAMED, "camille")).expectNext(RENAMED).expectComplete().verify(Duration.ofSeconds(10));
 
                 ArgumentCaptor<String> payload = ArgumentCaptor.captor();
                 verify(outboxEventStore).append(eq(ID), eq(OutboxEventType.USER_MODIFIED.name()), payload.capture());
@@ -327,7 +328,7 @@ class R2dbcUserRepositoryAdapterTest {
                 StepVerifier.create(adapter.updateProfile(RENAMED, "camille"))
                                 .expectErrorMatches(error -> error instanceof BusinessException business
                                                 && business.getErrorCode() == BusinessErrorCode.USERNAME_TAKEN)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 verify(outboxEventStore, never()).append(any(), anyString(), anyString());
         }
@@ -339,7 +340,7 @@ class R2dbcUserRepositoryAdapterTest {
                 StepVerifier.create(adapter.updateProfile(RENAMED, "camille"))
                                 .expectErrorMatches(error -> error instanceof BusinessException business
                                                 && business.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -353,14 +354,14 @@ class R2dbcUserRepositoryAdapterTest {
                 when(outboxEventStore.append(any(UUID.class), anyString(), anyString()))
                                 .thenReturn(Mono.error(new IllegalStateException("outbox down")));
 
-                StepVerifier.create(adapter.updateProfile(RENAMED, "camille")).expectError(IllegalStateException.class).verify();
+                StepVerifier.create(adapter.updateProfile(RENAMED, "camille")).expectError(IllegalStateException.class).verify(Duration.ofSeconds(10));
         }
 
         @Test
         void findKeycloakIdByUserId_ShouldReadTheColumn() {
                 when(userR2dbcRepository.findKeycloakIdById(ID)).thenReturn(Mono.just("kc-camille"));
 
-                StepVerifier.create(adapter.findKeycloakIdByUserId(ID)).expectNext("kc-camille").verifyComplete();
+                StepVerifier.create(adapter.findKeycloakIdByUserId(ID)).expectNext("kc-camille").expectComplete().verify(Duration.ofSeconds(10));
         }
 
         // --- pictures --------------------------------------------------------
@@ -375,7 +376,7 @@ class R2dbcUserRepositoryAdapterTest {
                                 .thenReturn(new UserModifiedEventDTO(ID, "camille_d", 4321, "Cam", "Dupont", "avatars/k.jpg"));
                 when(outboxEventStore.append(any(UUID.class), anyString(), anyString())).thenReturn(Mono.just(1L));
 
-                StepVerifier.create(adapter.updatePicture(ID, "avatars/k.jpg")).expectNext(RENAMED).verifyComplete();
+                StepVerifier.create(adapter.updatePicture(ID, "avatars/k.jpg")).expectNext(RENAMED).expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(outboxEventStore).append(eq(ID), eq(OutboxEventType.USER_MODIFIED.name()), anyString());
         }
@@ -387,7 +388,7 @@ class R2dbcUserRepositoryAdapterTest {
                 StepVerifier.create(adapter.updatePicture(ID, "avatars/k.jpg"))
                                 .expectErrorMatches(error -> error instanceof BusinessException business
                                                 && business.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -397,12 +398,12 @@ class R2dbcUserRepositoryAdapterTest {
 
                 StepVerifier.create(adapter.findPictures(List.of(ID)))
                                 .expectNext(new UserPicture(ID, "avatars/k.jpg"))
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
         void findPictures_ShouldNotQuery_ForNoUsers() {
-                StepVerifier.create(adapter.findPictures(List.of())).verifyComplete();
+                StepVerifier.create(adapter.findPictures(List.of())).expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(userR2dbcRepository, never()).findPictures(any());
         }
@@ -415,7 +416,7 @@ class R2dbcUserRepositoryAdapterTest {
 
                 StepVerifier.create(adapter.findAbout(userId))
                                 .expectNext(new UserAbout("Partante", List.of("Rando", "Ciné")))
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -423,7 +424,7 @@ class R2dbcUserRepositoryAdapterTest {
                 UUID userId = UUID.randomUUID();
                 when(userR2dbcRepository.findAboutById(userId)).thenReturn(Mono.just(new UserAboutRow(null, null)));
 
-                StepVerifier.create(adapter.findAbout(userId)).expectNext(UserAbout.EMPTY).verifyComplete();
+                StepVerifier.create(adapter.findAbout(userId)).expectNext(UserAbout.EMPTY).expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -432,7 +433,7 @@ class R2dbcUserRepositoryAdapterTest {
                 UserAbout about = new UserAbout("Partante", List.of("Rando"));
                 when(userR2dbcRepository.updateAbout(userId, "Partante", new String[] {"Rando"})).thenReturn(Mono.just(1L));
 
-                StepVerifier.create(adapter.updateAbout(userId, about)).expectNext(about).verifyComplete();
+                StepVerifier.create(adapter.updateAbout(userId, about)).expectNext(about).expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -443,7 +444,7 @@ class R2dbcUserRepositoryAdapterTest {
                 StepVerifier.create(adapter.updateAbout(userId, UserAbout.EMPTY))
                                 .expectErrorMatches(error -> error instanceof BusinessException exception
                                                 && exception.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -453,7 +454,7 @@ class R2dbcUserRepositoryAdapterTest {
 
                 StepVerifier.create(adapter.findPreferences(userId))
                                 .expectNext(new UserPreferences(Theme.DARK))
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -461,7 +462,7 @@ class R2dbcUserRepositoryAdapterTest {
                 UUID userId = UUID.randomUUID();
                 when(userR2dbcRepository.findPreferencesById(userId)).thenReturn(Mono.just(new UserPreferencesRow(null)));
 
-                StepVerifier.create(adapter.findPreferences(userId)).expectNext(UserPreferences.DEFAULT).verifyComplete();
+                StepVerifier.create(adapter.findPreferences(userId)).expectNext(UserPreferences.DEFAULT).expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -469,7 +470,7 @@ class R2dbcUserRepositoryAdapterTest {
                 UUID userId = UUID.randomUUID();
                 when(userR2dbcRepository.findPreferencesById(userId)).thenReturn(Mono.empty());
 
-                StepVerifier.create(adapter.findPreferences(userId)).verifyComplete();
+                StepVerifier.create(adapter.findPreferences(userId)).expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -478,7 +479,7 @@ class R2dbcUserRepositoryAdapterTest {
                 UserPreferences light = new UserPreferences(Theme.LIGHT);
                 when(userR2dbcRepository.updatePreferences(userId, "LIGHT")).thenReturn(Mono.just(1L));
 
-                StepVerifier.create(adapter.updatePreferences(userId, light)).expectNext(light).verifyComplete();
+                StepVerifier.create(adapter.updatePreferences(userId, light)).expectNext(light).expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -489,7 +490,7 @@ class R2dbcUserRepositoryAdapterTest {
                 StepVerifier.create(adapter.updatePreferences(userId, UserPreferences.DEFAULT))
                                 .expectErrorMatches(error -> error instanceof BusinessException exception
                                                 && exception.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         // --- retired handles on rename -----------------------------------------
@@ -502,7 +503,7 @@ class R2dbcUserRepositoryAdapterTest {
                 StepVerifier.create(adapter.updateProfile(RENAMED, "camille"))
                                 .expectErrorMatches(error -> error instanceof BusinessException business
                                                 && business.getErrorCode() == BusinessErrorCode.USERNAME_TAKEN)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 verify(outboxEventStore, never()).append(any(), anyString(), anyString());
         }
@@ -516,7 +517,7 @@ class R2dbcUserRepositoryAdapterTest {
                 when(userEntityMapper.toBusinessUser(stored)).thenReturn(RENAMED);
                 when(outboxEventStore.append(any(UUID.class), anyString(), anyString())).thenReturn(Mono.just(1L));
 
-                StepVerifier.create(adapter.updateProfile(RENAMED, "Camille_D")).expectNext(RENAMED).verifyComplete();
+                StepVerifier.create(adapter.updateProfile(RENAMED, "Camille_D")).expectNext(RENAMED).expectComplete().verify(Duration.ofSeconds(10));
 
                 verifyNoInteractions(retiredHandles);
         }
@@ -546,7 +547,7 @@ class R2dbcUserRepositoryAdapterTest {
         void eraseAccount_shouldReturnUnknownUser_whenNoRowIsLocked() {
                 when(userR2dbcRepository.lockForDeletion(ID)).thenReturn(Mono.empty());
 
-                StepVerifier.create(adapter.eraseAccount(ID, DELETED_AT)).expectNext(AccountErasure.UNKNOWN_USER).verifyComplete();
+                StepVerifier.create(adapter.eraseAccount(ID, DELETED_AT)).expectNext(AccountErasure.UNKNOWN_USER).expectComplete().verify(Duration.ofSeconds(10));
 
                 verifyNoInteractions(retiredHandles, accountDeletions, outboxEventStore);
         }
@@ -558,7 +559,7 @@ class R2dbcUserRepositoryAdapterTest {
 
                 StepVerifier.create(adapter.eraseAccount(ID, DELETED_AT.plusSeconds(60)))
                                 .expectNext(AccountErasure.ALREADY_ERASED)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(userR2dbcRepository, never()).tombstone(any(), any());
                 verifyNoInteractions(retiredHandles, accountDeletions, outboxEventStore);
@@ -569,7 +570,7 @@ class R2dbcUserRepositoryAdapterTest {
                 givenALiveRowLocked();
                 givenEveryStepSucceeds();
 
-                StepVerifier.create(adapter.eraseAccount(ID, DELETED_AT)).expectNext(AccountErasure.ERASED).verifyComplete();
+                StepVerifier.create(adapter.eraseAccount(ID, DELETED_AT)).expectNext(AccountErasure.ERASED).expectComplete().verify(Duration.ofSeconds(10));
 
                 InOrder order = inOrder(userR2dbcRepository, retiredHandles, accountDeletions, outboxEventStore);
                 order.verify(userR2dbcRepository).lockForDeletion(ID);
@@ -599,7 +600,7 @@ class R2dbcUserRepositoryAdapterTest {
                 when(retiredHandles.retireHandleOf(ID)).thenReturn(Mono.just(1L));
                 when(userR2dbcRepository.tombstone(ID, DELETED_AT_UTC)).thenReturn(Mono.just(0L));
 
-                StepVerifier.create(adapter.eraseAccount(ID, DELETED_AT)).expectError(IllegalStateException.class).verify();
+                StepVerifier.create(adapter.eraseAccount(ID, DELETED_AT)).expectError(IllegalStateException.class).verify(Duration.ofSeconds(10));
 
                 verifyNoInteractions(accountDeletions, outboxEventStore);
         }
@@ -612,7 +613,7 @@ class R2dbcUserRepositoryAdapterTest {
                 when(outboxEventStore.append(any(UUID.class), anyString(), anyString()))
                                 .thenReturn(Mono.error(new IllegalStateException("outbox down")));
 
-                StepVerifier.create(adapter.eraseAccount(ID, DELETED_AT)).expectError(IllegalStateException.class).verify();
+                StepVerifier.create(adapter.eraseAccount(ID, DELETED_AT)).expectError(IllegalStateException.class).verify(Duration.ofSeconds(10));
         }
 
         // --- tombstone reads -----------------------------------------------------
@@ -623,20 +624,20 @@ class R2dbcUserRepositoryAdapterTest {
                 when(userR2dbcRepository.isDeleted(ID)).thenReturn(Mono.just(true));
                 when(userR2dbcRepository.isDeleted(live)).thenReturn(Mono.just(false));
 
-                StepVerifier.create(adapter.findAccountState(ID)).expectNext(AccountState.DELETED).verifyComplete();
-                StepVerifier.create(adapter.findAccountState(live)).expectNext(AccountState.ACTIVE).verifyComplete();
+                StepVerifier.create(adapter.findAccountState(ID)).expectNext(AccountState.DELETED).expectComplete().verify(Duration.ofSeconds(10));
+                StepVerifier.create(adapter.findAccountState(live)).expectNext(AccountState.ACTIVE).expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
         void findAccountState_shouldBeEmpty_whenTheUserIsUnknown() {
                 when(userR2dbcRepository.isDeleted(ID)).thenReturn(Mono.empty());
 
-                StepVerifier.create(adapter.findAccountState(ID)).verifyComplete();
+                StepVerifier.create(adapter.findAccountState(ID)).expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
         void findDeletedIds_shouldNotQuery_whenNoIdIsGiven() {
-                StepVerifier.create(adapter.findDeletedIds(List.of())).verifyComplete();
+                StepVerifier.create(adapter.findDeletedIds(List.of())).expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(userR2dbcRepository, never()).findDeletedIds(any());
         }
@@ -645,7 +646,7 @@ class R2dbcUserRepositoryAdapterTest {
         void findDeletedIds_shouldReturnTheTombstones_whenIdsAreGiven() {
                 when(userR2dbcRepository.findDeletedIds(List.of(ID))).thenReturn(Flux.just(ID));
 
-                StepVerifier.create(adapter.findDeletedIds(List.of(ID))).expectNext(ID).verifyComplete();
+                StepVerifier.create(adapter.findDeletedIds(List.of(ID))).expectNext(ID).expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -654,7 +655,7 @@ class R2dbcUserRepositoryAdapterTest {
 
                 StepVerifier.create(adapter.findDeleted(null, 10))
                                 .expectNext(new DeletedUser(ID, DELETED_AT))
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -665,7 +666,7 @@ class R2dbcUserRepositoryAdapterTest {
 
                 StepVerifier.create(adapter.findDeleted(new DeletedUser(ID, DELETED_AT), 10))
                                 .expectNext(new DeletedUser(next, DELETED_AT.plusSeconds(1)))
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         // --- birthday --------------------------------------------------------
@@ -687,7 +688,7 @@ class R2dbcUserRepositoryAdapterTest {
                 when(kafkaDataMapper.toUserBirthdayEventDTO(REGISTERED)).thenReturn(BIRTHDAY_EVENT);
                 when(outboxEventStore.append(any(UUID.class), anyString(), anyString())).thenReturn(Mono.just(1L));
 
-                StepVerifier.create(adapter.updateProfile(REGISTERED, "camille")).expectNext(REGISTERED).verifyComplete();
+                StepVerifier.create(adapter.updateProfile(REGISTERED, "camille")).expectNext(REGISTERED).expectComplete().verify(Duration.ofSeconds(10));
 
                 InOrder order = inOrder(outboxEventStore);
                 order.verify(outboxEventStore).append(eq(ID), eq(OutboxEventType.USER_MODIFIED.name()), anyString());
@@ -703,7 +704,7 @@ class R2dbcUserRepositoryAdapterTest {
                 when(userEntityMapper.toBusinessUser(stored)).thenReturn(RENAMED);
                 when(outboxEventStore.append(any(UUID.class), anyString(), anyString())).thenReturn(Mono.just(1L));
 
-                StepVerifier.create(adapter.updateProfile(RENAMED, "camille")).expectNext(RENAMED).verifyComplete();
+                StepVerifier.create(adapter.updateProfile(RENAMED, "camille")).expectNext(RENAMED).expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(outboxEventStore, never()).append(any(), eq(OutboxEventType.USER_BIRTHDAY.name()), anyString());
         }
@@ -719,7 +720,7 @@ class R2dbcUserRepositoryAdapterTest {
 
                 StepVerifier.create(adapter.completeRegistration(ID, new Registration(BIRTH_DATE)))
                                 .expectNext(REGISTERED)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
 
                 ArgumentCaptor<String> payload = ArgumentCaptor.captor();
                 verify(outboxEventStore).append(eq(ID), eq(OutboxEventType.USER_BIRTHDAY.name()), payload.capture());
@@ -734,7 +735,7 @@ class R2dbcUserRepositoryAdapterTest {
                 StepVerifier.create(adapter.completeRegistration(ID, new Registration(BIRTH_DATE)))
                                 .expectErrorMatches(error -> error instanceof BusinessException business
                                                 && business.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 verify(outboxEventStore, never()).append(any(), anyString(), anyString());
         }
@@ -752,6 +753,6 @@ class R2dbcUserRepositoryAdapterTest {
 
                 StepVerifier.create(adapter.completeRegistration(ID, new Registration(BIRTH_DATE)))
                                 .expectError(IllegalStateException.class)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 }

@@ -2,6 +2,7 @@ package com.calendar.users.domain.services;
 
 import static org.mockito.ArgumentMatchers.any;
 
+import java.time.Duration;
 import java.util.List;
 
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -87,7 +88,7 @@ class UserServiceTest {
                 // Then
                 StepVerifier.create(result)
                                 .expectNext(user)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -105,7 +106,7 @@ class UserServiceTest {
                                 .expectErrorMatches(throwable -> throwable instanceof BusinessException &&
                                                 ((BusinessException) throwable)
                                                                 .getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -115,7 +116,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.findBusinessIdByKeycloakId("kc-1"))
                                 .expectNext(existingId)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -127,7 +128,7 @@ class UserServiceTest {
                                 .expectErrorMatches(e -> e instanceof BusinessException
                                                 && ((BusinessException) e).getErrorCode()
                                                                 == BusinessErrorCode.USER_NOT_FOUND)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 verify(userRepository, never()).save(any(), anyString());
         }
@@ -144,7 +145,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.provisionUser("kc-1", new IdentityUser("léa", "Léa", "Martin")))
                                 .expectNext(newId)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(userRepository, times(2)).existsByUserNameAndHashtag(eq("léa"), anyInt());
         }
@@ -160,7 +161,7 @@ class UserServiceTest {
                                 .expectErrorMatches(e -> e instanceof BusinessException
                                                 && ((BusinessException) e).getErrorCode()
                                                                 == BusinessErrorCode.HASHTAG_UNAVAILABLE)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 // Bounded: ten attempts, then it gives up. No save is attempted.
                 verify(userRepository, times(10)).existsByUserNameAndHashtag(eq("léa"), anyInt());
@@ -181,7 +182,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.provisionUser(kcId, new IdentityUser("léa", "Léa", "Martin")))
                                 .expectNext(newId)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(userRepository).save(argThat(user -> user.userName().equals("léa")
                                 && user.firstName().equals("Léa") && user.lastName().equals("Martin")), eq(kcId));
@@ -194,7 +195,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.provisionUser("kc-1", new IdentityUser("léa", "Léa", "Martin")))
                                 .expectNext(existingId)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(userRepository, never()).save(any(), anyString());
         }
@@ -211,7 +212,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.provisionUser("kc-1", new IdentityUser("léa", "Léa", "Martin")))
                                 .expectNext(winnerId)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -226,7 +227,7 @@ class UserServiceTest {
                                 .expectErrorMatches(e -> e instanceof BusinessException
                                                 && ((BusinessException) e).getErrorCode()
                                                                 == BusinessErrorCode.USER_ALREADY_EXISTS)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -238,7 +239,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.provisionUser("kc-1", new IdentityUser("léa", "Léa", "Martin")))
                                 .expectError(IllegalStateException.class)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 verify(userRepository, times(1)).findIdByKeycloakId("kc-1");
         }
@@ -255,7 +256,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.removeOrphans(CUTOFF, 100))
                                 .expectNext(new OrphanSweep(1, 0, 0))
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(userRepository, never()).deleteOrphan(any());
         }
@@ -273,7 +274,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.removeOrphans(CUTOFF, 100))
                                 .expectNext(new OrphanSweep(0, 2, 0))
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(userRepository).deleteOrphan(notFound);
                 verify(userRepository).deleteOrphan(empty);
@@ -294,7 +295,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.removeOrphans(CUTOFF, 100))
                                 .expectNext(new OrphanSweep(1, 0, 1))
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(userRepository, never()).deleteOrphan(any());
                 verify(userRepository, never()).markIdentityChecked(down);
@@ -306,7 +307,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.removeOrphans(CUTOFF, 100))
                                 .expectNext(OrphanSweep.EMPTY)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         // --- updateProfile ---------------------------------------------------
@@ -331,7 +332,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("camille_d", "Cam", "Dupont")))
                                 .expectNext(expected)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
 
                 InOrder order = inOrder(identityProvider, userRepository);
                 order.verify(identityProvider).updateProfile("kc-camille", new IdentityUser("camille_d", "Cam", "Dupont"));
@@ -346,7 +347,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("Camille_D", "Cam", "Dupont")))
                                 .expectNextMatches(user -> user.userName().equals("camille_d"))
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(identityProvider).updateProfile("kc-camille", new IdentityUser("camille_d", "Cam", "Dupont"));
         }
@@ -360,7 +361,7 @@ class UserServiceTest {
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("lea", "Cam", "Dupont")))
                                 .expectErrorMatches(error -> error instanceof BusinessException business
                                                 && business.getErrorCode() == BusinessErrorCode.USERNAME_TAKEN)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 verify(userRepository, never()).updateProfile(any(), any());
                 verify(identityProvider, times(1)).updateProfile(any(), any());
@@ -376,7 +377,7 @@ class UserServiceTest {
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("lea", "Cam", "Dupont")))
                                 .expectErrorMatches(error -> error instanceof BusinessException business
                                                 && business.getErrorCode() == BusinessErrorCode.USERNAME_TAKEN)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 InOrder order = inOrder(identityProvider, userRepository);
                 order.verify(identityProvider).updateProfile("kc-camille", new IdentityUser("lea", "Cam", "Dupont"));
@@ -398,7 +399,7 @@ class UserServiceTest {
                                 .expectErrorMatches(error -> error == databaseDown
                                                 && error.getSuppressed().length == 1
                                                 && error.getSuppressed()[0] == keycloakDown)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -410,7 +411,7 @@ class UserServiceTest {
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("camille", "Cam", "Dupont")))
                                 .expectErrorMatches(error -> error instanceof BusinessException business
                                                 && business.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 verify(identityProvider, never()).updateProfile(any(), any());
                 verify(userRepository, never()).updateProfile(any(), any());
@@ -450,7 +451,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD))
                                 .expectNext(SIGNED)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
 
                 ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
                 InOrder order = inOrder(mediaStore, userRepository);
@@ -470,7 +471,7 @@ class UserServiceTest {
                 when(userRepository.updatePicture(eq(USER_ID), anyString())).thenReturn(Mono.just(CAMILLE));
                 givenKeysAreSigned();
 
-                StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD)).expectNext(SIGNED).verifyComplete();
+                StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD)).expectNext(SIGNED).expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(mediaStore, never()).delete(anyString());
         }
@@ -485,7 +486,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD))
                                 .expectError(IllegalStateException.class)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 ArgumentCaptor<String> stored = ArgumentCaptor.forClass(String.class);
                 verify(mediaStore).store(stored.capture(), eq(UPLOAD), eq(MediaProfile.AVATAR));
@@ -505,7 +506,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD))
                                 .expectError(IllegalStateException.class)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -517,7 +518,7 @@ class UserServiceTest {
                 StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD))
                                 .expectErrorMatches(error -> error instanceof BusinessException business
                                                 && business.getErrorCode() == BusinessErrorCode.PICTURE_INVALID)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 verify(userRepository, never()).updatePicture(any(), anyString());
                 verify(mediaStore, never()).delete(anyString());
@@ -532,7 +533,7 @@ class UserServiceTest {
                 StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD))
                                 .expectErrorMatches(error -> error instanceof TechnicalException technical
                                                 && technical.getErrorCode() == TechnicalErrorCode.MEDIA_ERROR)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 verify(userRepository, never()).updatePicture(any(), anyString());
         }
@@ -547,7 +548,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD))
                                 .expectNext(SIGNED)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -558,7 +559,7 @@ class UserServiceTest {
                 when(mediaStore.urls(anyCollection()))
                                 .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.MEDIA_ERROR)));
 
-                StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD)).verifyComplete();
+                StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD)).expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(userRepository).updatePicture(eq(USER_ID), anyString());
                 verify(mediaStore, never()).delete(anyString());
@@ -571,7 +572,7 @@ class UserServiceTest {
                 when(userRepository.updatePicture(eq(USER_ID), anyString())).thenReturn(Mono.just(CAMILLE));
                 when(mediaStore.urls(anyCollection())).thenReturn(Mono.just(Map.of()));
 
-                StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD)).verifyComplete();
+                StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD)).expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -582,7 +583,7 @@ class UserServiceTest {
                 StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD))
                                 .expectErrorMatches(error -> error instanceof BusinessException business
                                                 && business.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 verifyNoInteractions(mediaStore);
         }
@@ -599,7 +600,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.pictureUrls(Set.of(USER_ID, lea, hugo)))
                                 .expectNext(Map.of(USER_ID, SIGNED, hugo, SIGNED, lea, "/demo/avatars/lea.svg"))
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(mediaStore, times(1))
                                 .urls(List.of("avatars/" + USER_ID + "/a.jpg", "avatars/" + hugo + "/h.jpg"));
@@ -613,7 +614,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.pictureUrls(Set.of(lea)))
                                 .expectNext(Map.of(lea, "/demo/avatars/lea.svg"))
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
 
                 verifyNoInteractions(mediaStore);
         }
@@ -624,7 +625,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.pictureUrls(Set.of(USER_ID)))
                                 .expectNext(Map.of())
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -638,7 +639,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.pictureUrls(Set.of(USER_ID, lea)))
                                 .expectNext(Map.of(lea, "/demo/avatars/lea.svg"))
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -649,7 +650,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.pictureUrls(Set.of(USER_ID)))
                                 .expectNext(Map.of())
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -659,7 +660,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.pictureUrls(Set.of(USER_ID)))
                                 .expectError(TechnicalException.class)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -668,7 +669,7 @@ class UserServiceTest {
                 UserAbout about = new UserAbout("Partante", List.of("Rando"));
                 when(userRepository.findAbout(userId)).thenReturn(Mono.just(about));
 
-                StepVerifier.create(userService.about(userId)).expectNext(about).verifyComplete();
+                StepVerifier.create(userService.about(userId)).expectNext(about).expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -677,7 +678,7 @@ class UserServiceTest {
                 when(userRepository.findAbout(userId)).thenReturn(Mono.empty());
                 when(userRepository.findAccountState(userId)).thenReturn(Mono.just(AccountState.ACTIVE));
 
-                StepVerifier.create(userService.about(userId)).expectNext(UserAbout.EMPTY).verifyComplete();
+                StepVerifier.create(userService.about(userId)).expectNext(UserAbout.EMPTY).expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -686,7 +687,7 @@ class UserServiceTest {
                 UserAbout about = new UserAbout("Partante", List.of("Rando"));
                 when(userRepository.updateAbout(userId, about)).thenReturn(Mono.just(about));
 
-                StepVerifier.create(userService.updateAbout(userId, about)).expectNext(about).verifyComplete();
+                StepVerifier.create(userService.updateAbout(userId, about)).expectNext(about).expectComplete().verify(Duration.ofSeconds(10));
                 verifyNoInteractions(identityProvider);
         }
 
@@ -699,7 +700,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.updateAbout(userId, UserAbout.EMPTY))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         private static final UUID VIEWER = UUID.fromString("11111111-1111-1111-1111-111111111111");
@@ -717,7 +718,7 @@ class UserServiceTest {
                 StepVerifier.create(userService.friendProfile(VIEWER, FRIEND))
                                 .expectNext(new FriendProfile(FRIEND, "lea", 4242, "Léa", "Martin", FRIEND_JOINED,
                                                 "Partante", List.of("Rando"), null))
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -729,7 +730,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.friendProfile(VIEWER, FRIEND))
                                 .expectNextMatches(profile -> profile.bio() == null && profile.interests().isEmpty())
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -740,7 +741,7 @@ class UserServiceTest {
                 StepVerifier.create(userService.friendProfile(VIEWER, FRIEND))
                                 .expectErrorMatches(error -> error instanceof BusinessException e
                                                 && e.getErrorCode() == BusinessErrorCode.NOT_A_FRIEND)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
                 verify(userRepository, never()).findAbout(any());
         }
 
@@ -752,7 +753,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.friendProfile(FRIEND, FRIEND))
                                 .expectNextMatches(profile -> profile.id().equals(FRIEND))
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
                 verifyNoInteractions(friendshipChecker);
         }
 
@@ -764,7 +765,7 @@ class UserServiceTest {
                 StepVerifier.create(userService.friendProfile(VIEWER, FRIEND))
                                 .expectErrorMatches(error -> error instanceof BusinessException e
                                                 && e.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
                 verifyNoInteractions(friendshipChecker);
         }
 
@@ -777,7 +778,7 @@ class UserServiceTest {
                 StepVerifier.create(userService.friendProfile(VIEWER, FRIEND))
                                 .expectErrorMatches(error -> error instanceof TechnicalException e
                                                 && e.getErrorCode() == TechnicalErrorCode.SOCIAL_ERROR)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
                 verify(userRepository, never()).findAbout(any());
         }
 
@@ -788,7 +789,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.preferences(userId))
                                 .expectNext(new UserPreferences(Theme.DARK))
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -797,7 +798,7 @@ class UserServiceTest {
                 when(userRepository.findPreferences(userId)).thenReturn(Mono.empty());
                 when(userRepository.findAccountState(userId)).thenReturn(Mono.just(AccountState.ACTIVE));
 
-                StepVerifier.create(userService.preferences(userId)).expectNext(UserPreferences.DEFAULT).verifyComplete();
+                StepVerifier.create(userService.preferences(userId)).expectNext(UserPreferences.DEFAULT).expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -806,7 +807,7 @@ class UserServiceTest {
                 UserPreferences dark = new UserPreferences(Theme.DARK);
                 when(userRepository.updatePreferences(userId, dark)).thenReturn(Mono.just(dark));
 
-                StepVerifier.create(userService.updatePreferences(userId, dark)).expectNext(dark).verifyComplete();
+                StepVerifier.create(userService.updatePreferences(userId, dark)).expectNext(dark).expectComplete().verify(Duration.ofSeconds(10));
                 verifyNoInteractions(identityProvider);
         }
 
@@ -819,7 +820,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.updatePreferences(userId, UserPreferences.DEFAULT))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         // --- deleted accounts ------------------------------------------------
@@ -839,7 +840,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.readProfile(USER_ID))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -849,7 +850,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.readProfile(USER_ID))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -860,7 +861,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("camille", "Cam", "Dupont")))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 verifyNoInteractions(identityProvider);
                 verify(userRepository, never()).updateProfile(any(), any());
@@ -873,7 +874,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.updatePicture(USER_ID, UPLOAD))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 verifyNoInteractions(mediaStore);
         }
@@ -885,7 +886,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.about(USER_ID))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -893,7 +894,7 @@ class UserServiceTest {
                 when(userRepository.findAbout(USER_ID)).thenReturn(Mono.empty());
                 when(userRepository.findAccountState(USER_ID)).thenReturn(Mono.empty());
 
-                StepVerifier.create(userService.about(USER_ID)).expectNext(UserAbout.EMPTY).verifyComplete();
+                StepVerifier.create(userService.about(USER_ID)).expectNext(UserAbout.EMPTY).expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -904,7 +905,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.updateAbout(USER_ID, UserAbout.EMPTY))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -914,7 +915,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.updateAbout(USER_ID, UserAbout.EMPTY))
                                 .expectError(TechnicalException.class)
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 verify(userRepository, never()).findAccountState(any());
         }
@@ -926,7 +927,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.preferences(USER_ID))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -934,7 +935,7 @@ class UserServiceTest {
                 when(userRepository.findPreferences(USER_ID)).thenReturn(Mono.empty());
                 when(userRepository.findAccountState(USER_ID)).thenReturn(Mono.empty());
 
-                StepVerifier.create(userService.preferences(USER_ID)).expectNext(UserPreferences.DEFAULT).verifyComplete();
+                StepVerifier.create(userService.preferences(USER_ID)).expectNext(UserPreferences.DEFAULT).expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -945,7 +946,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.updatePreferences(USER_ID, UserPreferences.DEFAULT))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -955,7 +956,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.friendProfile(VIEWER, FRIEND))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 verifyNoInteractions(friendshipChecker);
         }
@@ -967,7 +968,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.findBusinessIdByKeycloakId("kc-deleted"))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 verify(userRepository, never()).findAccountState(any());
         }
@@ -986,7 +987,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.provisionUser("kc-new", new IdentityUser("lea", "Léa", "Martin")))
                                 .expectNext(USER_ID)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(userRepository, times(3)).existsByUserNameAndHashtag(eq("lea"), anyInt());
         }
@@ -999,7 +1000,7 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("camille", "Cam", "Dupont")))
                                 .expectNextCount(1)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
 
                 verify(userRepository).updateProfile(any(), eq("camille"));
         }
@@ -1022,7 +1023,7 @@ class UserServiceTest {
 
                 StepVerifier.create(serviceOn18October().completeRegistration(userId, REGISTRATION))
                                 .expectNext(registered)
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -1031,7 +1032,7 @@ class UserServiceTest {
 
                 StepVerifier.create(serviceOn18October().completeRegistration(UUID.randomUUID(), tooYoung))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.BIRTH_DATE_INVALID))
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
 
                 verify(userRepository, never()).completeRegistration(any(), any());
         }
@@ -1045,7 +1046,7 @@ class UserServiceTest {
 
                 StepVerifier.create(serviceOn18October().completeRegistration(userId, REGISTRATION))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -1057,7 +1058,7 @@ class UserServiceTest {
 
                 StepVerifier.create(serviceOn18October().completeRegistration(userId, REGISTRATION))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
-                                .verify();
+                                .verify(Duration.ofSeconds(10));
         }
 
         @Test
@@ -1070,6 +1071,6 @@ class UserServiceTest {
 
                 StepVerifier.create(userService.friendProfile(VIEWER, FRIEND))
                                 .expectNextMatches(profile -> MonthDay.of(3, 12).equals(profile.birthday()))
-                                .verifyComplete();
+                                .expectComplete().verify(Duration.ofSeconds(10));
         }
 }

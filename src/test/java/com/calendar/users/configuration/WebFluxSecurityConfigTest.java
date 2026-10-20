@@ -3,6 +3,11 @@ package com.calendar.users.configuration;
 import com.calendar.users.domain.models.BusinessUser;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.UserRepository;
+import com.calendar.users.exception.GlobalErrorHandler;
+import com.calendar.users.exception.ProblemResponseWriter;
+import com.calendar.users.exception.TechnicalErrorCode;
+import com.calendar.users.exception.TechnicalException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,12 +18,14 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.codec.ServerCodecConfigurer;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.server.WebFilter;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -41,7 +48,9 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  * shared secret stands in, and these tests pin down that a missing or wrong secret is
  * refused — the value used to be hardcoded in the source of both sides.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+// Tests disable metrics export by default; the Prometheus endpoint only exists with it on.
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = "management.prometheus.metrics.export.enabled=true")
 @ActiveProfiles("test")
 class WebFluxSecurityConfigTest {
 
@@ -74,6 +83,7 @@ class WebFluxSecurityConfigTest {
         return WebTestClient.bindToApplicationContext(context)
                 .apply(springSecurity())
                 .configureClient()
+                .responseTimeout(Duration.ofSeconds(30))
                 .build();
     }
 
@@ -200,8 +210,10 @@ class WebFluxSecurityConfigTest {
     @Test
     @DisplayName("with no reader secret configured, every call to the listing is refused")
     void readerSecretFilter_shouldAnswer401_whenNoReaderSecretIsConfigured() {
+        ProblemResponseWriter problems = new ProblemResponseWriter(
+                new GlobalErrorHandler(new SimpleMeterRegistry()), ServerCodecConfigurer.create());
         WebFilter filter = new WebFluxSecurityConfig("http://issuer", "http://jwks", VALID_SECRET, "")
-                .internalSecretWebFilter();
+                .internalSecretWebFilter(problems);
         AtomicBoolean reached = new AtomicBoolean();
 
         for (String header : new String[] {"", "anything"}) {
@@ -211,9 +223,12 @@ class WebFluxSecurityConfigTest {
             filter.filter(exchange, ignored -> {
                 reached.set(true);
                 return Mono.empty();
-            }).block();
+            }).block(Duration.ofSeconds(10));
 
             assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+            assertThat(exchange.getResponse().getBodyAsString().block(Duration.ofSeconds(10)))
+                    .contains("\"code\":\"USR-REQ-001\"")
+                    .contains("\"requestId\"");
         }
         assertThat(reached).isFalse();
     }
@@ -300,6 +315,41 @@ class WebFluxSecurityConfigTest {
     @DisplayName("the rest of actuator is not opened along with it")
     void apiHttpSecurity_shouldNotExposeTheRestOfActuator() {
         client().get().uri("/actuator/env")
+                .exchange()
+                .expectStatus().isUnauthorized();
+    }
+
+    @Test
+    @DisplayName("an authenticated caller still finds no other actuator endpoint: they are not exposed")
+    void apiHttpSecurity_shouldNotExposeTheRestOfActuator_evenWithAToken() {
+        client().mutateWith(mockJwt())
+                .get().uri("/actuator/env")
+                .exchange()
+                .expectStatus().isNotFound();
+    }
+
+    @Test
+    @DisplayName("Prometheus scrapes without a token, and finds the technical error counter")
+    void apiHttpSecurity_shouldExposePrometheusAnonymously_withTheTechnicalErrorCounter() {
+        when(userRepository.getBusinessUserByUserId(any(UUID.class)))
+                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.DATABASE_ERROR)));
+        client().mutateWith(mockJwt().jwt(jwt -> jwt.claim("businessId", UUID.randomUUID().toString())))
+                .get().uri("/user-service/profile")
+                .exchange()
+                .expectStatus().isEqualTo(502);
+
+        client().get().uri("/actuator/prometheus")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(String.class).value(body -> assertThat(body)
+                        .contains("wely_errors_technical_total{")
+                        .contains("code=\"USR-TEC-002\""));
+    }
+
+    @Test
+    @DisplayName("only reading the metrics is opened")
+    void apiHttpSecurity_shouldRequireAToken_whenWritingToPrometheus() {
+        client().post().uri("/actuator/prometheus")
                 .exchange()
                 .expectStatus().isUnauthorized();
     }

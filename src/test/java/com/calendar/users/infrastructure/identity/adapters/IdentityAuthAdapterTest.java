@@ -19,6 +19,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 
@@ -63,7 +64,7 @@ class IdentityAuthAdapterTest {
 
         StepVerifier.create(adapter.getUser("kc-1"))
                 .expectNext(domainUser)
-                .verifyComplete();
+                .expectComplete().verify(Duration.ofSeconds(10));
 
         verify(identityUserMapper).toIdentityUser(wirePayload);
     }
@@ -86,7 +87,7 @@ class IdentityAuthAdapterTest {
     void getUser_shouldStayEmptyWhenTheProviderKnowsNoSuchSubject() {
         when(keycloakAdminApi.getUser("unknown")).thenReturn(Mono.empty());
 
-        StepVerifier.create(adapter.getUser("unknown")).verifyComplete();
+        StepVerifier.create(adapter.getUser("unknown")).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     // --- updateProfile -------------------------------------------------------
@@ -102,7 +103,7 @@ class IdentityAuthAdapterTest {
         when(keycloakAdminApi.getUserRepresentation("kc-1")).thenReturn(Mono.just(current));
         when(keycloakAdminApi.updateUser(eq("kc-1"), any())).thenReturn(Mono.empty());
 
-        StepVerifier.create(adapter.updateProfile("kc-1", RENAMED)).verifyComplete();
+        StepVerifier.create(adapter.updateProfile("kc-1", RENAMED)).expectComplete().verify(Duration.ofSeconds(10));
 
         ArgumentCaptor<Map<String, Object>> written = ArgumentCaptor.forClass(Map.class);
         verify(keycloakAdminApi).updateUser(eq("kc-1"), written.capture());
@@ -124,7 +125,7 @@ class IdentityAuthAdapterTest {
         StepVerifier.create(adapter.updateProfile("kc-1", RENAMED))
                 .expectErrorMatches(error -> error instanceof BusinessException business
                         && business.getErrorCode() == BusinessErrorCode.USERNAME_TAKEN)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -137,7 +138,7 @@ class IdentityAuthAdapterTest {
         StepVerifier.create(adapter.updateProfile("kc-1", RENAMED))
                 .expectErrorMatches(error -> error instanceof BusinessException business
                         && business.getErrorCode() == BusinessErrorCode.PROFILE_INVALID)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -148,7 +149,7 @@ class IdentityAuthAdapterTest {
 
         StepVerifier.create(adapter.updateProfile("kc-1", RENAMED))
                 .expectError(WebClientResponseException.ServiceUnavailable.class)
-                .verify();
+                .verify(Duration.ofSeconds(10));
 
         verify(keycloakAdminApi, never()).updateUser(any(), any());
     }
@@ -164,7 +165,7 @@ class IdentityAuthAdapterTest {
         when(keycloakAdminApi.logout("kc-1")).thenReturn(Mono.empty());
         when(keycloakAdminApi.deleteUser("kc-1")).thenReturn(Mono.empty());
 
-        StepVerifier.create(adapter.deleteSubject("kc-1")).verifyComplete();
+        StepVerifier.create(adapter.deleteSubject("kc-1")).expectComplete().verify(Duration.ofSeconds(10));
 
         InOrder order = inOrder(keycloakAdminApi);
         order.verify(keycloakAdminApi).logout("kc-1");
@@ -176,7 +177,7 @@ class IdentityAuthAdapterTest {
         when(keycloakAdminApi.logout("kc-1")).thenReturn(Mono.error(status(HttpStatus.NOT_FOUND)));
         when(keycloakAdminApi.deleteUser("kc-1")).thenReturn(Mono.empty());
 
-        StepVerifier.create(adapter.deleteSubject("kc-1")).verifyComplete();
+        StepVerifier.create(adapter.deleteSubject("kc-1")).expectComplete().verify(Duration.ofSeconds(10));
 
         verify(keycloakAdminApi).deleteUser("kc-1");
     }
@@ -187,7 +188,7 @@ class IdentityAuthAdapterTest {
         when(keycloakAdminApi.logout("kc-1")).thenReturn(Mono.empty());
         when(keycloakAdminApi.deleteUser("kc-1")).thenReturn(Mono.error(status(HttpStatus.NOT_FOUND)));
 
-        StepVerifier.create(adapter.deleteSubject("kc-1")).verifyComplete();
+        StepVerifier.create(adapter.deleteSubject("kc-1")).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -196,7 +197,7 @@ class IdentityAuthAdapterTest {
 
         StepVerifier.create(adapter.deleteSubject("kc-1"))
                 .expectError(WebClientResponseException.ServiceUnavailable.class)
-                .verify();
+                .verify(Duration.ofSeconds(10));
 
         verify(keycloakAdminApi, never()).deleteUser(any());
     }
@@ -208,7 +209,7 @@ class IdentityAuthAdapterTest {
 
         StepVerifier.create(adapter.deleteSubject("kc-1"))
                 .expectError(WebClientResponseException.InternalServerError.class)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test

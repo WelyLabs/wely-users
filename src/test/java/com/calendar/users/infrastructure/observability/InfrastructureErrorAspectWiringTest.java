@@ -20,6 +20,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import java.time.Duration;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -72,7 +73,7 @@ class InfrastructureErrorAspectWiringTest {
                 .expectErrorMatches(error -> error instanceof TechnicalException
                         && ((TechnicalException) error).getErrorCode()
                                 == TechnicalErrorCode.DATABASE_ERROR)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -85,7 +86,7 @@ class InfrastructureErrorAspectWiringTest {
                 .expectErrorMatches(error -> error instanceof TechnicalException
                         && ((TechnicalException) error).getErrorCode()
                                 == TechnicalErrorCode.KEYCLOAK_ERROR)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -96,7 +97,7 @@ class InfrastructureErrorAspectWiringTest {
 
         StepVerifier.create(userRepository.getBusinessUserByUserId(UUID.randomUUID()))
                 .expectError(TechnicalException.class)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -109,7 +110,7 @@ class InfrastructureErrorAspectWiringTest {
         StepVerifier.create(identityProvider.deleteSubject("kc-1"))
                 .expectErrorMatches(error -> error instanceof TechnicalException technical
                         && technical.getErrorCode() == TechnicalErrorCode.KEYCLOAK_ERROR)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -120,7 +121,7 @@ class InfrastructureErrorAspectWiringTest {
         when(keycloakAdminApi.deleteUser(anyString())).thenReturn(Mono.error(
                 WebClientResponseException.create(404, "Not Found", null, null, null)));
 
-        StepVerifier.create(identityProvider.deleteSubject("kc-1")).verifyComplete();
+        StepVerifier.create(identityProvider.deleteSubject("kc-1")).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -133,6 +134,6 @@ class InfrastructureErrorAspectWiringTest {
         StepVerifier.create(accountDeletionRepository.claimDue(20))
                 .expectErrorMatches(error -> error instanceof TechnicalException technical
                         && technical.getErrorCode() == TechnicalErrorCode.DATABASE_ERROR)
-                .verify();
+                .verify(Duration.ofSeconds(10));
     }
 }

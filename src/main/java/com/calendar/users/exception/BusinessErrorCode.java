@@ -110,7 +110,21 @@ public enum BusinessErrorCode {
             "USR-VAL-002",
             "Invalid birth date",
             "The birth date must be in the past and give an age between 13 and 120.",
-            HttpStatus.BAD_REQUEST);
+            HttpStatus.BAD_REQUEST),
+
+    /** No valid credential: no token, an expired or forged one, or a wrong internal secret. */
+    AUTHENTICATION_REQUIRED(
+            "USR-REQ-001",
+            "Authentication required",
+            "The request carries no valid credential.",
+            HttpStatus.UNAUTHORIZED),
+
+    /** A valid credential that does not grant this request. */
+    ACCESS_DENIED(
+            "USR-REQ-002",
+            "Access denied",
+            "The credential does not grant this request.",
+            HttpStatus.FORBIDDEN);
 
     private final String code;
     private final String title;
