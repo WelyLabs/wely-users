@@ -1,8 +1,14 @@
 # wely-users
 
+> **Les topics portent leur environnement en préfixe** (`dev.`, `prod.`) depuis le 2026-10-24 :
+> un seul broker sert tous les environnements, et le préfixe est la seule chose qui les sépare.
+> Côté service, une seule variable le porte — `TOPIC_PREFIX` — et les destinations s'écrivent
+> `${TOPIC_PREFIX}user-created`. Aucune valeur par défaut : un service incapable de nommer ses
+> topics refuse de démarrer plutôt que de rejoindre le trafic d'un autre environnement.
+
 Service de gestion des profils utilisateurs et **pont entre l'identité Keycloak et l'identité métier** de la plateforme [Wely Calendar](https://github.com/WelyLabs/wely-platform).
 
-C'est le seul service qui écrit dans PostgreSQL, le seul qui détient un accès à l'Admin API Keycloak (gardé pour les futures modifications de compte, inutilisé à l'inscription), et le producteur de l'événement `USER_CREATED` dont dépend le graphe social. Cet événement part par un **outbox transactionnel** : il est écrit en base dans la même transaction que l'utilisateur, puis relayé vers Kafka.
+C'est le seul service qui écrit dans PostgreSQL, le seul qui détient un accès à l'Admin API Keycloak (gardé pour les futures modifications de compte, inutilisé à l'inscription), et le producteur de l'événement `<env>.user-created` dont dépend le graphe social. Cet événement part par un **outbox transactionnel** : il est écrit en base dans la même transaction que l'utilisateur, puis relayé vers Kafka.
 
 ---
 
@@ -13,7 +19,7 @@ C'est le seul service qui écrit dans PostgreSQL, le seul qui détient un accès
 | **Port** | 8082 |
 | **Préfixe** | `/user-service` (exposé via la gateway sur `/api/v1/user-service/**`) |
 | **Base** | PostgreSQL via R2DBC |
-| **Produit** | `USER_CREATED` sur Kafka |
+| **Produit** | `<env>.user-created` sur Kafka |
 | **Dépend de** | Keycloak, qui l'appelle à l'inscription et à chaque token ; client Admin API (`client_credentials`) configuré pour les futures modifications de compte · `wely-media` pour les photos de profil |
 
 ---
@@ -64,7 +70,7 @@ Architecture hexagonale. Le domaine déclare trois ports ; l'infrastructure four
                        PostgreSQL  Keycloak    Kafka
 ```
 
-Les deux ports sont fournis par l'infrastructure. Le domaine se contente d'enregistrer un utilisateur : prévenir les autres services (`USER_CREATED`) est un **événement d'intégration**, une conséquence du découpage en microservices et non une règle métier. C'est donc l'adaptateur de persistance qui l'écrit, dans la même transaction que l'utilisateur.
+Les deux ports sont fournis par l'infrastructure. Le domaine se contente d'enregistrer un utilisateur : prévenir les autres services (`<env>.user-created`) est un **événement d'intégration**, une conséquence du découpage en microservices et non une règle métier. C'est donc l'adaptateur de persistance qui l'écrit, dans la même transaction que l'utilisateur.
 
 `UserService` est un **POJO sans annotation Spring**, instancié par `UsersApplicationConfig` :
 
@@ -108,13 +114,13 @@ sequenceDiagram
         rect rgb(232, 242, 237)
             note over S,DB: une seule transaction
             S->>DB: save(BusinessUser)
-            S->>DB: INSERT outbox_event (USER_CREATED)
+            S->>DB: INSERT outbox_event (<env>.user-created)
         end
     end
     S-->>KC: businessId
 
     R->>DB: SELECT … FOR UPDATE SKIP LOCKED
-    R->>K: publie USER_CREATED
+    R->>K: publie <env>.user-created
     R->>DB: UPDATE published_at
 ```
 
@@ -129,10 +135,10 @@ Créer l'utilisateur à l'inscription plutôt qu'à la première émission de to
 Si `wely-users` crée l'utilisateur mais que Keycloak annule quand même le compte (réponse arrivée après le délai de 10 s, ou échec de Keycloak juste après), il reste un utilisateur sans compte. **`OrphanUserReaper`**, une boucle de fond comme le relais de l'outbox, s'en charge toutes les heures :
 
 - il lit les utilisateurs de plus de 15 min dont le compte n'a jamais été confirmé (`identity_checked_at` nul) ;
-- il demande chacun à l'API Admin de Keycloak : un compte trouvé est marqué confirmé, et n'est plus jamais revérifié ; un compte inconnu (404) fait **supprimer** l'utilisateur, avec un `USER_DELETED` écrit dans l'outbox dans la même transaction ;
+- il demande chacun à l'API Admin de Keycloak : un compte trouvé est marqué confirmé, et n'est plus jamais revérifié ; un compte inconnu (404) fait **supprimer** l'utilisateur, avec un `<env>.user-deleted` écrit dans l'outbox dans la même transaction ;
 - une panne de Keycloak n'est pas une preuve d'absence : l'utilisateur reste à vérifier au passage suivant.
 
-`wely-social` consomme `USER_DELETED` et supprime le nœud. Les amis fictifs de la démo n'ont pas de compte Keycloak : le jeu de données les marque confirmés.
+`wely-social` consomme `<env>.user-deleted` et supprime le nœud. Les amis fictifs de la démo n'ont pas de compte Keycloak : le jeu de données les marque confirmés.
 
 ### Le hashtag
 
@@ -255,7 +261,7 @@ Les bases déployées ont reçu V1 à V5 à la main, avant Flyway : `baseline-on
 
 ## Événement publié
 
-**Topic** `USER_CREATED` · clé de partition `payload.userId` · `acks=all`
+**Topic** `<env>.user-created` · clé de partition `payload.userId` · `acks=all`
 
 ```json
 {
@@ -268,7 +274,7 @@ Les bases déployées ont reçu V1 à V5 à la main, avant Flyway : `baseline-on
 
 Consommé par [`wely-social`](https://github.com/WelyLabs/wely-social), qui crée le nœud correspondant dans Neo4j.
 
-**Topic** `USER_DELETED` · same partition key, no record key
+**Topic** `<env>.user-deleted` · same partition key, no record key
 
 ```json
 {
@@ -299,8 +305,8 @@ Written with `PUT /profile/registration`, and with every profile update of a use
 `DELETE /profile` keeps the row as a **tombstone**: the `businessId` survives, because every other service keeps it as a pseudonym, and every personal field is cleared.
 
 1. **Checks, in this order.** The switch first: unless `ACCOUNT_DELETION_ENABLED` is `true`, 403 `USR-BUS-014` on both `DELETE /profile` and `GET /profile/deletion`, without reading the account. Then the demo guard (`ACCOUNT_DELETION_PROTECTED_USER_IDS`, 403 `USR-BUS-011`), so a demo visitor is never made to sign in again for nothing. Then an account already deleted answers 202: a retry after a lost 202 must not send the user to a sign-in that can no longer succeed. Then the access token's `auth_time` must be at most 5 min old and at most 60 s ahead, or 403 `USR-BUS-010` — 403 and not 401, because the web app answers any 401 with a plain login. A missing claim fails closed.
-2. **One R2DBC transaction** (`R2dbcUserRepositoryAdapter.eraseAccount`): lock the row, retire the handle, write the tombstone, queue an `account_deletion` job holding the original Keycloak id, delete the user's other outbox rows (pending, parked or published), append `USER_DELETED`. Then 202.
-3. **From that commit on**, the original Keycloak id resolves to 404, so the mapper refuses every login and refresh; updates match no row, so no `USER_MODIFIED` can follow `USER_DELETED`.
+2. **One R2DBC transaction** (`R2dbcUserRepositoryAdapter.eraseAccount`): lock the row, retire the handle, write the tombstone, queue an `account_deletion` job holding the original Keycloak id, delete the user's other outbox rows (pending, parked or published), append `<env>.user-deleted`. Then 202.
+3. **From that commit on**, the original Keycloak id resolves to 404, so the mapper refuses every login and refresh; updates match no row, so no `<env>.user-modified` can follow `<env>.user-deleted`.
 4. **`AccountDeletionWorker`** (a 5 s loop shaped like the relay) logs the user out of Keycloak, then deletes them (a 404 counts as done), and purges `avatars/<businessId>/` through wely-media — again 10 min later, for an upload that raced the deletion. Jobs are leased, not locked, so no transaction stays open across HTTP calls. Failures back off from 5 s to 1 h and are never parked; the log turns ERROR from the 5th.
 
 | Column | Tombstone |
@@ -327,7 +333,7 @@ Written with `PUT /profile/registration`, and with every profile update of a use
 
 On ne rend pas les deux systèmes atomiques, on **ramène le deuxième dans le premier** :
 
-1. `R2dbcUserRepositoryAdapter.save`, annotée `@Transactional`, insère l'utilisateur puis l'événement `USER_CREATED` dans `outbox_event` : les deux sont validées ensemble, ou aucune.
+1. `R2dbcUserRepositoryAdapter.save`, annotée `@Transactional`, insère l'utilisateur puis l'événement `<env>.user-created` dans `outbox_event` : les deux sont validées ensemble, ou aucune.
 2. `OutboxRelay`, hors du chemin de requête, lit les lignes non publiées, les envoie, et les marque.
 
 La seule chose à garantir n'est plus que deux systèmes réussissent ensemble, mais qu'**un seul finisse par réussir**.
@@ -485,6 +491,6 @@ Elles portent sur ce qu'un mock ne peut pas montrer : que `FOR UPDATE SKIP LOCKE
 ## Limites connues
 
 - **Pas de réconciliation.** L'outbox empêche une classe de pannes ; il ne dit pas si le graphe social a dérivé pour une autre raison. Comparer le nombre de lignes `app_user` au nombre de nœuds `User` couvrirait *toutes* les causes.
-- **A deleted user's access token lives until it expires**, 300 s at most: wely-users refuses it at once (410), and the other services refuse its writes once they have processed `USER_DELETED`. Reads of what the user could already see remain possible in that window. There is no deny-list at the gateway, by choice.
+- **A deleted user's access token lives until it expires**, 300 s at most: wely-users refuses it at once (410), and the other services refuse its writes once they have processed `<env>.user-deleted`. Reads of what the user could already see remain possible in that window. There is no deny-list at the gateway, by choice.
 - **Deleting a user from the Keycloak admin console bypasses erasure**: `OrphanUserReaper` only checks users never confirmed. An account is deleted through `DELETE /profile`.
 - **Le relais tient sa transaction pendant l'envoi.** Les verrous durent le temps de l'appel au broker. C'est le bon compromis à un événement par inscription, pas à un débit soutenu.
