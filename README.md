@@ -426,6 +426,8 @@ client peut tester et un `timestamp` :
 | `KEYCLOAK_BASE_URL` | Base de l'Admin API Keycloak |
 | `KEYCLOAK_CLIENT_SECRET` | Secret du client `wely-users-api-client` |
 | `KAFKA_BOOTSTRAP_SERVER` | Brokers Kafka |
+| `KAFKA_SECURITY_PROTOCOL` | `PLAINTEXT` by default; `SASL_SSL` for Confluent Cloud (dev, prod) |
+| `KAFKA_API_KEY` / `KAFKA_API_SECRET` | The Kafka cluster's API key, for `SASL_SSL` (sealed in `dev-wely-cloud`) |
 | `KAFKA_KEY` / `KAFKA_SECRET` | Identifiants SASL |
 | `OUTBOX_RELAY_ENABLED` | Démarre le relais (`true` par défaut) |
 | `MEDIA_API_URL` | URL de `wely-media` (`http://localhost:8085` en profil `dev`) |
