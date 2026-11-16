@@ -712,13 +712,13 @@ class R2dbcUserRepositoryAdapterTest {
         @Test
         void completeRegistration_shouldStoreTheBirthDateThenWriteUserBirthday() throws Exception {
                 UserEntity stored = mock(UserEntity.class);
-                when(userR2dbcRepository.completeRegistration(ID, BIRTH_DATE, null, null)).thenReturn(Mono.just(1L));
+                when(userR2dbcRepository.completeRegistration(ID, BIRTH_DATE, null, null, true)).thenReturn(Mono.just(1L));
                 when(userR2dbcRepository.findLiveById(ID)).thenReturn(Mono.just(stored));
                 when(userEntityMapper.toBusinessUser(stored)).thenReturn(REGISTERED);
                 when(kafkaDataMapper.toUserBirthdayEventDTO(REGISTERED)).thenReturn(BIRTHDAY_EVENT);
                 when(outboxEventStore.append(any(UUID.class), anyString(), anyString())).thenReturn(Mono.just(1L));
 
-                StepVerifier.create(adapter.completeRegistration(ID, new Registration(BIRTH_DATE, null, null)))
+                StepVerifier.create(adapter.completeRegistration(ID, new Registration(BIRTH_DATE, null, null), true))
                                 .expectNext(REGISTERED)
                                 .expectComplete().verify(Duration.ofSeconds(10));
 
@@ -733,7 +733,7 @@ class R2dbcUserRepositoryAdapterTest {
         @Test
         void completeRegistration_shouldStoreTheNamesThenWriteUserModifiedBeforeUserBirthday() {
                 UserEntity stored = mock(UserEntity.class);
-                when(userR2dbcRepository.completeRegistration(ID, BIRTH_DATE, "Cam", "Dupont")).thenReturn(Mono.just(1L));
+                when(userR2dbcRepository.completeRegistration(ID, BIRTH_DATE, "Cam", "Dupont", true)).thenReturn(Mono.just(1L));
                 when(userR2dbcRepository.findLiveById(ID)).thenReturn(Mono.just(stored));
                 when(userEntityMapper.toBusinessUser(stored)).thenReturn(REGISTERED);
                 when(kafkaDataMapper.toUserModifiedEventDTO(REGISTERED))
@@ -741,7 +741,7 @@ class R2dbcUserRepositoryAdapterTest {
                 when(kafkaDataMapper.toUserBirthdayEventDTO(REGISTERED)).thenReturn(BIRTHDAY_EVENT);
                 when(outboxEventStore.append(any(UUID.class), anyString(), anyString())).thenReturn(Mono.just(1L));
 
-                StepVerifier.create(adapter.completeRegistration(ID, new Registration(BIRTH_DATE, "Cam", "Dupont")))
+                StepVerifier.create(adapter.completeRegistration(ID, new Registration(BIRTH_DATE, "Cam", "Dupont"), true))
                                 .expectNext(REGISTERED)
                                 .expectComplete().verify(Duration.ofSeconds(10));
 
@@ -752,9 +752,9 @@ class R2dbcUserRepositoryAdapterTest {
 
         @Test
         void completeRegistration_shouldFailAsNotFound_whenNoRowWasUpdated() {
-                when(userR2dbcRepository.completeRegistration(ID, BIRTH_DATE, "Léa", "Martin")).thenReturn(Mono.just(0L));
+                when(userR2dbcRepository.completeRegistration(ID, BIRTH_DATE, "Léa", "Martin", true)).thenReturn(Mono.just(0L));
 
-                StepVerifier.create(adapter.completeRegistration(ID, new Registration(BIRTH_DATE, "Léa", "Martin")))
+                StepVerifier.create(adapter.completeRegistration(ID, new Registration(BIRTH_DATE, "Léa", "Martin"), true))
                                 .expectErrorMatches(error -> error instanceof BusinessException business
                                                 && business.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
                                 .verify(Duration.ofSeconds(10));
@@ -766,13 +766,13 @@ class R2dbcUserRepositoryAdapterTest {
         void completeRegistration_shouldFail_whenTheEventCannotBeWritten() {
                 // The error reaches the caller, so the transaction rolls the birth date back.
                 UserEntity stored = mock(UserEntity.class);
-                when(userR2dbcRepository.completeRegistration(ID, BIRTH_DATE, "Léa", "Martin")).thenReturn(Mono.just(1L));
+                when(userR2dbcRepository.completeRegistration(ID, BIRTH_DATE, "Léa", "Martin", true)).thenReturn(Mono.just(1L));
                 when(userR2dbcRepository.findLiveById(ID)).thenReturn(Mono.just(stored));
                 when(userEntityMapper.toBusinessUser(stored)).thenReturn(REGISTERED);
                 when(outboxEventStore.append(any(UUID.class), anyString(), anyString()))
                                 .thenReturn(Mono.error(new IllegalStateException("outbox down")));
 
-                StepVerifier.create(adapter.completeRegistration(ID, new Registration(BIRTH_DATE, "Léa", "Martin")))
+                StepVerifier.create(adapter.completeRegistration(ID, new Registration(BIRTH_DATE, "Léa", "Martin"), true))
                                 .expectError(IllegalStateException.class)
                                 .verify(Duration.ofSeconds(10));
         }

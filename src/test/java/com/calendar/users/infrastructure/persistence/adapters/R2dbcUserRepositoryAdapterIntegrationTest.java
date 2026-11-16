@@ -406,7 +406,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         BusinessUser saved = adapter.save(aUser("lea", 1313), "kc-lea").block();
         Registration registration = new Registration(LocalDate.of(1995, 3, 12), "Léa", "Martin");
 
-        BusinessUser registered = adapter.completeRegistration(saved.id(), registration).block();
+        BusinessUser registered = adapter.completeRegistration(saved.id(), registration, true).block();
 
         assertThat(registered.firstName()).isEqualTo("Léa");
         assertThat(registered.lastName()).isEqualTo("Martin");
@@ -427,7 +427,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         BusinessUser saved = adapter.save(aUser("noa", 1515), "kc-noa").block();
 
         BusinessUser changed = adapter.completeRegistration(saved.id(),
-                new Registration(LocalDate.of(1996, 4, 2), null, null)).block();
+                new Registration(LocalDate.of(1996, 4, 2), null, null), true).block();
 
         assertThat(changed.firstName()).isEqualTo("First");
         assertThat(changed.lastName()).isEqualTo("Last");
@@ -436,9 +436,23 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     }
 
     @Test
+    @DisplayName("a names-only pass keeps the birth date, records the signup as not completed, and writes USER_MODIFIED only")
+    void completeRegistration_shouldKeepTheBirthDate_whenOnlyNamesAreGiven() {
+        BusinessUser saved = adapter.save(aUser("eli", 1616), "kc-eli").block();
+
+        BusinessUser changed = adapter.completeRegistration(saved.id(), new Registration(null, "Éli", null), false).block();
+
+        assertThat(changed.firstName()).isEqualTo("Éli");
+        assertThat(changed.lastName()).isEqualTo("Last");
+        assertThat(changed.birthDate()).isNull();
+        assertThat(changed.registrationCompleted()).isFalse();
+        assertThat(outboxTypes()).isEqualTo("USER_CREATED,USER_MODIFIED");
+    }
+
+    @Test
     @DisplayName("completing the signup of an unknown user is USER_NOT_FOUND, and writes no event")
     void completeRegistration_shouldFailAsNotFound_whenTheUserIsUnknown() {
-        StepVerifier.create(adapter.completeRegistration(UUID.randomUUID(), new Registration(LocalDate.of(1995, 3, 12), "Léa", "Martin")))
+        StepVerifier.create(adapter.completeRegistration(UUID.randomUUID(), new Registration(LocalDate.of(1995, 3, 12), "Léa", "Martin"), true))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
                 .verify(Duration.ofSeconds(10));
 
@@ -449,7 +463,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     @DisplayName("a profile update of a user with a birth date also writes USER_BIRTHDAY, for the name it shows")
     void updateProfile_shouldAlsoWriteUserBirthday_whenABirthDateIsSet() {
         BusinessUser saved = adapter.save(aUser("camille", 1414), "kc-camille").block();
-        adapter.completeRegistration(saved.id(), new Registration(LocalDate.of(1995, 3, 12), null, null)).block();
+        adapter.completeRegistration(saved.id(), new Registration(LocalDate.of(1995, 3, 12), null, null), true).block();
 
         adapter.updateProfile(new BusinessUser(saved.id(), "camille", 1414, "Cam", "Dupont", null,
                 saved.joinedDate()), "camille").block();
@@ -605,7 +619,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         adapter.updatePicture(user.id(), "avatars/" + user.id() + "/a.jpg").block();
         adapter.updateAbout(user.id(), new UserAbout("Partante", List.of("Rando"))).block();
         adapter.updatePreferences(user.id(), new UserPreferences(Theme.DARK)).block();
-        adapter.completeRegistration(user.id(), new Registration(LocalDate.of(1995, 3, 12), null, null)).block();
+        adapter.completeRegistration(user.id(), new Registration(LocalDate.of(1995, 3, 12), null, null), true).block();
         return user;
     }
 

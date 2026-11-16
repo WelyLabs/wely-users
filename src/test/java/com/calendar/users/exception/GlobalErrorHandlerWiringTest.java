@@ -118,7 +118,7 @@ class GlobalErrorHandlerWiringTest {
 
     @Test
     void handleValidationException_shouldAnswerOurProblem_whenAFieldIsInvalid() {
-        authenticated().put().uri(REGISTRATION_PATH)
+        authenticated().put().uri("/user-service/profile")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("{}")
                 .exchange()
@@ -126,7 +126,7 @@ class GlobalErrorHandlerWiringTest {
                 .expectHeader().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
                 .expectBody()
                 .jsonPath("$.code").isEqualTo(GlobalErrorHandler.VALIDATION_FAILED_CODE)
-                .jsonPath("$.errors.birthDate").exists()
+                .jsonPath("$.errors.userName").exists()
                 .jsonPath("$.requestId").exists();
     }
 

@@ -1,11 +1,9 @@
 package com.calendar.users.application.dtos;
 
-import jakarta.validation.constraints.NotNull;
-
 import java.time.LocalDate;
 
 /**
- * The signup completion form. The names are required unless the user already has both, which the
- * domain decides, as it does the age rule.
+ * A pass of the signup completion: only the fields the profile misses, each optional. The domain
+ * validates what is sent and refuses an empty pass.
  */
-public record RegistrationRequest(@NotNull LocalDate birthDate, String firstName, String lastName) {}
+public record RegistrationRequest(LocalDate birthDate, String firstName, String lastName) {}

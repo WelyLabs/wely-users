@@ -535,16 +535,33 @@ class ProfileControllerTest {
     }
 
     @Test
-    void completeRegistration_shouldAnswer400WithUsrVal001_whenTheBirthDateIsMissing() {
+    void completeRegistration_shouldPassOnlyTheNames_whenNoBirthDateIsSent() {
+        UUID userId = givenTheCaller();
+        when(userService.completeRegistration(userId, new Registration(null, "Léa", "Martin"))).thenReturn(Mono.just(
+                new BusinessUser(userId, "lea", 4242, "Léa", "Martin", null, LocalDateTime.of(2026, 1, 15, 10, 30))));
+
+        webTestClient.put()
+                .uri("/profile/registration")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"firstName\":\"Léa\",\"lastName\":\"Martin\"}")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().jsonPath("$.firstName").isEqualTo("Léa");
+    }
+
+    @Test
+    void completeRegistration_shouldAnswer400WithUsrVal004_whenTheDomainRefusesAnEmptyPass() {
+        UUID userId = givenTheCaller();
+        when(userService.completeRegistration(userId, new Registration(null, null, null)))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.REGISTRATION_EMPTY)));
+
         webTestClient.put()
                 .uri("/profile/registration")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("{}")
                 .exchange()
                 .expectStatus().isBadRequest()
-                .expectBody().jsonPath("$.code").isEqualTo("USR-VAL-001");
-
-        verify(userService, never()).completeRegistration(any(), any());
+                .expectBody().jsonPath("$.code").isEqualTo("USR-VAL-004");
     }
 
     @Test

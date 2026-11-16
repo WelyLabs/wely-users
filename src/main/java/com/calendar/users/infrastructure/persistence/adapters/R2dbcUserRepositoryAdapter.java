@@ -134,16 +134,16 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
                         .thenReturn(saved));
     }
 
-    /** The birth date, the names when given, the completed signup and their events in one transaction. */
+    /** The given fields, the signup state and their events in one transaction. */
     @Override
     @Transactional
-    public Mono<BusinessUser> completeRegistration(UUID userId, Registration registration) {
+    public Mono<BusinessUser> completeRegistration(UUID userId, Registration registration, boolean completed) {
         return userR2dbcRepository.completeRegistration(userId, registration.birthDate(),
-                        registration.firstName(), registration.lastName())
+                        registration.firstName(), registration.lastName(), completed)
                 .flatMap(updated -> updated == 0
                         ? Mono.<BusinessUser>error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND))
                         : getBusinessUserByUserId(userId))
-                .flatMap(saved -> (registration.firstName() == null
+                .flatMap(saved -> (registration.firstName() == null && registration.lastName() == null
                         ? Mono.<Long>empty()
                         : appendEvent(saved.id(), OutboxEventType.USER_MODIFIED, kafkaDataMapper.toUserModifiedEventDTO(saved)))
                         .then(Mono.defer(() -> appendBirthdayEvent(saved)))

@@ -105,14 +105,15 @@ public class UserService {
     }
 
     /**
-     * Completes the signup, or changes the birth date later: idempotent. 400 USR-VAL-002 unless the
-     * birth date gives an age of 13 to 120 today, USR-VAL-003 for names missing or invalid; other
-     * services learn the birthday (USER_BIRTHDAY), and the names when given (USER_MODIFIED).
+     * Stores a pass of the progressive signup completion, or a later birth-date change: idempotent.
+     * 400 USR-VAL-004 for an empty pass, USR-VAL-002 for a birth date outside 13 to 120 years,
+     * USR-VAL-003 for a blank or too long name. The signup counts as completed once the profile
+     * misses nothing; other services learn the birthday (USER_BIRTHDAY) and new names (USER_MODIFIED).
      */
     public Mono<BusinessUser> completeRegistration(UUID userId, Registration registration) {
-        return readProfile(userId)
-                .map(current -> registration.validOn(LocalDate.now(clock), current))
-                .flatMap(valid -> userRepository.completeRegistration(userId, valid))
+        return Mono.fromCallable(() -> registration.validOn(LocalDate.now(clock)))
+                .flatMap(valid -> readProfile(userId)
+                        .flatMap(current -> userRepository.completeRegistration(userId, valid, valid.completes(current))))
                 .onErrorResume(UserService::isUserNotFound, e -> missingUser(userId));
     }
 
