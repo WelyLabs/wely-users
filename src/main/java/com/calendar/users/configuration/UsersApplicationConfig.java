@@ -41,7 +41,7 @@ public class UsersApplicationConfig {
     public AccountDeletionPolicy accountDeletionPolicy(
             @Value("${app.account-deletion.enabled:false}") boolean enabled,
             @Value("${app.account-deletion.protected-user-ids:}") String protectedUserIds,
-            @Value("${app.account-deletion.max-auth-age:5m}") Duration maxAuthenticationAge,
+            @Value("${app.account-deletion.max-auth-age:30m}") Duration maxAuthenticationAge,
             @Value("${app.account-deletion.allowed-clock-skew:60s}") Duration allowedClockSkew,
             @Value("${app.account-deletion.retry.initial-delay:5s}") Duration initialRetryDelay,
             @Value("${app.account-deletion.retry.max-delay:1h}") Duration maxRetryDelay,
