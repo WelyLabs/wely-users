@@ -21,14 +21,14 @@ import java.util.UUID;
 public interface UserRepository {
 
     /** Saves a new user. Other services are told about it (USER_CREATED). */
-    Mono<BusinessUser> save(BusinessUser businessUser, String keycloakId);
+    Mono<BusinessUser> save(BusinessUser businessUser, String subjectId);
 
     Mono<BusinessUser> getBusinessUserByUserId(UUID userId);
 
     /** True when a live user holds the handle or the handle is retired. */
     Mono<Boolean> existsByUserNameAndHashtag(String userName, Integer hashTag);
 
-    Mono<UUID> findIdByKeycloakId(String keycloakId);
+    Mono<UUID> findIdBySubjectId(String subjectId);
 
     /** Oldest first: users created before {@code createdBefore} whose account was never confirmed. */
     Flux<IdentityToCheck> findIdentitiesToCheck(LocalDateTime createdBefore, int limit);
@@ -48,7 +48,7 @@ public interface UserRepository {
     Mono<BusinessUser> completeRegistration(UUID userId, Registration registration);
 
     /** The identity provider's id for this user. */
-    Mono<String> findKeycloakIdByUserId(UUID userId);
+    Mono<String> findSubjectIdByUserId(UUID userId);
 
     /** Points the user at a new picture and tells other services (USER_MODIFIED). */
     Mono<BusinessUser> updatePicture(UUID userId, String reference);

@@ -6,7 +6,7 @@ import reactor.core.publisher.Mono;
 /**
  * Reads and updates a user in whatever system owns authentication.
  *
- * <p>Nothing here names Keycloak: the domain declares what it needs, and
+ * <p>Nothing here names Auth0: the domain declares what it needs, and
  * {@code infrastructure.identity} adapts. An empty result means the provider has no such
  * subject.
  */

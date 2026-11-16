@@ -6,9 +6,9 @@
 > `${TOPIC_PREFIX}user-created`. Aucune valeur par défaut : un service incapable de nommer ses
 > topics refuse de démarrer plutôt que de rejoindre le trafic d'un autre environnement.
 
-Service de gestion des profils utilisateurs et **pont entre l'identité Keycloak et l'identité métier** de la plateforme [Wely Calendar](https://github.com/WelyLabs/wely-platform).
+Service de gestion des profils utilisateurs et **pont entre l'identité Auth0 et l'identité métier** de la plateforme [Wely Calendar](https://github.com/WelyLabs/wely-platform).
 
-C'est le seul service qui écrit dans PostgreSQL, le seul qui détient un accès à l'Admin API Keycloak (gardé pour les futures modifications de compte, inutilisé à l'inscription), et le producteur de l'événement `<env>.user-created` dont dépend le graphe social. Cet événement part par un **outbox transactionnel** : il est écrit en base dans la même transaction que l'utilisateur, puis relayé vers Kafka.
+C'est le seul service qui écrit dans PostgreSQL, le seul qui détient un accès à la Management API d'Auth0 (modification de profil, suppression de compte, vérification des orphelins), et le producteur de l'événement `<env>.user-created` dont dépend le graphe social. Cet événement part par un **outbox transactionnel** : il est écrit en base dans la même transaction que l'utilisateur, puis relayé vers Kafka.
 
 ---
 
@@ -20,7 +20,7 @@ C'est le seul service qui écrit dans PostgreSQL, le seul qui détient un accès
 | **Préfixe** | `/user-service` (exposé via la gateway sur `/api/v1/user-service/**`) |
 | **Base** | PostgreSQL via R2DBC |
 | **Produit** | `<env>.user-created` sur Kafka |
-| **Dépend de** | Keycloak, qui l'appelle à l'inscription et à chaque token ; client Admin API (`client_credentials`) configuré pour les futures modifications de compte · `wely-media` pour les photos de profil |
+| **Dépend de** | Auth0, dont l'Action post-login l'appelle à la première connexion ; client Management API (`client_credentials`) · `wely-media` pour les photos de profil |
 
 ---
 
@@ -60,14 +60,14 @@ Architecture hexagonale. Le domaine déclare trois ports ; l'infrastructure four
                   │                → R2dbcOutboxEventStoreAdapter
                   │                  → OutboxEventR2dbcRepository
                   │  identity/     IdentityAuthAdapter   │
-                  │                → KeycloakAdminApi    │
+                  │                → Auth0ManagementApi  │
                   │  media/        MediaApiAdapter → wely-media
                   │  messaging/    OutboxRelay           │
                   │                → KafkaOutboxDispatcher
                   │                → StreamBridge        │
                   └──────────┬─────────┬─────────┬───────┘
                              ▼         ▼         ▼
-                       PostgreSQL  Keycloak    Kafka
+                       PostgreSQL  Auth0       Kafka
 ```
 
 Les deux ports sont fournis par l'infrastructure. Le domaine se contente d'enregistrer un utilisateur : prévenir les autres services (`<env>.user-created`) est un **événement d'intégration**, une conséquence du découpage en microservices et non une règle métier. C'est donc l'adaptateur de persistance qui l'écrit, dans la même transaction que l'utilisateur.
@@ -85,25 +85,24 @@ Il se teste donc sans contexte Spring, avec deux implémentations d'interfaces.
 
 ---
 
-## Le cœur du service : créer à l'inscription, lire à la connexion
+## Le cœur du service : créer à la première connexion
 
-Deux opérations, appelées par Keycloak avant qu'un token existe, toutes deux protégées par `X-Internal-Secret` :
+Une opération, appelée par l'Action post-login `wely-business-id` d'Auth0 avant qu'un token existe, protégée par `X-Internal-Secret` :
 
-- **`provisionUser`** crée l'utilisateur pendant l'inscription, depuis l'étape `BusinessUserRegistration` de [wely-identity](https://github.com/WelyLabs/wely-identity). Keycloak envoie l'identité dans la requête : pas d'appel à son API Admin. Si cette création échoue, Keycloak annule le compte.
-- **`findBusinessIdByKeycloakId`** est appelée par le mapper à chaque émission de token. Elle ne fait que lire : un UUID Keycloak inconnu répond 404, et la connexion est refusée.
+- **`provisionUser`** crée l'utilisateur à sa première connexion, quand son `app_metadata` ne porte pas encore de `businessId`. Auth0 envoie l'identité dans la requête (`subjectId` = `auth0|…`) : pas d'appel à son API de gestion. L'Action range l'identifiant renvoyé dans `app_metadata` et le pose en claim `businessId` ; les connexions suivantes n'appellent plus le cluster.
 
 ```mermaid
 sequenceDiagram
-    participant KC as Keycloak (inscription)
+    participant A as Action Auth0 (1re connexion)
     participant C as ProfileController
     participant S as UserService
     participant DB as PostgreSQL
     participant R as OutboxRelay
     participant K as Kafka
 
-    KC->>C: POST /profile/provision {keycloakId, username, firstName, lastName}
-    C->>S: provisionUser(keycloakId, identité)
-    S->>DB: findIdByKeycloakId
+    A->>C: POST /profile/provision {subjectId, username, firstName, lastName}
+    C->>S: provisionUser(subjectId, identité)
+    S->>DB: findIdBySubjectId
     alt déjà créé (appel rejoué)
         DB-->>S: UUID
     else nouvel utilisateur
@@ -117,28 +116,26 @@ sequenceDiagram
             S->>DB: INSERT outbox_event (<env>.user-created)
         end
     end
-    S-->>KC: businessId
+    S-->>A: businessId
 
     R->>DB: SELECT … FOR UPDATE SKIP LOCKED
     R->>K: publie <env>.user-created
     R->>DB: UPDATE published_at
 ```
 
-`provisionUser` est **idempotente** sur l'UUID Keycloak : un appel rejoué renvoie l'utilisateur existant, et de deux appels simultanés, celui qui bute sur la contrainte `keycloak_id` renvoie l'identifiant du gagnant.
+`provisionUser` est **idempotente** sur le `subjectId` : un appel rejoué renvoie l'utilisateur existant, et de deux appels simultanés, celui qui bute sur la contrainte de la colonne `keycloak_id` (qui porte le `subjectId`, nom hérité) renvoie l'identifiant du gagnant.
 
-La publication **ne fait pas partie de la requête** : Keycloak attend l'identifiant métier, pas un aller-retour vers le broker, et un Kafka indisponible fait grossir une file au lieu de perdre un événement.
-
-Créer l'utilisateur à l'inscription plutôt qu'à la première émission de token sépare l'écriture de la lecture : jusqu'au 2026-10-10, la création se faisait pendant l'émission du token, dans un délai de 3 s, et une première connexion à froid finissait sur une page blanche.
+La publication **ne fait pas partie de la requête** : l'Action attend l'identifiant métier, pas un aller-retour vers le broker, et un Kafka indisponible fait grossir une file au lieu de perdre un événement.
 
 ### Les utilisateurs orphelins
 
-Si `wely-users` crée l'utilisateur mais que Keycloak annule quand même le compte (réponse arrivée après le délai de 10 s, ou échec de Keycloak juste après), il reste un utilisateur sans compte. **`OrphanUserReaper`**, une boucle de fond comme le relais de l'outbox, s'en charge toutes les heures :
+Si `wely-users` crée l'utilisateur mais que le compte Auth0 disparaît (inscription annulée, compte supprimé depuis la console avant confirmation), il reste un utilisateur sans compte. **`OrphanUserReaper`**, une boucle de fond comme le relais de l'outbox, s'en charge toutes les heures :
 
 - il lit les utilisateurs de plus de 15 min dont le compte n'a jamais été confirmé (`identity_checked_at` nul) ;
-- il demande chacun à l'API Admin de Keycloak : un compte trouvé est marqué confirmé, et n'est plus jamais revérifié ; un compte inconnu (404) fait **supprimer** l'utilisateur, avec un `<env>.user-deleted` écrit dans l'outbox dans la même transaction ;
-- une panne de Keycloak n'est pas une preuve d'absence : l'utilisateur reste à vérifier au passage suivant.
+- il demande chacun à la Management API d'Auth0, **un par seconde** et 50 par passe (`app.orphan-reaper.pace`, `batch-size`) : le palier gratuit limite le débit de cette API. Un compte trouvé est marqué confirmé, et n'est plus jamais revérifié ; un compte inconnu (404) fait **supprimer** l'utilisateur, avec un `<env>.user-deleted` écrit dans l'outbox dans la même transaction ;
+- une panne d'Auth0, ou un **429** de sa limite de débit, n'est pas une preuve d'absence : l'utilisateur reste à vérifier au passage suivant. Seul un 404 fait supprimer.
 
-`wely-social` consomme `<env>.user-deleted` et supprime le nœud. Les amis fictifs de la démo n'ont pas de compte Keycloak : le jeu de données les marque confirmés.
+`wely-social` consomme `<env>.user-deleted` et supprime le nœud. Les amis fictifs de la démo n'ont pas de compte Auth0 : le jeu de données les marque confirmés.
 
 ### Le hashtag
 
@@ -165,20 +162,19 @@ Toutes les routes sont préfixées par `/user-service` et exposées via la gatew
 | `GET` | `/profile/preferences` | JWT | Préférences de l'utilisateur courant : `{"theme": "LIGHT" \| "DARK" \| "SYSTEM"}`, `SYSTEM` s'il n'a jamais choisi |
 | `PUT` | `/profile/preferences` | JWT | Les remplace ; un thème absent (`USR-VAL-001`) ou hors des trois (`USR-REQ-000`) est refusé en 400 |
 | `GET` | `/users/{userId}/profile` | JWT | Profil d'un ami (identité, date d'inscription, bio, centres d'intérêt, `birthday: {month, day}` or null, never the year). Amitié vérifiée auprès de `wely-social` avec le jeton de l'appelant : 403 `USR-BUS-009` sinon, 404 `USR-BUS-001` si l'utilisateur est inconnu, 502 `USR-TEC-005` si `wely-social` ne répond pas. Son propre id renvoie son profil sans appel |
-| `POST` | `/profile/provision` | `X-Internal-Secret` | **Interne.** Crée l'utilisateur à l'inscription, depuis l'étape d'inscription de Keycloak. Idempotent sur l'UUID Keycloak |
-| `GET` | `/profile/resolve/{keycloakId}` | `X-Internal-Secret` | **Interne.** Lit le `businessId` d'un UUID Keycloak ; 404 s'il est inconnu |
+| `POST` | `/profile/provision` | `X-Internal-Secret` | **Interne.** Crée l'utilisateur à sa première connexion, depuis l'Action post-login d'Auth0. Idempotent sur le `subjectId` |
 | `POST` | `/profile/picture` | JWT | Remplace la photo de l'utilisateur courant (multipart `file`, 5 Mo au plus) et répond une URL signée |
 | `POST` | `/avatars` | JWT | URL des photos de 100 utilisateurs au plus, `{ userId: url }` ; les utilisateurs sans photo sont absents |
-| `DELETE` | `/profile` | JWT with a recent `auth_time` | Deletes the caller's account: **202**, no body. 403 `USR-BUS-014` while deletion is switched off, 403 `USR-BUS-011` for a demo account, 202 again for an account already deleted, 403 `USR-BUS-010` when the last sign-in is over 5 min old or unknown, 404 for an unknown id. See [Account deletion](#account-deletion) |
+| `DELETE` | `/profile` | JWT with a recent `authenticatedAt` | Deletes the caller's account: **202**, no body. 403 `USR-BUS-014` while deletion is switched off, 403 `USR-BUS-011` for a demo account, 202 again for an account already deleted, 403 `USR-BUS-010` when the last sign-in is over 5 min old or unknown, 404 for an unknown id. See [Account deletion](#account-deletion) |
 | `GET` | `/profile/deletion` | JWT | `{"allowed": boolean}`: false for a demo account, so the web app never sends the user through a new sign-in for nothing; 403 `USR-BUS-014` while deletion is switched off |
 | `POST` | `/users/deleted` | JWT | `{"userIds": [...]}` (100 at most) → `{"deletedIds": [...]}`, the ids whose account was deleted, for the "deleted user" label |
 | `GET` | `/internal/deleted-users?after=&limit=` | `X-Internal-Secret` (`DELETED_USERS_READER_SECRET`) | **Internal.** Every deleted account, `{"items": [{"userId", "deletedAt"}], "next": cursor}` (500 per page, opaque cursor, `next` null on the last page), for the other services' reconciliation. Blocked by the gateway, refused while the secret is unset |
 
-`/profile/provision` et `/profile/resolve/**` sont les seuls endpoints exemptés de l'authentification JWT : Keycloak les appelle pendant l'inscription et pendant l'émission du token, donc avant qu'un token existe. Il est protégé par un secret partagé vérifié dans un `WebFilter` dédié.
+`POST /profile/provision` est le seul endpoint exempté de l'authentification JWT : l'Action Auth0 l'appelle pendant l'émission du premier token, donc avant qu'un token existe. Il est protégé par un secret partagé vérifié dans un `WebFilter` dédié.
 
-`/internal/**` (GET) is the third one, guarded by a secret of its own: the Keycloak mapper's secret cannot read it. The same `ServerWebExchangeMatcher`s decide what `permitAll` opens and what the filter guards, so the two cannot diverge.
+`/internal/**` (GET) is the other one, guarded by a secret of its own: the Auth0 Action's secret cannot read it. The same `ServerWebExchangeMatcher`s decide what `permitAll` opens and what the filter guards, so the two cannot diverge.
 
-Once an account is deleted, every endpoint about the caller (`/profile`, `/profile/about`, `/profile/preferences`, `/profile/picture`, and `/profile/deletion` while deletion is switched on) and `GET /users/{id}/profile` for that user answer **410 `USR-BUS-012`**. `/profile/resolve` keeps answering 404: on a 410 the Keycloak mapper would fall back on its cached id and mint a token.
+Once an account is deleted, every endpoint about the caller (`/profile`, `/profile/about`, `/profile/preferences`, `/profile/picture`, and `/profile/deletion` while deletion is switched on) and `GET /users/{id}/profile` for that user answer **410 `USR-BUS-012`**.
 
 ### OpenAPI
 
@@ -304,10 +300,10 @@ Written with `PUT /profile/registration`, and with every profile update of a use
 
 `DELETE /profile` keeps the row as a **tombstone**: the `businessId` survives, because every other service keeps it as a pseudonym, and every personal field is cleared.
 
-1. **Checks, in this order.** The switch first: unless `ACCOUNT_DELETION_ENABLED` is `true`, 403 `USR-BUS-014` on both `DELETE /profile` and `GET /profile/deletion`, without reading the account. Then the demo guard (`ACCOUNT_DELETION_PROTECTED_USER_IDS`, 403 `USR-BUS-011`), so a demo visitor is never made to sign in again for nothing. Then an account already deleted answers 202: a retry after a lost 202 must not send the user to a sign-in that can no longer succeed. Then the access token's `auth_time` must be at most 5 min old and at most 60 s ahead, or 403 `USR-BUS-010` — 403 and not 401, because the web app answers any 401 with a plain login. A missing claim fails closed.
-2. **One R2DBC transaction** (`R2dbcUserRepositoryAdapter.eraseAccount`): lock the row, retire the handle, write the tombstone, queue an `account_deletion` job holding the original Keycloak id, delete the user's other outbox rows (pending, parked or published), append `<env>.user-deleted`. Then 202.
-3. **From that commit on**, the original Keycloak id resolves to 404, so the mapper refuses every login and refresh; updates match no row, so no `<env>.user-modified` can follow `<env>.user-deleted`.
-4. **`AccountDeletionWorker`** (a 5 s loop shaped like the relay) logs the user out of Keycloak, then deletes them (a 404 counts as done), and purges `avatars/<businessId>/` through wely-media — again 10 min later, for an upload that raced the deletion. Jobs are leased, not locked, so no transaction stays open across HTTP calls. Failures back off from 5 s to 1 h and are never parked; the log turns ERROR from the 5th.
+1. **Checks, in this order.** The switch first: unless `ACCOUNT_DELETION_ENABLED` is `true`, 403 `USR-BUS-014` on both `DELETE /profile` and `GET /profile/deletion`, without reading the account. Then the demo guard (`ACCOUNT_DELETION_PROTECTED_USER_IDS`, 403 `USR-BUS-011`), so a demo visitor is never made to sign in again for nothing. Then an account already deleted answers 202: a retry after a lost 202 must not send the user to a sign-in that can no longer succeed. Then the access token's `authenticatedAt` claim (epoch seconds, set by the Auth0 Action: Auth0 puts no `auth_time` in access tokens) must be at most 5 min old and at most 60 s ahead, or 403 `USR-BUS-010` — 403 and not 401, because the web app answers any 401 with a plain login. A missing claim fails closed.
+2. **One R2DBC transaction** (`R2dbcUserRepositoryAdapter.eraseAccount`): lock the row, retire the handle, write the tombstone, queue an `account_deletion` job holding the original subject id, delete the user's other outbox rows (pending, parked or published), append `<env>.user-deleted`. Then 202.
+3. **From that commit on**, the original subject id matches no live user; updates match no row, so no `<env>.user-modified` can follow `<env>.user-deleted`.
+4. **`AccountDeletionWorker`** (a 5 s loop shaped like the relay) ends the user's Auth0 sessions (`DELETE /api/v2/users/{id}/sessions`; a 403, when the plan or the scope lacks it, is tolerated), then deletes them (a 404 counts as done), and purges `avatars/<businessId>/` through wely-media — again 10 min later, for an upload that raced the deletion. Jobs are leased, not locked, so no transaction stays open across HTTP calls. Failures back off from 5 s to 1 h and are never parked; the log turns ERROR from the 5th.
 
 | Column | Tombstone |
 |---|---|
@@ -368,7 +364,7 @@ Deux hiérarchies distinctes — métier et technique — traduites par `GlobalE
 | `USR-BUS-002` | 409 | Utilisateur déjà existant pour cette identité |
 | `USR-BUS-003` | 409 | Plus aucun hashtag disponible pour ce pseudo |
 | `USR-BUS-004` | 409 | Pseudo déjà pris |
-| `USR-BUS-005` | 400 | Profil refusé par Keycloak |
+| `USR-BUS-005` | 400 | Profil refusé par Auth0 |
 | `USR-BUS-006` | 400 | Le fichier n'est pas une image acceptée |
 | `USR-BUS-007` | 413 | Photo de plus de 5 Mo |
 | `USR-BUS-008` | 400 | Présentation hors limites (bio, centres d'intérêt) |
@@ -381,7 +377,7 @@ Deux hiérarchies distinctes — métier et technique — traduites par `GlobalE
 | `USR-VAL-001` | 400 | Validation du corps de requête, détail par champ |
 | `USR-VAL-002` | 400 | Birth date not in the past, or an age outside 13 to 120 |
 | `USR-REQ-000` | *repris* | Chemin inconnu, méthode non autorisée |
-| `USR-TEC-001` | 502 | Keycloak injoignable |
+| `USR-TEC-001` | 502 | Auth0 injoignable, ou limite de débit (429) |
 | `USR-TEC-002` | 502 | Base de données injoignable |
 | `USR-TEC-003` | 502 | Kafka injoignable |
 | `USR-TEC-004` | 502 | wely-media injoignable ou en erreur |
@@ -420,11 +416,12 @@ client peut tester et un `timestamp` :
 |---|---|
 | `DB_URL` | URL R2DBC PostgreSQL |
 | `DB_USERNAME` / `DB_PASSWORD` | Identifiants base |
-| `KEYCLOAK_ISSUER_URI` | Issuer **public** — validation de l'émetteur du token |
-| `KEYCLOAK_INTERNAL_JWK_SET_URI` | JWKS **interne** au cluster — récupération des clés |
-| `KEYCLOAK_INTERNAL_TOKEN_URI` | Endpoint token interne (`client_credentials`) |
-| `KEYCLOAK_BASE_URL` | Base de l'Admin API Keycloak |
-| `KEYCLOAK_CLIENT_SECRET` | Secret du client `wely-users-api-client` |
+| `KEYCLOAK_ISSUER_URI` | Issuer Auth0, `https://<tenant>/` (slash final) — nom hérité, renommage `OIDC_*` à venir |
+| `KEYCLOAK_INTERNAL_JWK_SET_URI` | JWKS Auth0, `https://<tenant>/.well-known/jwks.json` — nom hérité |
+| `JWT_AUDIENCES` | Identifiant de l'API Auth0 (`wely-api-<env>`) |
+| `AUTH0_DOMAIN` | Domaine du tenant (`dev-….eu.auth0.com`) : Management API et endpoint token |
+| `AUTH0_MGMT_CLIENT_ID` / `AUTH0_MGMT_CLIENT_SECRET` | Application M2M `wely-users-<env>` ; scopes `read:users update:users delete:users delete:sessions` (secret scellé) |
+| `INTERNAL_SECRET` | Secret de `POST /profile/provision`, le même que `INTERNAL_SECRET_<ENV>` de l'Action |
 | `KAFKA_BOOTSTRAP_SERVER` | Brokers Kafka |
 | `KAFKA_SECURITY_PROTOCOL` | `PLAINTEXT` by default; `SASL_SSL` for Confluent Cloud (dev, prod) |
 | `KAFKA_API_KEY` / `KAFKA_API_SECRET` | The Kafka cluster's API key, for `SASL_SSL` (sealed in `dev-wely-cloud`) |
@@ -458,15 +455,14 @@ Voir [Validation du JWT derrière un ingress](https://github.com/WelyLabs/wely-p
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
-Le profil `dev` pointe sur `localhost` (PostgreSQL 5432, Keycloak 8080, Kafka 9092).
+Le profil `dev` pointe sur `localhost` (PostgreSQL 5432, Kafka 9092) et sur le tenant Auth0 de dev ; `AUTH0_MGMT_CLIENT_ID` et `AUTH0_MGMT_CLIENT_SECRET` restent à fournir.
 
 > **Il n'y a plus de commande unique qui lève toute la plateforme.** L'overlay `local` de
 > `wely-gitops-infra` a été supprimé en novembre 2026 avec les bases qu'il déployait : depuis que
 > PostgreSQL, Neo4j, MongoDB, Kafka et le stockage des photos sont des services managés (Neon,
 > Aura, Atlas, Confluent Cloud, Cloudflare R2), un cluster local n'amorcerait qu'une coquille sans
-> rien à interroger. Pour travailler sur ce service, lance Keycloak par le `docker compose` du
-> dépôt de plateforme et donne-lui, par variables d'environnement, les URI de tes propres
-> instances — les paliers gratuits de ces cinq services suffisent.
+> rien à interroger. Pour travailler sur ce service, pointe-le sur le tenant Auth0 de dev et
+> donne-lui, par variables d'environnement, les URI de tes propres instances — les paliers gratuits de ces cinq services suffisent.
 
 ---
 
@@ -495,5 +491,5 @@ Elles portent sur ce qu'un mock ne peut pas montrer : que `FOR UPDATE SKIP LOCKE
 
 - **Pas de réconciliation.** L'outbox empêche une classe de pannes ; il ne dit pas si le graphe social a dérivé pour une autre raison. Comparer le nombre de lignes `app_user` au nombre de nœuds `User` couvrirait *toutes* les causes.
 - **A deleted user's access token lives until it expires**, 300 s at most: wely-users refuses it at once (410), and the other services refuse its writes once they have processed `<env>.user-deleted`. Reads of what the user could already see remain possible in that window. There is no deny-list at the gateway, by choice.
-- **Deleting a user from the Keycloak admin console bypasses erasure**: `OrphanUserReaper` only checks users never confirmed. An account is deleted through `DELETE /profile`.
+- **Deleting a user from the Auth0 dashboard bypasses erasure**: `OrphanUserReaper` only checks users never confirmed. An account is deleted through `DELETE /profile`.
 - **Le relais tient sa transaction pendant l'envoi.** Les verrous durent le temps de l'appel au broker. C'est le bon compromis à un événement par inscription, pas à un débit soutenu.

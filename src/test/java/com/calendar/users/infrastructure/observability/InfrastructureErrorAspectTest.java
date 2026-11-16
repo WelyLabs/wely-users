@@ -4,7 +4,7 @@ import com.calendar.users.exception.BusinessErrorCode;
 import com.calendar.users.exception.BusinessException;
 import com.calendar.users.exception.TechnicalErrorCode;
 import com.calendar.users.exception.TechnicalException;
-import com.calendar.users.configuration.KeycloakClientConfig;
+import com.calendar.users.configuration.Auth0ManagementClientConfig;
 import com.sun.net.httpserver.HttpServer;
 import io.r2dbc.spi.ConnectionFactories;
 import org.aspectj.lang.ProceedingJoinPoint;
@@ -55,7 +55,7 @@ class InfrastructureErrorAspectTest {
     void setUp() {
         aspect = new InfrastructureErrorAspect();
         when(joinPoint.getSignature()).thenReturn(signature);
-        when(signature.getName()).thenReturn("findIdByKeycloakId");
+        when(signature.getName()).thenReturn("findIdBySubjectId");
     }
 
     private static TechnicalErrorCode codeOf(Throwable error) {
@@ -112,15 +112,15 @@ class InfrastructureErrorAspectTest {
     // --- identity ----------------------------------------------------------
 
     @Test
-    @DisplayName("an unreachable Keycloak becomes KEYCLOAK_ERROR, not DATABASE_ERROR")
-    void translateIdentityFailures_shouldMapToKeycloakError() throws Throwable {
+    @DisplayName("an unreachable Auth0 becomes IDENTITY_PROVIDER_ERROR, not DATABASE_ERROR")
+    void translateIdentityFailures_shouldMapToIdentityProviderError() throws Throwable {
         when(joinPoint.proceed()).thenReturn(Mono.error(new RuntimeException("503 from admin API")));
 
         // Two separate pointcuts exist for this: conflating the two incidents would make
         // a production diagnosis impossible.
         StepVerifier.create((Mono<?>) aspect.translateIdentityFailures(joinPoint))
                 .expectErrorMatches(error -> error instanceof TechnicalException
-                        && codeOf(error) == TechnicalErrorCode.KEYCLOAK_ERROR)
+                        && codeOf(error) == TechnicalErrorCode.IDENTITY_PROVIDER_ERROR)
                 .verify(Duration.ofSeconds(10));
     }
 
@@ -209,7 +209,7 @@ class InfrastructureErrorAspectTest {
     @Test
     @DisplayName("a 404 from the dependency is a business outcome, not an incident")
     void translate_shouldMapNotFoundToUserNotFound() throws Throwable {
-        // Keycloak answering "no such user" was surfacing as USR-TEC-001 at 502 — the platform
+        // The identity provider answering "no such user" was surfacing as USR-TEC-001 at 502 — the platform
         // declaring itself broken because the caller asked for someone who does not exist.
         WebClientResponseException notFound = WebClientResponseException.create(
                 HttpStatus.NOT_FOUND.value(), "Not Found", HttpHeaders.EMPTY, new byte[0], null);
@@ -239,7 +239,7 @@ class InfrastructureErrorAspectTest {
                     assertThat(error)
                             .isInstanceOf(TechnicalException.class)
                             .extracting(e -> ((TechnicalException) e).getErrorCode())
-                            .isEqualTo(TechnicalErrorCode.KEYCLOAK_ERROR);
+                            .isEqualTo(TechnicalErrorCode.IDENTITY_PROVIDER_ERROR);
                     assertThat(error.getCause()).isSameAs(serverError);
                 })
                 .verify(Duration.ofSeconds(10));
@@ -249,7 +249,7 @@ class InfrastructureErrorAspectTest {
     // --- secrets in the logged cause ---------------------------------------
     //
     // The ERROR line logs the whole cause chain. These build the real driver and client
-    // failures around the secrets this service holds — the PostgreSQL password, the Keycloak
+    // failures around the secrets this service holds — the PostgreSQL password, the Auth0
     // client secret — and check that the printed chain never carries them: the R2DBC driver
     // names host and port only, and the client secret travels in the token request, never in
     // a message. User-info in a client's base URL does reach the chain (Reactor's checkpoint
@@ -288,16 +288,16 @@ class InfrastructureErrorAspectTest {
         assertThat(stackTrace(error)).doesNotContain(SECRET);
     }
 
-    private static WebClient keycloakAdminClient(String baseUrl, String tokenUri) {
-        ClientRegistration registration = ClientRegistration.withRegistrationId("wely-users-api-client")
+    private static WebClient managementClient(String domain, String tokenUri) {
+        ClientRegistration registration = ClientRegistration.withRegistrationId("auth0-management")
                 .clientId("wely-users-api")
                 .clientSecret(SECRET)
                 .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
                 .tokenUri(tokenUri)
                 .build();
         var registrations = new InMemoryReactiveClientRegistrationRepository(registration);
-        KeycloakClientConfig config = new KeycloakClientConfig();
-        return config.keycloakAdminWebClient(baseUrl, config.authorizedClientManager(
+        Auth0ManagementClientConfig config = new Auth0ManagementClientConfig();
+        return config.auth0ManagementWebClient(domain, config.authorizedClientManager(domain,
                 registrations, new InMemoryReactiveOAuth2AuthorizedClientService(registrations)));
     }
 
@@ -310,10 +310,10 @@ class InfrastructureErrorAspectTest {
     }
 
     @Test
-    @DisplayName("an unreachable Keycloak token endpoint does not print the client secret")
-    void translateIdentityFailures_shouldNotLeakTheClientSecret_whenKeycloakIsUnreachable() throws Throwable {
-        WebClient client = keycloakAdminClient(
-                "http://wely:" + SECRET + "@127.0.0.1:1/admin/realms/wely-realm",
+    @DisplayName("an unreachable Auth0 token endpoint does not print the client secret")
+    void translateIdentityFailures_shouldNotLeakTheClientSecret_whenAuth0IsUnreachable() throws Throwable {
+        WebClient client = managementClient(
+                "wely:" + SECRET + "@127.0.0.1:1",
                 "http://127.0.0.1:1/token?client_secret=" + SECRET);
 
         assertNoClientSecret(translatedIdentityFailure(
@@ -321,10 +321,10 @@ class InfrastructureErrorAspectTest {
     }
 
     @Test
-    @DisplayName("Keycloak refusing the client credentials does not print them")
-    void translateIdentityFailures_shouldNotLeakTheClientSecret_whenKeycloakRefusesIt() throws Throwable {
-        HttpServer keycloak = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        keycloak.createContext("/", exchange -> {
+    @DisplayName("Auth0 refusing the client credentials does not print them")
+    void translateIdentityFailures_shouldNotLeakTheClientSecret_whenAuth0RefusesIt() throws Throwable {
+        HttpServer auth0 = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        auth0.createContext("/", exchange -> {
             byte[] body = "{\"error\":\"invalid_client\",\"error_description\":\"Invalid client credentials\"}"
                     .getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
@@ -333,15 +333,15 @@ class InfrastructureErrorAspectTest {
                 out.write(body);
             }
         });
-        keycloak.start();
+        auth0.start();
         try {
-            String base = "http://127.0.0.1:" + keycloak.getAddress().getPort();
-            WebClient client = keycloakAdminClient(base + "/admin/realms/wely-realm", base + "/token");
+            String base = "http://127.0.0.1:" + auth0.getAddress().getPort();
+            WebClient client = managementClient("127.0.0.1:" + auth0.getAddress().getPort(), base + "/oauth/token");
 
             assertNoClientSecret(translatedIdentityFailure(
                     client.get().uri("/users").retrieve().bodyToMono(String.class)));
         } finally {
-            keycloak.stop(0);
+            auth0.stop(0);
         }
     }
 }

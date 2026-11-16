@@ -23,7 +23,7 @@ class ProblemWebExceptionHandlerTest {
     void handle_shouldAnswerOurProblemAndCountIt_whenAFilterFailedTechnically() {
         MockServerWebExchange exchange = MockServerWebExchange.from(MockServerHttpRequest.get("/user-service/profile"));
 
-        StepVerifier.create(handler.handle(exchange, new TechnicalException(TechnicalErrorCode.KEYCLOAK_ERROR)))
+        StepVerifier.create(handler.handle(exchange, new TechnicalException(TechnicalErrorCode.IDENTITY_PROVIDER_ERROR)))
                 .expectComplete()
                 .verify(Duration.ofSeconds(10));
 

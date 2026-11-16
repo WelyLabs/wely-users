@@ -17,7 +17,6 @@ import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.jwt.*;
 import org.springframework.security.web.server.SecurityWebFilterChain;
-import org.springframework.security.web.server.util.matcher.OrServerWebExchangeMatcher;
 import org.springframework.security.web.server.util.matcher.ServerWebExchangeMatcher;
 import org.springframework.security.web.server.util.matcher.ServerWebExchangeMatchers;
 import org.springframework.web.server.ServerWebExchange;
@@ -26,6 +25,9 @@ import reactor.core.publisher.Mono;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 
 @Configuration
@@ -34,10 +36,9 @@ public class WebFluxSecurityConfig {
 
     static final String SECRET_HEADER = "X-Internal-Secret";
 
-    /** Called by Keycloak before any JWT exists: provision at registration, resolve while minting a token. */
-    static final ServerWebExchangeMatcher KEYCLOAK_CALLBACKS = new OrServerWebExchangeMatcher(
-            ServerWebExchangeMatchers.pathMatchers(HttpMethod.GET, "/user-service/profile/resolve/**"),
-            ServerWebExchangeMatchers.pathMatchers(HttpMethod.POST, "/user-service/profile/provision"));
+    /** Called by the identity provider's sign-in Action before any JWT exists, to provision the user. */
+    static final ServerWebExchangeMatcher IDENTITY_PROVIDER_CALLBACKS =
+            ServerWebExchangeMatchers.pathMatchers(HttpMethod.POST, "/user-service/profile/provision");
 
     /** Read by the other services' reconciliation, with a secret of its own. */
     static final ServerWebExchangeMatcher DELETED_USERS_READER =
@@ -45,6 +46,7 @@ public class WebFluxSecurityConfig {
 
     private final String publicIssuer;
     private final String internalJwkSetUri;
+    private final List<String> audiences;
     private final String internalSecret;
     private final String deletedUsersReaderSecret;
 
@@ -52,10 +54,12 @@ public class WebFluxSecurityConfig {
     public WebFluxSecurityConfig(
             @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}") String publicIssuer,
             @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri}") String internalJwkSetUri,
+            @Value("${spring.security.oauth2.resourceserver.jwt.audiences:}") List<String> audiences,
             @Value("${app.internal-secret}") String internalSecret,
             @Value("${app.deleted-users.reader-secret:}") String deletedUsersReaderSecret) {
         this.publicIssuer = publicIssuer;
         this.internalJwkSetUri = internalJwkSetUri;
+        this.audiences = audiences;
         this.internalSecret = internalSecret;
         this.deletedUsersReaderSecret = deletedUsersReaderSecret;
     }
@@ -75,7 +79,7 @@ public class WebFluxSecurityConfig {
                         .accessDeniedHandler(accessDeniedHandler))
                 .authorizeExchange((authorize) -> authorize
                         // Guarded by their secret in the filter below, which uses the same matchers.
-                        .matchers(KEYCLOAK_CALLBACKS, DELETED_USERS_READER).permitAll()
+                        .matchers(IDENTITY_PROVIDER_CALLBACKS, DELETED_USERS_READER).permitAll()
                         .pathMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         // Kubernetes probes: the kubelet carries no token. Only the two
                         // health groups are opened, not /actuator as a whole.
@@ -102,12 +106,20 @@ public class WebFluxSecurityConfig {
     public ReactiveJwtDecoder jwtDecoder() {
         NimbusReactiveJwtDecoder jwtDecoder = NimbusReactiveJwtDecoder.withJwkSetUri(internalJwkSetUri).build();
 
-        OAuth2TokenValidator<Jwt> issuerValidator = JwtValidators.createDefaultWithIssuer(publicIssuer);
-        OAuth2TokenValidator<Jwt> withTimestamp = new JwtTimestampValidator();
-        OAuth2TokenValidator<Jwt> validator = new DelegatingOAuth2TokenValidator<>(withTimestamp, issuerValidator);
-
-        jwtDecoder.setJwtValidator(validator);
+        jwtDecoder.setJwtValidator(jwtValidator(publicIssuer, audiences));
         return jwtDecoder;
+    }
+
+    /** Timestamps, issuer and audience; declaring our own decoder makes Boot skip its audience check, so it is redone here. */
+    static OAuth2TokenValidator<Jwt> jwtValidator(String issuer, List<String> audiences) {
+        List<OAuth2TokenValidator<Jwt>> validators = new ArrayList<>(
+                List.of(new JwtTimestampValidator(), JwtValidators.createDefaultWithIssuer(issuer)));
+        // An empty list disables the check (local dev), as Boot does.
+        if (!audiences.isEmpty()) {
+            validators.add(new JwtClaimValidator<List<String>>(JwtClaimNames.AUD,
+                    aud -> aud != null && !Collections.disjoint(aud, audiences)));
+        }
+        return new DelegatingOAuth2TokenValidator<>(validators);
     }
 
     /** 401 problem for an internal path whose secret is missing or wrong; every other request passes through. */
@@ -127,7 +139,7 @@ public class WebFluxSecurityConfig {
 
     /** The secret an internal path requires, or empty for any other path. */
     private Mono<Optional<String>> requiredSecret(ServerWebExchange exchange) {
-        return KEYCLOAK_CALLBACKS.matches(exchange)
+        return IDENTITY_PROVIDER_CALLBACKS.matches(exchange)
                 .flatMap(callback -> callback.isMatch()
                         ? Mono.just(Optional.of(internalSecret))
                         : DELETED_USERS_READER.matches(exchange)

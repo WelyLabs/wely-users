@@ -24,6 +24,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -63,12 +64,6 @@ public class UserService {
                 .switchIfEmpty(Mono.defer(() -> missingUser(userId)));
     }
 
-    /** Read at every login by Keycloak's mapper; 404 for a deleted account too, so the mapper refuses the token. */
-    public Mono<UUID> findBusinessIdByKeycloakId(String keycloakId) {
-        return userRepository.findIdByKeycloakId(keycloakId)
-                .switchIfEmpty(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
-    }
-
     /**
      * Changes the user's username and names, here and at the identity provider, and tells the other
      * services (USER_MODIFIED).
@@ -91,21 +86,21 @@ public class UserService {
         String userName = update.userName().toLowerCase(Locale.ROOT);
 
         return userRepository.getBusinessUserByUserId(userId)
-                .zipWith(userRepository.findKeycloakIdByUserId(userId))
+                .zipWith(userRepository.findSubjectIdByUserId(userId))
                 .switchIfEmpty(Mono.defer(() -> missingUser(userId)))
                 .flatMap(found -> {
                     BusinessUser current = found.getT1();
-                    String keycloakId = found.getT2();
+                    String subjectId = found.getT2();
                     BusinessUser changed = new BusinessUser(current.id(), userName, current.hashtag(),
                             update.firstName(), update.lastName(), current.profilePicUrl(), current.joinedDate(),
                             current.birthDate(), current.registrationCompleted());
                     IdentityUser before = new IdentityUser(current.userName(), current.firstName(), current.lastName());
                     IdentityUser after = new IdentityUser(userName, update.firstName(), update.lastName());
 
-                    return identityProvider.updateProfile(keycloakId, after)
+                    return identityProvider.updateProfile(subjectId, after)
                             // Deferred: built eagerly, the write would be prepared even when the provider refused.
                             .then(Mono.defer(() -> userRepository.updateProfile(changed, current.userName())
-                                    .onErrorResume(error -> undo(keycloakId, before, error))));
+                                    .onErrorResume(error -> undo(subjectId, before, error))));
                 });
     }
 
@@ -236,8 +231,8 @@ public class UserService {
     }
 
     /** Gives the identity provider its previous values back, then fails with the original error. */
-    private Mono<BusinessUser> undo(String keycloakId, IdentityUser previous, Throwable error) {
-        return identityProvider.updateProfile(keycloakId, previous)
+    private Mono<BusinessUser> undo(String subjectId, IdentityUser previous, Throwable error) {
+        return identityProvider.updateProfile(subjectId, previous)
                 .onErrorResume(undoFailed -> {
                     error.addSuppressed(undoFailed);
                     return Mono.empty();
@@ -246,19 +241,19 @@ public class UserService {
     }
 
     /**
-     * Creates the user at registration, from the identity Keycloak sends.
-     * Idempotent: a Keycloak id that already has a user returns it, so a retried call is harmless.
+     * Creates the user at its first sign-in, from the identity the Auth0 Action sends.
+     * Idempotent: a subject id that already has a user returns it, so a retried call is harmless.
      */
-    public Mono<UUID> provisionUser(String keycloakId, IdentityUser identityUser) {
-        return userRepository.findIdByKeycloakId(keycloakId)
-                .switchIfEmpty(Mono.defer(() -> createUser(keycloakId, identityUser)))
-                // Two concurrent calls for one id: the loser hits the keycloak_id constraint.
+    public Mono<UUID> provisionUser(String subjectId, IdentityUser identityUser) {
+        return userRepository.findIdBySubjectId(subjectId)
+                .switchIfEmpty(Mono.defer(() -> createUser(subjectId, identityUser)))
+                // Two concurrent calls for one id: the loser hits the keycloak_id (subject id) constraint.
                 .onErrorResume(UserService::isAlreadyExists,
-                        e -> userRepository.findIdByKeycloakId(keycloakId).switchIfEmpty(Mono.error(e)));
+                        e -> userRepository.findIdBySubjectId(subjectId).switchIfEmpty(Mono.error(e)));
     }
 
     /** Creates the user with a free hashtag. */
-    private Mono<UUID> createUser(String keycloakId, IdentityUser identityUser) {
+    private Mono<UUID> createUser(String subjectId, IdentityUser identityUser) {
         return generateUniqueHashtag(identityUser.username())
                 .map(hashtag -> new BusinessUser(
                         null,
@@ -268,32 +263,33 @@ public class UserService {
                         identityUser.lastName(),
                         null,
                         LocalDateTime.now()))
-                .flatMap(newUser -> userRepository.save(newUser, keycloakId))
+                .flatMap(newUser -> userRepository.save(newUser, subjectId))
                 .map(BusinessUser::id)
                 // Only once the row is saved: the loser of a concurrent provisioning fails above.
                 .doOnNext(created -> activity.userSignedUp());
     }
 
     /**
-     * Checks users whose Keycloak account was never confirmed, oldest first. A user Keycloak does
-     * not know is left by a registration Keycloak cancelled after wely-users had created it: it is
-     * deleted. Each user is checked once; one failure does not stop the others.
+     * Checks users whose identity-provider account was never confirmed, oldest first, one every
+     * {@code pace}: the provider rate-limits its API. A user the provider does not know is left by a
+     * sign-up it cancelled after wely-users had created it: it is deleted. Each user is checked once;
+     * one failure, a rate-limit refusal included, does not stop the others.
      */
-    public Mono<OrphanSweep> removeOrphans(LocalDateTime createdBefore, int limit) {
+    public Mono<OrphanSweep> removeOrphans(LocalDateTime createdBefore, int limit, Duration pace) {
         return userRepository.findIdentitiesToCheck(createdBefore, limit)
-                .concatMap(this::checkIdentity)
+                .concatMap(identity -> Mono.defer(() -> checkIdentity(identity)).delaySubscription(pace))
                 .reduce(OrphanSweep.EMPTY, OrphanSweep::plus);
     }
 
     private Mono<OrphanSweep> checkIdentity(IdentityToCheck identity) {
-        return identityProvider.getUser(identity.keycloakId())
+        return identityProvider.getUser(identity.subjectId())
                 .map(found -> true)
                 .defaultIfEmpty(false)
                 .onErrorResume(UserService::isUserNotFound, e -> Mono.just(false))
                 .flatMap(exists -> exists
                         ? userRepository.markIdentityChecked(identity.userId()).thenReturn(new OrphanSweep(1, 0, List.of()))
                         : userRepository.deleteOrphan(identity.userId()).thenReturn(new OrphanSweep(0, 1, List.of())))
-                // Keycloak or the database is down: left unchecked, retried on the next pass.
+                // The provider or the database is down, or the provider rate-limits: left unchecked, retried on the next pass.
                 .onErrorResume(e -> Mono.just(OrphanSweep.failure(ErrorCodes.of(e))));
     }
 

@@ -48,7 +48,7 @@ public class OpenApiConfig {
         return new OpenAPI().info(new Info()
                 .title("wely-users")
                 .version("v1")
-                .description("User profiles and identity resolution. Translates a Keycloak subject into a business identifier, and publishes USER_CREATED."));
+                .description("User profiles and identity resolution. Provisions a business identifier for an Auth0 subject, and publishes USER_CREATED."));
     }
 
     /**

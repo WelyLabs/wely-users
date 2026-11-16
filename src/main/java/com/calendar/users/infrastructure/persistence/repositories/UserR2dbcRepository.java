@@ -28,7 +28,7 @@ public interface UserR2dbcRepository extends ReactiveCrudRepository<UserEntity, 
     Mono<UserEntity> findLiveById(UUID id);
 
     @Query("SELECT id FROM app_user WHERE keycloak_id = :keycloakId AND deleted_at IS NULL")
-    Mono<UUID> findIdByKeycloakId(String keycloakId);
+    Mono<UUID> findIdBySubjectId(String keycloakId);
 
     /** A live user's handle, or a retired one: either way it is not free. */
     @Query("""
@@ -76,7 +76,7 @@ public interface UserR2dbcRepository extends ReactiveCrudRepository<UserEntity, 
     Mono<Long> completeRegistration(UUID id, LocalDate birthDate);
 
     @Query("SELECT keycloak_id FROM app_user WHERE id = :id AND deleted_at IS NULL")
-    Mono<String> findKeycloakIdById(UUID id);
+    Mono<String> findSubjectIdById(UUID id);
 
     /**
      * profile_pic_url holds a storage key for an upload ({@code avatars/...}), or a path the web app

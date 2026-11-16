@@ -14,7 +14,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 
-/** Background loop that finishes deleted accounts (Keycloak logout and delete, avatar purge), retrying for ever. */
+/** Background loop that finishes deleted accounts (Auth0 sessions and user delete, avatar purge), retrying for ever. */
 @Slf4j
 @Component
 @ConditionalOnProperty(prefix = "app.account-deletion.worker", name = "enabled", havingValue = "true",

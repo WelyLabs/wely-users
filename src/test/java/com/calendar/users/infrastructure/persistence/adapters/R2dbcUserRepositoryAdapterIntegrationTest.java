@@ -56,7 +56,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Runs the R2DBC queries of {@link R2dbcUserRepositoryAdapter} against a real PostgreSQL.
  *
  * <p>Every query here is derived from a method name, so Spring Data writes the SQL and nothing
- * in the codebase states what it will be. {@code findIdByKeycloakId} returning a bare
+ * in the codebase states what it will be. {@code findIdBySubjectId} returning a bare
  * {@code Mono<UUID>} is the kind of projection that either works or fails at runtime, and the
  * unit test — which mocks the repository — cannot tell which.
  *
@@ -179,20 +179,20 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
 
     @Test
     @DisplayName("an id is found from the Keycloak subject")
-    void findIdByKeycloakId_shouldReturnTheInternalId() {
+    void findIdBySubjectId_shouldReturnTheInternalId() {
         BusinessUser saved = adapter.save(aUser("alice", 1111), "keycloak-alice").block();
 
-        StepVerifier.create(adapter.findIdByKeycloakId("keycloak-alice"))
+        StepVerifier.create(adapter.findIdBySubjectId("keycloak-alice"))
                 .expectNext(saved.id())
                 .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
     @DisplayName("an unknown subject yields nothing rather than a null id")
-    void findIdByKeycloakId_shouldBeEmptyForAnUnknownSubject() {
+    void findIdBySubjectId_shouldBeEmptyForAnUnknownSubject() {
         // UserService reads this emptiness as "provision the user", so an accidental null or a
         // zero UUID would silently stop just-in-time provisioning.
-        StepVerifier.create(adapter.findIdByKeycloakId("nobody")).expectComplete().verify(Duration.ofSeconds(10));
+        StepVerifier.create(adapter.findIdBySubjectId("nobody")).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -304,7 +304,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         StepVerifier.create(adapter.findIdentitiesToCheck(LocalDateTime.now().minusMinutes(15), 10))
                 .assertNext(identity -> {
                     assertThat(identity.userId()).isEqualTo(older.id());
-                    assertThat(identity.keycloakId()).isEqualTo("kc-older");
+                    assertThat(identity.subjectId()).isEqualTo("kc-older");
                 })
                 .assertNext(identity -> assertThat(identity.userId()).isEqualTo(old.id()))
                 .expectComplete().verify(Duration.ofSeconds(10));
@@ -372,7 +372,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         assertThat(updated.firstName()).isEqualTo("Cam");
         assertThat(updated.hashtag()).isEqualTo(4321);
         assertThat(outboxTypes()).isEqualTo("USER_CREATED,USER_MODIFIED");
-        StepVerifier.create(adapter.findKeycloakIdByUserId(saved.id())).expectNext("kc-camille").expectComplete().verify(Duration.ofSeconds(10));
+        StepVerifier.create(adapter.findSubjectIdByUserId(saved.id())).expectNext("kc-camille").expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
@@ -868,16 +868,16 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         BusinessUser user = aTombstone();
 
         StepVerifier.create(adapter.getBusinessUserByUserId(user.id())).expectComplete().verify(Duration.ofSeconds(10));
-        StepVerifier.create(adapter.findKeycloakIdByUserId(user.id())).expectComplete().verify(Duration.ofSeconds(10));
+        StepVerifier.create(adapter.findSubjectIdByUserId(user.id())).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
     @DisplayName("neither the original Keycloak id nor the placeholder resolves: the mapper refuses tokens")
-    void findIdByKeycloakId_shouldBeEmpty_forTheOriginalAndThePlaceholderIds() {
+    void findIdBySubjectId_shouldBeEmpty_forTheOriginalAndThePlaceholderIds() {
         BusinessUser user = aTombstone();
 
-        StepVerifier.create(adapter.findIdByKeycloakId("kc-alice")).expectComplete().verify(Duration.ofSeconds(10));
-        StepVerifier.create(adapter.findIdByKeycloakId("deleted:" + user.id())).expectComplete().verify(Duration.ofSeconds(10));
+        StepVerifier.create(adapter.findIdBySubjectId("kc-alice")).expectComplete().verify(Duration.ofSeconds(10));
+        StepVerifier.create(adapter.findIdBySubjectId("deleted:" + user.id())).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test

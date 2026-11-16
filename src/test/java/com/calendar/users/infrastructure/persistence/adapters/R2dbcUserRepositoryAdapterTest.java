@@ -178,13 +178,13 @@ class R2dbcUserRepositoryAdapterTest {
 
 
         @Test
-        void findIdByKeycloakId_ShouldReturnId() {
+        void findIdBySubjectId_ShouldReturnId() {
                 // Given
                 UUID id = UUID.randomUUID();
-                when(userR2dbcRepository.findIdByKeycloakId("kc-123")).thenReturn(Mono.just(id));
+                when(userR2dbcRepository.findIdBySubjectId("kc-123")).thenReturn(Mono.just(id));
 
                 // When
-                Mono<UUID> result = adapter.findIdByKeycloakId("kc-123");
+                Mono<UUID> result = adapter.findIdBySubjectId("kc-123");
 
                 // Then
                 StepVerifier.create(result)
@@ -358,10 +358,10 @@ class R2dbcUserRepositoryAdapterTest {
         }
 
         @Test
-        void findKeycloakIdByUserId_ShouldReadTheColumn() {
-                when(userR2dbcRepository.findKeycloakIdById(ID)).thenReturn(Mono.just("kc-camille"));
+        void findSubjectIdByUserId_ShouldReadTheColumn() {
+                when(userR2dbcRepository.findSubjectIdById(ID)).thenReturn(Mono.just("kc-camille"));
 
-                StepVerifier.create(adapter.findKeycloakIdByUserId(ID)).expectNext("kc-camille").expectComplete().verify(Duration.ofSeconds(10));
+                StepVerifier.create(adapter.findSubjectIdByUserId(ID)).expectNext("kc-camille").expectComplete().verify(Duration.ofSeconds(10));
         }
 
         // --- pictures --------------------------------------------------------

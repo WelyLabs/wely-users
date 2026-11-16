@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Verifies the Spring context actually starts.
  *
  * <p>The previous version was commented out, so nothing checked that the beans wire
- * together — the three ports, the Keycloak admin client and the Kafka binder included.
+ * together — the three ports, the Auth0 Management API client and the Kafka binder included.
  */
 @SpringBootTest
 @ActiveProfiles("test")

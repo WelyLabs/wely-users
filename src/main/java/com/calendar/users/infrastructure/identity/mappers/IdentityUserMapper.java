@@ -1,15 +1,18 @@
 package com.calendar.users.infrastructure.identity.mappers;
 
 import com.calendar.users.domain.models.IdentityUser;
-import com.calendar.users.infrastructure.identity.models.KeycloakUserResponse;
+import com.calendar.users.infrastructure.identity.models.Auth0UserResponse;
 import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
 
 /**
- * Translates Keycloak's Admin API payload into the domain's {@code IdentityUser},
+ * Translates Auth0's Management API payload into the domain's {@code IdentityUser},
  * dropping the fields no one in this service reads.
  */
 @Mapper(componentModel = "spring")
 public interface IdentityUserMapper {
 
-    IdentityUser toIdentityUser(KeycloakUserResponse response);
+    @Mapping(target = "firstName", source = "givenName")
+    @Mapping(target = "lastName", source = "familyName")
+    IdentityUser toIdentityUser(Auth0UserResponse response);
 }

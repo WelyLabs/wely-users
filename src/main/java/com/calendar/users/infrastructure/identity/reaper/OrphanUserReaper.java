@@ -15,8 +15,9 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 
 /**
- * Background loop, started with the application, that deletes users whose Keycloak account does
- * not exist: the leftovers of a registration Keycloak cancelled after wely-users created the user.
+ * Background loop, started with the application, that deletes users whose Auth0 account does not
+ * exist: the leftovers of a sign-up Auth0 cancelled after wely-users created the user. Checks are
+ * paced, as Auth0's free plan rate-limits its Management API.
  *
  * <p>Only users older than the grace period are checked, so a registration still in flight is
  * never mistaken for one. Each user is checked once.
@@ -32,6 +33,7 @@ public class OrphanUserReaper implements SmartLifecycle {
     private final Duration interval;
     private final Duration gracePeriod;
     private final int batchSize;
+    private final Duration pace;
 
     private volatile Disposable loop;
 
@@ -40,12 +42,14 @@ public class OrphanUserReaper implements SmartLifecycle {
             TechnicalErrorCounter technicalErrors,
             @Value("${app.orphan-reaper.interval:1h}") Duration interval,
             @Value("${app.orphan-reaper.grace-period:15m}") Duration gracePeriod,
-            @Value("${app.orphan-reaper.batch-size:100}") int batchSize) {
+            @Value("${app.orphan-reaper.batch-size:100}") int batchSize,
+            @Value("${app.orphan-reaper.pace:1s}") Duration pace) {
         this.userService = userService;
         this.technicalErrors = technicalErrors;
         this.interval = interval;
         this.gracePeriod = gracePeriod;
         this.batchSize = batchSize;
+        this.pace = pace;
     }
 
     @Override
@@ -86,9 +90,9 @@ public class OrphanUserReaper implements SmartLifecycle {
 
     Mono<Void> sweepOnce() {
         LocalDateTime createdBefore = LocalDateTime.now().minus(gracePeriod);
-        return userService.removeOrphans(createdBefore, batchSize)
+        return userService.removeOrphans(createdBefore, batchSize, pace)
                 .doOnNext(sweep -> {
-                    // Keycloak or the database down for a user: left for the next pass, counted now.
+                    // Auth0 or the database down, or Auth0 rate-limiting for a user: left for the next pass, counted now.
                     sweep.failureCodes().forEach(code -> technicalErrors.count(code, GlobalErrorHandler.SOURCE_JOB));
                     if (sweep.removed() > 0 || sweep.failed() > 0) {
                         log.info("Orphan sweep: {} confirmed, {} removed, {} left for the next pass",

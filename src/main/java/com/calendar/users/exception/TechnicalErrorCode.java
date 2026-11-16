@@ -15,7 +15,7 @@ import org.springframework.http.HttpStatus;
 @AllArgsConstructor
 public enum TechnicalErrorCode {
 
-    KEYCLOAK_ERROR(
+    IDENTITY_PROVIDER_ERROR(
             "USR-TEC-001",
             "Identity provider unavailable",
             "The identity provider could not be reached.",

@@ -31,6 +31,9 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.springframework.security.oauth2.jwt.Jwt;
+import java.time.Instant;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -43,12 +46,12 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
 
 /**
  * Covers both beans of {@link WebFluxSecurityConfig}, and in particular the filter
- * guarding {@code /profile/resolve}.
+ * guarding {@code POST /profile/provision}.
  *
- * <p>That endpoint is the one hole in the JWT wall, and it has to be: Keycloak's
- * protocol mapper calls it <em>while</em> minting a token, so no token exists yet. A
+ * <p>That endpoint is the one hole in the JWT wall, and it has to be: the Auth0 post-login
+ * Action calls it <em>while</em> the first token is being minted, so no token exists yet. A
  * shared secret stands in, and these tests pin down that a missing or wrong secret is
- * refused — the value used to be hardcoded in the source of both sides.
+ * refused.
  */
 // Tests disable metrics export by default; the Prometheus endpoint only exists with it on.
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
@@ -62,10 +65,9 @@ class WebFluxSecurityConfigTest {
     private static final String READER_SECRET = "test-reader-secret";
     private static final String DELETED_USERS_PATH = "/user-service/internal/deleted-users";
     private static final String SECRET_HEADER = "X-Internal-Secret";
-    private static final String RESOLVE_PATH = "/user-service/profile/resolve/keycloak-abc";
     private static final String PROVISION_PATH = "/user-service/profile/provision";
     private static final String PROVISION_BODY =
-            "{\"keycloakId\":\"keycloak-abc\",\"username\":\"lea\",\"firstName\":\"Léa\",\"lastName\":\"M\"}";
+            "{\"subjectId\":\"auth0|abc\",\"username\":\"lea\",\"firstName\":\"Léa\",\"lastName\":\"M\"}";
 
     @Autowired
     private ApplicationContext context;
@@ -80,7 +82,7 @@ class WebFluxSecurityConfigTest {
     private ReactiveJwtDecoder jwtDecoder;
 
     // The ports are mocked so this test covers security: otherwise an authorised
-    // request reaches an absent PostgreSQL and Keycloak, and the test times out.
+    // request reaches an absent PostgreSQL and Auth0, and the test times out.
     @MockitoBean private UserRepository userRepository;
     @MockitoBean private IdentityProvider identityProvider;
 
@@ -97,7 +99,9 @@ class WebFluxSecurityConfigTest {
     @Test
     @DisplayName("without the secret header, the internal endpoint answers 401")
     void internalSecretFilter_shouldRejectAMissingHeader() {
-        client().get().uri(RESOLVE_PATH)
+        client().post().uri(PROVISION_PATH)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue(PROVISION_BODY)
                 .exchange()
                 .expectStatus().isUnauthorized();
     }
@@ -105,7 +109,9 @@ class WebFluxSecurityConfigTest {
     @Test
     @DisplayName("a wrong secret answers 401")
     void internalSecretFilter_shouldRejectAWrongSecret() {
-        client().get().uri(RESOLVE_PATH)
+        client().post().uri(PROVISION_PATH)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue(PROVISION_BODY)
                 .header(SECRET_HEADER, "wrong-secret")
                 .exchange()
                 .expectStatus().isUnauthorized();
@@ -116,31 +122,20 @@ class WebFluxSecurityConfigTest {
     void internalSecretFilter_shouldRejectAPrefixOfTheSecret() {
         // The comparison is constant-time: a valid prefix must not be treated any
         // differently from a wholly wrong value.
-        client().get().uri(RESOLVE_PATH)
+        client().post().uri(PROVISION_PATH)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue(PROVISION_BODY)
                 .header(SECRET_HEADER, VALID_SECRET.substring(0, VALID_SECRET.length() - 1))
                 .exchange()
                 .expectStatus().isUnauthorized();
     }
 
     @Test
-    @DisplayName("with the right secret, the internal endpoint is reached without a JWT")
-    void internalSecretFilter_shouldAcceptTheValidSecretWithoutAToken() {
-        UUID businessId = UUID.randomUUID();
-        when(userRepository.findIdByKeycloakId("keycloak-abc")).thenReturn(Mono.just(businessId));
-
-        client().get().uri(RESOLVE_PATH)
-                .header(SECRET_HEADER, VALID_SECRET)
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody(String.class).isEqualTo(businessId.toString());
-    }
-
-    @Test
     @DisplayName("the CORS preflight passes the filter without a secret")
     void internalSecretFilter_shouldLetCorsPreflightThrough() {
-        client().options().uri(RESOLVE_PATH)
+        client().options().uri(PROVISION_PATH)
                 .header("Origin", "http://localhost:4200")
-                .header("Access-Control-Request-Method", "GET")
+                .header("Access-Control-Request-Method", "POST")
                 .exchange()
                 .expectStatus().is2xxSuccessful();
     }
@@ -170,7 +165,7 @@ class WebFluxSecurityConfigTest {
     @DisplayName("with the right secret, provisioning is reached without a JWT")
     void internalSecretFilter_shouldAcceptProvisioningWithTheValidSecret() {
         UUID businessId = UUID.randomUUID();
-        when(userRepository.findIdByKeycloakId("keycloak-abc")).thenReturn(Mono.just(businessId));
+        when(userRepository.findIdBySubjectId("auth0|abc")).thenReturn(Mono.just(businessId));
 
         client().post().uri(PROVISION_PATH)
                 .header(SECRET_HEADER, VALID_SECRET)
@@ -179,6 +174,15 @@ class WebFluxSecurityConfigTest {
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(String.class).isEqualTo(businessId.toString());
+    }
+
+    @Test
+    @DisplayName("the removed resolve endpoint is no longer open: without a JWT it answers 401")
+    void apiHttpSecurity_shouldNoLongerOpenTheResolveEndpoint() {
+        client().get().uri("/user-service/profile/resolve/auth0-abc")
+                .header(SECRET_HEADER, VALID_SECRET)
+                .exchange()
+                .expectStatus().isUnauthorized();
     }
 
     // --- the deleted-users reader secret -----------------------------------
@@ -193,8 +197,8 @@ class WebFluxSecurityConfigTest {
     }
 
     @Test
-    @DisplayName("the Keycloak mapper's secret cannot read the listing: the two secrets are distinct")
-    void readerSecretFilter_shouldAnswer401_whenTheKeycloakSecretIsSentToTheListing() {
+    @DisplayName("the Auth0 Action's secret cannot read the listing: the two secrets are distinct")
+    void readerSecretFilter_shouldAnswer401_whenTheProvisioningSecretIsSentToTheListing() {
         client().get().uri(DELETED_USERS_PATH)
                 .header(SECRET_HEADER, VALID_SECRET)
                 .exchange()
@@ -217,7 +221,7 @@ class WebFluxSecurityConfigTest {
     void readerSecretFilter_shouldAnswer401_whenNoReaderSecretIsConfigured() {
         ProblemResponseWriter problems = new ProblemResponseWriter(
                 new GlobalErrorHandler(new TechnicalErrorCounter(new SimpleMeterRegistry())), ServerCodecConfigurer.create());
-        WebFilter filter = new WebFluxSecurityConfig("http://issuer", "http://jwks", VALID_SECRET, "")
+        WebFilter filter = new WebFluxSecurityConfig("http://issuer", "http://jwks", List.of(), VALID_SECRET, "")
                 .internalSecretWebFilter(problems);
         AtomicBoolean reached = new AtomicBoolean();
 
@@ -239,8 +243,10 @@ class WebFluxSecurityConfigTest {
     }
 
     @Test
-    void internalSecretFilter_shouldAnswer401_whenTheReaderSecretIsSentToResolve() {
-        client().get().uri(RESOLVE_PATH)
+    void internalSecretFilter_shouldAnswer401_whenTheReaderSecretIsSentToProvision() {
+        client().post().uri(PROVISION_PATH)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue(PROVISION_BODY)
                 .header(SECRET_HEADER, READER_SECRET)
                 .exchange()
                 .expectStatus().isUnauthorized();
@@ -393,5 +399,32 @@ class WebFluxSecurityConfigTest {
     @DisplayName("the decoder is built on the internal JWKS, separate from the public issuer")
     void jwtDecoder_shouldBeConfigured() {
         assertThat(config.jwtDecoder()).isNotNull();
+    }
+
+    private static final String AUDIENCE_ISSUER = "https://issuer.example/";
+
+    private static Jwt tokenWithAudience(String... audiences) {
+        return Jwt.withTokenValue("token").header("alg", "RS256")
+                .issuer(AUDIENCE_ISSUER).audience(List.of(audiences))
+                .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(60))
+                .build();
+    }
+
+    @Test
+    void jwtValidator_shouldAcceptATokenForAConfiguredAudience() {
+        assertThat(WebFluxSecurityConfig.jwtValidator(AUDIENCE_ISSUER, List.of("wely-api-dev"))
+                .validate(tokenWithAudience("other", "wely-api-dev")).hasErrors()).isFalse();
+    }
+
+    @Test
+    void jwtValidator_shouldRejectATokenForAnotherAudience() {
+        assertThat(WebFluxSecurityConfig.jwtValidator(AUDIENCE_ISSUER, List.of("wely-api-dev"))
+                .validate(tokenWithAudience("wely-api-prod")).hasErrors()).isTrue();
+    }
+
+    @Test
+    void jwtValidator_shouldSkipTheAudienceCheck_whenNoneIsConfigured() {
+        assertThat(WebFluxSecurityConfig.jwtValidator(AUDIENCE_ISSUER, List.of())
+                .validate(tokenWithAudience("wely-api-prod")).hasErrors()).isFalse();
     }
 }

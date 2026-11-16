@@ -114,32 +114,8 @@ class UserServiceTest {
         }
 
         @Test
-        void findBusinessIdByKeycloakId_ShouldReturnTheId_WhenTheUserExists() {
-                UUID existingId = UUID.randomUUID();
-                when(userRepository.findIdByKeycloakId("kc-1")).thenReturn(Mono.just(existingId));
-
-                StepVerifier.create(userService.findBusinessIdByKeycloakId("kc-1"))
-                                .expectNext(existingId)
-                                .expectComplete().verify(Duration.ofSeconds(10));
-        }
-
-        @Test
-        void findBusinessIdByKeycloakId_ShouldFailWithoutCreating_WhenTheUserIsUnknown() {
-                // Users are created at registration; a login for an unknown one must not create it.
-                when(userRepository.findIdByKeycloakId("kc-1")).thenReturn(Mono.empty());
-
-                StepVerifier.create(userService.findBusinessIdByKeycloakId("kc-1"))
-                                .expectErrorMatches(e -> e instanceof BusinessException
-                                                && ((BusinessException) e).getErrorCode()
-                                                                == BusinessErrorCode.USER_NOT_FOUND)
-                                .verify(Duration.ofSeconds(10));
-
-                verify(userRepository, never()).save(any(), anyString());
-        }
-
-        @Test
         void provisionUser_ShouldRetryTheHashtag_WhenItIsTaken() {
-                when(userRepository.findIdByKeycloakId("kc-1")).thenReturn(Mono.empty());
+                when(userRepository.findIdBySubjectId("kc-1")).thenReturn(Mono.empty());
                 when(userRepository.existsByUserNameAndHashtag(eq("léa"), anyInt()))
                                 .thenReturn(Mono.just(true))
                                 .thenReturn(Mono.just(false));
@@ -158,7 +134,7 @@ class UserServiceTest {
         void provisionUser_ShouldGiveUp_WhenEveryHashtagAttemptIsTaken() {
                 // generateUniqueHashtag used to recurse without a limit, so a saturated
                 // username looped forever against the database.
-                when(userRepository.findIdByKeycloakId("kc-1")).thenReturn(Mono.empty());
+                when(userRepository.findIdBySubjectId("kc-1")).thenReturn(Mono.empty());
                 when(userRepository.existsByUserNameAndHashtag(eq("léa"), anyInt())).thenReturn(Mono.just(true));
 
                 StepVerifier.create(userService.provisionUser("kc-1", new IdentityUser("léa", "Léa", "Martin")))
@@ -178,7 +154,7 @@ class UserServiceTest {
         void provisionUser_ShouldCreateTheUser_FromTheGivenIdentity() {
                 String kcId = "kc-new";
                 UUID newId = UUID.randomUUID();
-                when(userRepository.findIdByKeycloakId(kcId)).thenReturn(Mono.empty());
+                when(userRepository.findIdBySubjectId(kcId)).thenReturn(Mono.empty());
                 when(userRepository.existsByUserNameAndHashtag(eq("léa"), anyInt())).thenReturn(Mono.just(false));
                 when(userRepository.save(any(BusinessUser.class), eq(kcId))).thenAnswer(invocation -> {
                         BusinessUser toSave = invocation.getArgument(0);
@@ -197,9 +173,9 @@ class UserServiceTest {
         }
 
         @Test
-        void provisionUser_ShouldReturnTheExistingId_WhenTheKeycloakIdIsKnown() {
+        void provisionUser_ShouldReturnTheExistingId_WhenTheSubjectIdIsKnown() {
                 UUID existingId = UUID.randomUUID();
-                when(userRepository.findIdByKeycloakId("kc-1")).thenReturn(Mono.just(existingId));
+                when(userRepository.findIdBySubjectId("kc-1")).thenReturn(Mono.just(existingId));
 
                 StepVerifier.create(userService.provisionUser("kc-1", new IdentityUser("léa", "Léa", "Martin")))
                                 .expectNext(existingId)
@@ -214,7 +190,7 @@ class UserServiceTest {
         @Test
         void provisionUser_ShouldReturnTheWinnersId_WhenAConcurrentCallCreatedItFirst() {
                 UUID winnerId = UUID.randomUUID();
-                when(userRepository.findIdByKeycloakId("kc-1"))
+                when(userRepository.findIdBySubjectId("kc-1"))
                                 .thenReturn(Mono.empty())
                                 .thenReturn(Mono.just(winnerId));
                 when(userRepository.existsByUserNameAndHashtag(eq("léa"), anyInt())).thenReturn(Mono.just(false));
@@ -230,9 +206,9 @@ class UserServiceTest {
         }
 
         @Test
-        void provisionUser_ShouldFail_WhenTheConflictIsNotOnTheKeycloakId() {
+        void provisionUser_ShouldFail_WhenTheConflictIsNotOnTheSubjectId() {
                 // USER_ALREADY_EXISTS without a row for this Keycloak id: the pseudo and hashtag were taken.
-                when(userRepository.findIdByKeycloakId("kc-1")).thenReturn(Mono.empty());
+                when(userRepository.findIdBySubjectId("kc-1")).thenReturn(Mono.empty());
                 when(userRepository.existsByUserNameAndHashtag(eq("léa"), anyInt())).thenReturn(Mono.just(false));
                 when(userRepository.save(any(BusinessUser.class), eq("kc-1")))
                                 .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_ALREADY_EXISTS)));
@@ -246,7 +222,7 @@ class UserServiceTest {
 
         @Test
         void provisionUser_ShouldPropagateAnyOtherFailure() {
-                when(userRepository.findIdByKeycloakId("kc-1")).thenReturn(Mono.empty());
+                when(userRepository.findIdBySubjectId("kc-1")).thenReturn(Mono.empty());
                 when(userRepository.existsByUserNameAndHashtag(eq("léa"), anyInt())).thenReturn(Mono.just(false));
                 when(userRepository.save(any(BusinessUser.class), eq("kc-1")))
                                 .thenReturn(Mono.error(new IllegalStateException("database down")));
@@ -255,7 +231,7 @@ class UserServiceTest {
                                 .expectError(IllegalStateException.class)
                                 .verify(Duration.ofSeconds(10));
 
-                verify(userRepository, times(1)).findIdByKeycloakId("kc-1");
+                verify(userRepository, times(1)).findIdBySubjectId("kc-1");
 
                 verify(usersActivity, never()).userSignedUp();
         }
@@ -263,14 +239,14 @@ class UserServiceTest {
         private static final LocalDateTime CUTOFF = LocalDateTime.of(2026, 10, 11, 1, 0);
 
         @Test
-        void removeOrphans_ShouldConfirmAUserKeycloakKnows() {
+        void removeOrphans_ShouldConfirmAUserTheProviderKnows() {
                 UUID userId = UUID.randomUUID();
                 when(userRepository.findIdentitiesToCheck(CUTOFF, 100))
                                 .thenReturn(Flux.just(new IdentityToCheck(userId, "kc-1")));
                 when(identityProvider.getUser("kc-1")).thenReturn(Mono.just(new IdentityUser("léa", "Léa", "M")));
                 when(userRepository.markIdentityChecked(userId)).thenReturn(Mono.empty());
 
-                StepVerifier.create(userService.removeOrphans(CUTOFF, 100))
+                StepVerifier.create(userService.removeOrphans(CUTOFF, 100, Duration.ZERO))
                                 .expectNext(new OrphanSweep(1, 0, List.of()))
                                 .expectComplete().verify(Duration.ofSeconds(10));
 
@@ -278,7 +254,7 @@ class UserServiceTest {
         }
 
         @Test
-        void removeOrphans_ShouldDeleteAUserKeycloakDoesNotKnow() {
+        void removeOrphans_ShouldDeleteAUserTheProviderDoesNotKnow() {
                 UUID notFound = UUID.randomUUID();
                 UUID empty = UUID.randomUUID();
                 when(userRepository.findIdentitiesToCheck(CUTOFF, 100)).thenReturn(Flux.just(
@@ -288,7 +264,7 @@ class UserServiceTest {
                 when(identityProvider.getUser("kc-empty")).thenReturn(Mono.empty());
                 when(userRepository.deleteOrphan(any())).thenReturn(Mono.empty());
 
-                StepVerifier.create(userService.removeOrphans(CUTOFF, 100))
+                StepVerifier.create(userService.removeOrphans(CUTOFF, 100, Duration.ZERO))
                                 .expectNext(new OrphanSweep(0, 2, List.of()))
                                 .expectComplete().verify(Duration.ofSeconds(10));
 
@@ -298,18 +274,18 @@ class UserServiceTest {
         }
 
         @Test
-        void removeOrphans_ShouldNeitherDeleteNorConfirm_WhenKeycloakIsDown_AndKeepGoing() {
+        void removeOrphans_ShouldNeitherDeleteNorConfirm_WhenTheProviderIsDownOrRateLimits_AndKeepGoing() {
                 // An outage is not proof of absence: deleting here would wipe real users.
                 UUID down = UUID.randomUUID();
                 UUID fine = UUID.randomUUID();
                 when(userRepository.findIdentitiesToCheck(CUTOFF, 100)).thenReturn(Flux.just(
                                 new IdentityToCheck(down, "kc-down"), new IdentityToCheck(fine, "kc-fine")));
                 when(identityProvider.getUser("kc-down"))
-                                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.KEYCLOAK_ERROR)));
+                                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.IDENTITY_PROVIDER_ERROR)));
                 when(identityProvider.getUser("kc-fine")).thenReturn(Mono.just(new IdentityUser("x", "X", "Y")));
                 when(userRepository.markIdentityChecked(fine)).thenReturn(Mono.empty());
 
-                StepVerifier.create(userService.removeOrphans(CUTOFF, 100))
+                StepVerifier.create(userService.removeOrphans(CUTOFF, 100, Duration.ZERO))
                                 .expectNext(new OrphanSweep(1, 0, List.of("USR-TEC-001")))
                                 .expectComplete().verify(Duration.ofSeconds(10));
 
@@ -318,10 +294,28 @@ class UserServiceTest {
         }
 
         @Test
+        void removeOrphans_ShouldWaitThePaceBeforeEachCheck() {
+                UUID first = UUID.randomUUID();
+                UUID second = UUID.randomUUID();
+                when(userRepository.findIdentitiesToCheck(CUTOFF, 100)).thenReturn(Flux.just(
+                                new IdentityToCheck(first, "auth0|1"), new IdentityToCheck(second, "auth0|2")));
+                when(identityProvider.getUser(anyString())).thenReturn(Mono.just(new IdentityUser("x", "X", "Y")));
+                when(userRepository.markIdentityChecked(any())).thenReturn(Mono.empty());
+
+                StepVerifier.withVirtualTime(() -> userService.removeOrphans(CUTOFF, 100, Duration.ofSeconds(1)))
+                                .expectSubscription()
+                                .thenAwait(Duration.ofMillis(1500))
+                                .then(() -> verify(identityProvider, times(1)).getUser(anyString()))
+                                .thenAwait(Duration.ofSeconds(1))
+                                .expectNext(new OrphanSweep(2, 0, List.of()))
+                                .expectComplete().verify(Duration.ofSeconds(10));
+        }
+
+        @Test
         void removeOrphans_ShouldReturnAnEmptySweep_WhenNothingIsToCheck() {
                 when(userRepository.findIdentitiesToCheck(CUTOFF, 100)).thenReturn(Flux.empty());
 
-                StepVerifier.create(userService.removeOrphans(CUTOFF, 100))
+                StepVerifier.create(userService.removeOrphans(CUTOFF, 100, Duration.ZERO))
                                 .expectNext(OrphanSweep.EMPTY)
                                 .expectComplete().verify(Duration.ofSeconds(10));
         }
@@ -336,7 +330,7 @@ class UserServiceTest {
 
         private void givenCamille() {
                 when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.just(CAMILLE));
-                when(userRepository.findKeycloakIdByUserId(USER_ID)).thenReturn(Mono.just("kc-camille"));
+                when(userRepository.findSubjectIdByUserId(USER_ID)).thenReturn(Mono.just("kc-camille"));
         }
 
         @Test
@@ -421,7 +415,7 @@ class UserServiceTest {
         @Test
         void updateProfile_ShouldError_WhenTheUserDoesNotExist() {
                 when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.empty());
-                when(userRepository.findKeycloakIdByUserId(USER_ID)).thenReturn(Mono.empty());
+                when(userRepository.findSubjectIdByUserId(USER_ID)).thenReturn(Mono.empty());
                 when(userRepository.findAccountState(USER_ID)).thenReturn(Mono.empty());
 
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("camille", "Cam", "Dupont")))
@@ -872,7 +866,7 @@ class UserServiceTest {
         @Test
         void updateProfile_shouldFailWithUserDeletedWithoutCallingTheIdentityProvider_whenTheUserIsATombstone() {
                 when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.empty());
-                when(userRepository.findKeycloakIdByUserId(USER_ID)).thenReturn(Mono.empty());
+                when(userRepository.findSubjectIdByUserId(USER_ID)).thenReturn(Mono.empty());
                 givenATombstone(USER_ID);
 
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("camille", "Cam", "Dupont")))
@@ -978,21 +972,9 @@ class UserServiceTest {
         }
 
         @Test
-        void findBusinessIdByKeycloakId_shouldFailWithUserNotFoundNotUserDeleted_whenTheAccountWasDeleted() {
-                // A 410 here would make the Keycloak mapper fall back on its cached id and mint a token.
-                when(userRepository.findIdByKeycloakId("kc-deleted")).thenReturn(Mono.empty());
-
-                StepVerifier.create(userService.findBusinessIdByKeycloakId("kc-deleted"))
-                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
-                                .verify(Duration.ofSeconds(10));
-
-                verify(userRepository, never()).findAccountState(any());
-        }
-
-        @Test
         void provisionUser_shouldDrawAnotherHashtag_whenTheDrawnHandleIsTakenOrRetired() {
                 // existsByUserNameAndHashtag answers true for a retired handle too: provisioning draws again.
-                when(userRepository.findIdByKeycloakId("kc-new")).thenReturn(Mono.empty());
+                when(userRepository.findIdBySubjectId("kc-new")).thenReturn(Mono.empty());
                 when(userRepository.existsByUserNameAndHashtag(eq("lea"), anyInt()))
                                 .thenReturn(Mono.just(true))
                                 .thenReturn(Mono.just(true))

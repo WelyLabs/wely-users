@@ -450,7 +450,7 @@ class AccountDeletionServiceTest {
     void processDueDeletions_shouldStillPurgeMedia_whenTheIdentityStepFails() {
         givenTheJobs(job(NOW.minus(Duration.ofMinutes(11)), false, false, 0));
         when(identityProvider.deleteSubject("kc-1"))
-                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.KEYCLOAK_ERROR)));
+                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.IDENTITY_PROVIDER_ERROR)));
         when(mediaStore.deletePrefix(AVATARS)).thenReturn(Mono.empty());
         when(jobs.markMediaDeleted(USER)).thenReturn(Mono.empty());
         when(jobs.recordFailure(eq(USER), anyString(), any())).thenReturn(Mono.empty());
@@ -470,7 +470,7 @@ class AccountDeletionServiceTest {
     void processDueDeletions_shouldRecordAFailureWithTheFirstBackoff_whenTheIdentityProviderIsDown() {
         givenTheJobs(job(NOW.minusSeconds(5), false, true, 0));
         when(identityProvider.deleteSubject("kc-1"))
-                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.KEYCLOAK_ERROR)));
+                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.IDENTITY_PROVIDER_ERROR)));
         when(jobs.recordFailure(eq(USER), anyString(), any())).thenReturn(Mono.empty());
 
         StepVerifier.create(service.processDueDeletions(20)).expectNextCount(1).expectComplete().verify(Duration.ofSeconds(10));
@@ -496,7 +496,7 @@ class AccountDeletionServiceTest {
     void processDueDeletions_shouldDoubleTheBackoff_whenTheJobHasFailedBefore() {
         givenTheJobs(job(NOW.minusSeconds(5), false, true, 2));
         when(identityProvider.deleteSubject("kc-1"))
-                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.KEYCLOAK_ERROR)));
+                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.IDENTITY_PROVIDER_ERROR)));
         when(jobs.recordFailure(eq(USER), anyString(), any())).thenReturn(Mono.empty());
 
         StepVerifier.create(service.processDueDeletions(20)).expectNextCount(1).expectComplete().verify(Duration.ofSeconds(10));
@@ -508,7 +508,7 @@ class AccountDeletionServiceTest {
     void processDueDeletions_shouldCapTheBackoffAtOneHour_whenFailuresKeepComing() {
         givenTheJobs(job(NOW.minusSeconds(5), false, true, 30));
         when(identityProvider.deleteSubject("kc-1"))
-                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.KEYCLOAK_ERROR)));
+                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.IDENTITY_PROVIDER_ERROR)));
         when(jobs.recordFailure(eq(USER), anyString(), any())).thenReturn(Mono.empty());
 
         StepVerifier.create(service.processDueDeletions(20)).expectNextCount(1).expectComplete().verify(Duration.ofSeconds(10));
@@ -521,7 +521,7 @@ class AccountDeletionServiceTest {
         // Never parked: the sixth failure is scheduled like any other.
         givenTheJobs(job(NOW.minusSeconds(5), false, true, 5));
         when(identityProvider.deleteSubject("kc-1"))
-                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.KEYCLOAK_ERROR)));
+                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.IDENTITY_PROVIDER_ERROR)));
         when(jobs.recordFailure(eq(USER), anyString(), any())).thenReturn(Mono.empty());
 
         StepVerifier.create(service.processDueDeletions(20))
@@ -552,7 +552,7 @@ class AccountDeletionServiceTest {
         AccountDeletionJob fine = new AccountDeletionJob(other, null, NOW.minus(Duration.ofHours(1)), true, false, 0);
         givenTheJobs(broken, fine);
         when(identityProvider.deleteSubject("kc-1"))
-                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.KEYCLOAK_ERROR)));
+                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.IDENTITY_PROVIDER_ERROR)));
         // Even recording the failure fails: the job is reported, and the next one still runs.
         when(jobs.recordFailure(eq(USER), anyString(), any()))
                 .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.DATABASE_ERROR)));
