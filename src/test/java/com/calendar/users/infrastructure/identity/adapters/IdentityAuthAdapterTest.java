@@ -177,7 +177,29 @@ class IdentityAuthAdapterTest {
                 .verify(Duration.ofSeconds(10));
     }
 
+    @Test
+    @DisplayName("a Google or GitHub subject is not patched: Auth0 refuses root attributes of social users")
+    void updateProfile_shouldSkipAuth0_whenTheSubjectComesFromASocialConnection() {
+        StepVerifier.create(adapter.updateProfile("google-oauth2|1", RENAMED)).expectComplete().verify(Duration.ofSeconds(10));
+        StepVerifier.create(adapter.updateProfile("github|1", RENAMED)).expectComplete().verify(Duration.ofSeconds(10));
+
+        verify(managementApi, never()).updateUser(any(), any());
+    }
+
     // --- deleteSubject -------------------------------------------------------
+
+    @Test
+    @DisplayName("a social subject is deleted like a database one")
+    void deleteSubject_shouldEndTheSessionsThenDelete_whenTheSubjectComesFromASocialConnection() {
+        when(managementApi.deleteSessions("google-oauth2|1")).thenReturn(Mono.empty());
+        when(managementApi.deleteUser("google-oauth2|1")).thenReturn(Mono.empty());
+
+        StepVerifier.create(adapter.deleteSubject("google-oauth2|1")).expectComplete().verify(Duration.ofSeconds(10));
+
+        InOrder order = inOrder(managementApi);
+        order.verify(managementApi).deleteSessions("google-oauth2|1");
+        order.verify(managementApi).deleteUser("google-oauth2|1");
+    }
 
     @Test
     void deleteSubject_shouldEndTheSessionsThenDelete_whenTheSubjectExists() {
