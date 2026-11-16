@@ -30,6 +30,8 @@ public class IdentityAuthAdapter implements IdentityProvider {
 
     static final Duration DELETE_TIMEOUT = Duration.ofSeconds(10);
     private static final String USERNAME_IN_USE = "already exists";
+    // Only database-connection users carry an editable root profile; google-oauth2|, github|... are owned by their provider.
+    private static final String DATABASE_SUBJECT_PREFIX = "auth0|";
 
     private final Auth0ManagementApi managementApi;
     private final IdentityUserMapper identityUserMapper;
@@ -51,9 +53,15 @@ public class IdentityAuthAdapter implements IdentityProvider {
      *
      * <p>Auth0's refusals are the user's to fix, so they are business errors here; the aspect
      * lets those through and turns anything else into IDENTITY_PROVIDER_ERROR.
+     *
+     * <p>A social subject is skipped: Auth0 refuses to PATCH the root attributes of a user whose
+     * profile comes from Google or GitHub, and the Wely profile alone is the one read.
      */
     @Override
     public Mono<Void> updateProfile(String subjectId, IdentityUser profile) {
+        if (!subjectId.startsWith(DATABASE_SUBJECT_PREFIX)) {
+            return Mono.empty();
+        }
         return Mono.defer(() -> managementApi.updateUser(subjectId, changes(profile)))
                 .onErrorMap(WebClientResponseException.Conflict.class,
                         e -> new BusinessException(BusinessErrorCode.USERNAME_TAKEN))

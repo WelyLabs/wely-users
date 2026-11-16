@@ -17,7 +17,8 @@ public interface IdentityProvider {
     /**
      * Changes the subject's username and name, leaving everything else as it is. Fails with
      * USERNAME_TAKEN if another subject has the username, PROFILE_INVALID if the provider refuses
-     * the values.
+     * the values. Completes without change for a subject whose profile the provider does not own
+     * (one signed in through a social connection).
      */
     Mono<Void> updateProfile(String subjectId, IdentityUser profile);
 
