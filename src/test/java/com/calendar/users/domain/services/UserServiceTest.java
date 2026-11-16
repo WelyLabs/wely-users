@@ -1006,56 +1006,122 @@ class UserServiceTest {
         // --- completeRegistration --------------------------------------------
 
         private static final Clock TODAY = Clock.fixed(Instant.parse("2026-10-18T09:00:00Z"), ZoneOffset.UTC);
-        private static final Registration REGISTRATION = new Registration(LocalDate.of(1995, 3, 12));
+        private static final Registration REGISTRATION = new Registration(LocalDate.of(1995, 3, 12), "Léa", "Martin");
+        /** Provisioned from an Auth0 signup, which asks no names. */
+        private static final BusinessUser NAMELESS = new BusinessUser(USER_ID, "lea", 1, null, null, null, null);
 
         private UserService serviceOn18October() {
                 return new UserService(userRepository, identityProvider, mediaStore, friendshipChecker, TODAY, usersActivity);
         }
 
         @Test
-        void completeRegistration_shouldStoreTheRegistration_whenTheBirthDateIsValid() {
-                UUID userId = UUID.randomUUID();
-                BusinessUser registered = new BusinessUser(userId, "lea", 1, "Léa", null, null, null,
+        void completeRegistration_shouldStoreTheRegistrationAsCompleted_whenItFillsEveryMissingField() {
+                BusinessUser registered = new BusinessUser(USER_ID, "lea", 1, "Léa", "Martin", null, null,
                                 REGISTRATION.birthDate(), true);
-                when(userRepository.completeRegistration(userId, REGISTRATION)).thenReturn(Mono.just(registered));
+                when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.just(NAMELESS));
+                when(userRepository.completeRegistration(USER_ID, REGISTRATION, true)).thenReturn(Mono.just(registered));
 
-                StepVerifier.create(serviceOn18October().completeRegistration(userId, REGISTRATION))
+                StepVerifier.create(serviceOn18October().completeRegistration(USER_ID, REGISTRATION))
                                 .expectNext(registered)
                                 .expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
-        void completeRegistration_shouldRefuseWithBirthDateInvalid_whenTheUserIsTooYoung() {
-                Registration tooYoung = new Registration(LocalDate.of(2015, 1, 1));
+        void completeRegistration_shouldStoreAPartialPassAsNotCompleted_whenAFieldStaysMissing() {
+                Registration birthDateOnly = new Registration(REGISTRATION.birthDate(), null, null);
+                when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.just(NAMELESS));
+                when(userRepository.completeRegistration(USER_ID, birthDateOnly, false)).thenReturn(Mono.just(NAMELESS));
 
-                StepVerifier.create(serviceOn18October().completeRegistration(UUID.randomUUID(), tooYoung))
+                StepVerifier.create(serviceOn18October().completeRegistration(USER_ID, birthDateOnly))
+                                .expectNext(NAMELESS)
+                                .expectComplete().verify(Duration.ofSeconds(10));
+        }
+
+        @Test
+        void completeRegistration_shouldStoreTrimmedNames_whenTheyComeWithSpaces() {
+                when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.just(NAMELESS));
+                when(userRepository.completeRegistration(eq(USER_ID), any(), anyBoolean())).thenReturn(Mono.just(NAMELESS));
+
+                StepVerifier.create(serviceOn18October().completeRegistration(USER_ID,
+                                                new Registration(REGISTRATION.birthDate(), " Léa ", " Martin ")))
+                                .expectNextCount(1)
+                                .expectComplete().verify(Duration.ofSeconds(10));
+
+                verify(userRepository).completeRegistration(USER_ID, REGISTRATION, true);
+        }
+
+        @Test
+        void completeRegistration_shouldChangeTheBirthDateAlone_whenTheUserAlreadyHasNames() {
+                Registration birthDateOnly = new Registration(LocalDate.of(1996, 4, 2), null, null);
+                when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.just(CAMILLE));
+                when(userRepository.completeRegistration(USER_ID, birthDateOnly, true)).thenReturn(Mono.just(CAMILLE));
+
+                StepVerifier.create(serviceOn18October().completeRegistration(USER_ID, birthDateOnly))
+                                .expectNext(CAMILLE)
+                                .expectComplete().verify(Duration.ofSeconds(10));
+        }
+
+        @Test
+        void completeRegistration_shouldRefuseWithRegistrationEmpty_withoutReadingTheUser() {
+                StepVerifier.create(serviceOn18October().completeRegistration(USER_ID, new Registration(null, null, null)))
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.REGISTRATION_EMPTY))
+                                .verify(Duration.ofSeconds(10));
+
+                verify(userRepository, never()).getBusinessUserByUserId(any());
+                verify(userRepository, never()).completeRegistration(any(), any(), anyBoolean());
+        }
+
+        @Test
+        void completeRegistration_shouldRefuseWithNamesInvalid_whenASentNameIsBlank() {
+                StepVerifier.create(serviceOn18October().completeRegistration(USER_ID, new Registration(null, " ", "Martin")))
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.NAMES_INVALID))
+                                .verify(Duration.ofSeconds(10));
+
+                verify(userRepository, never()).completeRegistration(any(), any(), anyBoolean());
+        }
+
+        @Test
+        void completeRegistration_shouldRefuseWithBirthDateInvalid_whenTheUserIsTooYoung() {
+                Registration tooYoung = new Registration(LocalDate.of(2015, 1, 1), "Léa", "Martin");
+
+                StepVerifier.create(serviceOn18October().completeRegistration(USER_ID, tooYoung))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.BIRTH_DATE_INVALID))
                                 .verify(Duration.ofSeconds(10));
 
-                verify(userRepository, never()).completeRegistration(any(), any());
+                verify(userRepository, never()).completeRegistration(any(), any(), anyBoolean());
         }
 
         @Test
         void completeRegistration_shouldAnswerUserDeleted_whenTheUserIsATombstone() {
-                UUID userId = UUID.randomUUID();
-                when(userRepository.completeRegistration(userId, REGISTRATION))
-                                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
-                when(userRepository.findAccountState(userId)).thenReturn(Mono.just(AccountState.DELETED));
+                when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.empty());
+                when(userRepository.findAccountState(USER_ID)).thenReturn(Mono.just(AccountState.DELETED));
 
-                StepVerifier.create(serviceOn18October().completeRegistration(userId, REGISTRATION))
+                StepVerifier.create(serviceOn18October().completeRegistration(USER_ID, REGISTRATION))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
                                 .verify(Duration.ofSeconds(10));
+
+                verify(userRepository, never()).completeRegistration(any(), any(), anyBoolean());
         }
 
         @Test
         void completeRegistration_shouldAnswerUserNotFound_whenTheUserIsUnknown() {
-                UUID userId = UUID.randomUUID();
-                when(userRepository.completeRegistration(userId, REGISTRATION))
-                                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
-                when(userRepository.findAccountState(userId)).thenReturn(Mono.empty());
+                when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.empty());
+                when(userRepository.findAccountState(USER_ID)).thenReturn(Mono.empty());
 
-                StepVerifier.create(serviceOn18October().completeRegistration(userId, REGISTRATION))
+                StepVerifier.create(serviceOn18October().completeRegistration(USER_ID, REGISTRATION))
                                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
+                                .verify(Duration.ofSeconds(10));
+        }
+
+        @Test
+        void completeRegistration_shouldAnswerUserDeleted_whenTheUserIsDeletedBetweenTheReadAndTheWrite() {
+                when(userRepository.getBusinessUserByUserId(USER_ID)).thenReturn(Mono.just(NAMELESS));
+                when(userRepository.completeRegistration(USER_ID, REGISTRATION, true))
+                                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
+                when(userRepository.findAccountState(USER_ID)).thenReturn(Mono.just(AccountState.DELETED));
+
+                StepVerifier.create(serviceOn18October().completeRegistration(USER_ID, REGISTRATION))
+                                .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_DELETED))
                                 .verify(Duration.ofSeconds(10));
         }
 

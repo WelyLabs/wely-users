@@ -110,11 +110,11 @@ public class ProfileController {
                 .map(ResponseEntity::ok);
     }
 
-    /** Completes the caller's signup, or changes their birth date later; answers the profile as GET does. */
+    /** Stores a pass of the caller's signup completion, or a later birth-date change; answers the profile as GET does. */
     @PutMapping("registration")
     public Mono<BusinessUser> completeRegistration(
             @AuthenticationPrincipal Jwt jwt,
-            @Valid @RequestBody RegistrationRequest request) {
+            @RequestBody RegistrationRequest request) {
         UUID userId = UUID.fromString(jwt.getClaimAsString(BUSINESS_ID));
 
         return userService.completeRegistration(userId, registrationRequestMapper.toRegistration(request));

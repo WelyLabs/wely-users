@@ -156,7 +156,7 @@ Toutes les routes sont préfixées par `/user-service` et exposées via la gatew
 | Méthode | Route | Auth | Description |
 |---|---|---|---|
 | `GET` | `/profile` | JWT | Profil de l'utilisateur courant (identité lue dans le claim `businessId`), with `birthDate` (`YYYY-MM-DD` or null) and `registrationCompleted` |
-| `PUT` | `/profile/registration` | JWT | Completes the signup, and later changes the birth date: `{"birthDate": "1995-03-12"}`. Stores it, sets `registrationCompleted`, writes `USER_BIRTHDAY`, answers the profile as `GET /profile` does. Idempotent. A missing date is 400 `USR-VAL-001`; a date not in the past or an age outside 13 to 120 is 400 `USR-VAL-002` |
+| `PUT` | `/profile/registration` | JWT | A pass of the progressive signup completion, and later a birth-date change: any of `{"birthDate": "1995-03-12", "firstName": "Léa", "lastName": "Martin"}`, each optional. A field left out stays as stored; a field sent must be valid. Names are trimmed. `registrationCompleted` becomes true once the profile misses none of the three fields, false otherwise (the web app derives its pending steps from the fields, iOS reads the flag). Writes `USER_MODIFIED` when names are sent and `USER_BIRTHDAY` when the user has a birth date, answers the profile as `GET /profile` does. Idempotent. An empty pass is 400 `USR-VAL-004`; a date not in the past or an age outside 13 to 120 is 400 `USR-VAL-002`; a blank or over-255-character name is 400 `USR-VAL-003` |
 | `GET` | `/profile/about` | JWT | Présentation de l'utilisateur courant : bio (160 caractères) et centres d'intérêt (5 au plus, 24 caractères chacun) |
 | `PUT` | `/profile/about` | JWT | La remplace ; espaces nettoyés, doublons retirés (« Rando » et « rando »), refus au-delà des limites (`USR-BUS-008`, 400) plutôt que coupure |
 | `GET` | `/profile/preferences` | JWT | Préférences de l'utilisateur courant : `{"theme": "LIGHT" \| "DARK" \| "SYSTEM"}`, `SYSTEM` s'il n'a jamais choisi |
@@ -376,6 +376,8 @@ Deux hiérarchies distinctes — métier et technique — traduites par `GlobalE
 | `USR-BUS-014` | 403 | Account deletion is switched off on this deployment |
 | `USR-VAL-001` | 400 | Validation du corps de requête, détail par champ |
 | `USR-VAL-002` | 400 | Birth date not in the past, or an age outside 13 to 120 |
+| `USR-VAL-003` | 400 | A signup name blank or longer than 255 characters |
+| `USR-VAL-004` | 400 | A signup completion pass that sends no field |
 | `USR-REQ-000` | *repris* | Chemin inconnu, méthode non autorisée |
 | `USR-TEC-001` | 502 | Auth0 injoignable, ou limite de débit (429) |
 | `USR-TEC-002` | 502 | Base de données injoignable |

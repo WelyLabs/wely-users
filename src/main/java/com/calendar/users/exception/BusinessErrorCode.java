@@ -112,6 +112,20 @@ public enum BusinessErrorCode {
             "The birth date must be in the past and give an age between 13 and 120.",
             HttpStatus.BAD_REQUEST),
 
+    /** A name sent to the signup completion: the identity provider's signup form does not ask them. */
+    NAMES_INVALID(
+            "USR-VAL-003",
+            "Invalid names",
+            "A first or last name must hold 1 to 255 characters.",
+            HttpStatus.BAD_REQUEST),
+
+    /** A signup completion pass that sends none of its fields. */
+    REGISTRATION_EMPTY(
+            "USR-VAL-004",
+            "Empty registration",
+            "Send at least one of birthDate, firstName and lastName.",
+            HttpStatus.BAD_REQUEST),
+
     /** No valid credential: no token, an expired or forged one, or a wrong internal secret. */
     AUTHENTICATION_REQUIRED(
             "USR-REQ-001",
