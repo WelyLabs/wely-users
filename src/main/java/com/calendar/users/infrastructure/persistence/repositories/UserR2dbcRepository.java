@@ -67,13 +67,14 @@ public interface UserR2dbcRepository extends ReactiveCrudRepository<UserEntity, 
             """)
     Mono<Long> updateProfile(UUID id, String userName, String firstName, String lastName);
 
-    /** Signup completion: stores the birth date and marks the step done. */
+    /** Signup completion: stores the birth date, the names unless null, and marks the step done. */
     @Modifying
     @Query("""
-            UPDATE app_user SET birth_date = :birthDate, registration_completed = TRUE
+            UPDATE app_user SET birth_date = :birthDate, registration_completed = TRUE,
+                   first_name = COALESCE(:firstName, first_name), last_name = COALESCE(:lastName, last_name)
              WHERE id = :id AND deleted_at IS NULL
             """)
-    Mono<Long> completeRegistration(UUID id, LocalDate birthDate);
+    Mono<Long> completeRegistration(UUID id, LocalDate birthDate, String firstName, String lastName);
 
     @Query("SELECT keycloak_id FROM app_user WHERE id = :id AND deleted_at IS NULL")
     Mono<String> findSubjectIdById(UUID id);

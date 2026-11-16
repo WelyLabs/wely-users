@@ -134,15 +134,20 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
                         .thenReturn(saved));
     }
 
-    /** The birth date, the completed signup and USER_BIRTHDAY in one transaction. */
+    /** The birth date, the names when given, the completed signup and their events in one transaction. */
     @Override
     @Transactional
     public Mono<BusinessUser> completeRegistration(UUID userId, Registration registration) {
-        return userR2dbcRepository.completeRegistration(userId, registration.birthDate())
+        return userR2dbcRepository.completeRegistration(userId, registration.birthDate(),
+                        registration.firstName(), registration.lastName())
                 .flatMap(updated -> updated == 0
                         ? Mono.<BusinessUser>error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND))
                         : getBusinessUserByUserId(userId))
-                .flatMap(saved -> appendBirthdayEvent(saved).thenReturn(saved));
+                .flatMap(saved -> (registration.firstName() == null
+                        ? Mono.<Long>empty()
+                        : appendEvent(saved.id(), OutboxEventType.USER_MODIFIED, kafkaDataMapper.toUserModifiedEventDTO(saved)))
+                        .then(Mono.defer(() -> appendBirthdayEvent(saved)))
+                        .thenReturn(saved));
     }
 
     /** USER_BIRTHDAY for a user with a birth date; nothing otherwise. Consumers upsert, so a repeat is harmless. */

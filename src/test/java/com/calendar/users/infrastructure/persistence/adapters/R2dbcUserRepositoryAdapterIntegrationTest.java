@@ -401,29 +401,44 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     }
 
     @Test
-    @DisplayName("completing the signup stores the birth date, flips the flag and writes USER_BIRTHDAY, idempotently")
-    void completeRegistration_shouldStoreTheBirthDateAndWriteTheEvent() {
+    @DisplayName("completing the signup stores the names and birth date, flips the flag and writes USER_MODIFIED and USER_BIRTHDAY")
+    void completeRegistration_shouldStoreTheNamesAndBirthDateAndWriteTheEvents() {
         BusinessUser saved = adapter.save(aUser("lea", 1313), "kc-lea").block();
-        Registration registration = new Registration(LocalDate.of(1995, 3, 12));
+        Registration registration = new Registration(LocalDate.of(1995, 3, 12), "Léa", "Martin");
 
         BusinessUser registered = adapter.completeRegistration(saved.id(), registration).block();
-        adapter.completeRegistration(saved.id(), registration).block();
 
+        assertThat(registered.firstName()).isEqualTo("Léa");
+        assertThat(registered.lastName()).isEqualTo("Martin");
         assertThat(registered.birthDate()).isEqualTo(LocalDate.of(1995, 3, 12));
         assertThat(registered.registrationCompleted()).isTrue();
-        assertThat(outboxTypes()).isEqualTo("USER_CREATED,USER_BIRTHDAY,USER_BIRTHDAY");
+        assertThat(outboxTypes()).isEqualTo("USER_CREATED,USER_MODIFIED,USER_BIRTHDAY");
         String payload = databaseClient.sql("SELECT payload FROM outbox_event WHERE type = 'USER_BIRTHDAY' LIMIT 1")
                 .map(row -> row.get(0, String.class))
                 .one()
                 .block();
-        assertThat(payload).contains("\"displayName\":\"First\"", "\"month\":3", "\"day\":12")
+        assertThat(payload).contains("\"displayName\":\"Léa\"", "\"month\":3", "\"day\":12")
                 .doesNotContain("1995");
+    }
+
+    @Test
+    @DisplayName("a later birth-date change without names keeps the stored names and writes USER_BIRTHDAY only")
+    void completeRegistration_shouldKeepTheNames_whenNoneAreGiven() {
+        BusinessUser saved = adapter.save(aUser("noa", 1515), "kc-noa").block();
+
+        BusinessUser changed = adapter.completeRegistration(saved.id(),
+                new Registration(LocalDate.of(1996, 4, 2), null, null)).block();
+
+        assertThat(changed.firstName()).isEqualTo("First");
+        assertThat(changed.lastName()).isEqualTo("Last");
+        assertThat(changed.birthDate()).isEqualTo(LocalDate.of(1996, 4, 2));
+        assertThat(outboxTypes()).isEqualTo("USER_CREATED,USER_BIRTHDAY");
     }
 
     @Test
     @DisplayName("completing the signup of an unknown user is USER_NOT_FOUND, and writes no event")
     void completeRegistration_shouldFailAsNotFound_whenTheUserIsUnknown() {
-        StepVerifier.create(adapter.completeRegistration(UUID.randomUUID(), new Registration(LocalDate.of(1995, 3, 12))))
+        StepVerifier.create(adapter.completeRegistration(UUID.randomUUID(), new Registration(LocalDate.of(1995, 3, 12), "Léa", "Martin")))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
                 .verify(Duration.ofSeconds(10));
 
@@ -434,7 +449,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     @DisplayName("a profile update of a user with a birth date also writes USER_BIRTHDAY, for the name it shows")
     void updateProfile_shouldAlsoWriteUserBirthday_whenABirthDateIsSet() {
         BusinessUser saved = adapter.save(aUser("camille", 1414), "kc-camille").block();
-        adapter.completeRegistration(saved.id(), new Registration(LocalDate.of(1995, 3, 12))).block();
+        adapter.completeRegistration(saved.id(), new Registration(LocalDate.of(1995, 3, 12), null, null)).block();
 
         adapter.updateProfile(new BusinessUser(saved.id(), "camille", 1414, "Cam", "Dupont", null,
                 saved.joinedDate()), "camille").block();
@@ -590,7 +605,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         adapter.updatePicture(user.id(), "avatars/" + user.id() + "/a.jpg").block();
         adapter.updateAbout(user.id(), new UserAbout("Partante", List.of("Rando"))).block();
         adapter.updatePreferences(user.id(), new UserPreferences(Theme.DARK)).block();
-        adapter.completeRegistration(user.id(), new Registration(LocalDate.of(1995, 3, 12))).block();
+        adapter.completeRegistration(user.id(), new Registration(LocalDate.of(1995, 3, 12), null, null)).block();
         return user;
     }
 

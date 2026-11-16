@@ -468,10 +468,31 @@ class ProfileControllerTest {
     }
 
     @Test
-    void completeRegistration_shouldAnswerTheUpdatedProfile_whenTheBirthDateIsValid() {
+    void completeRegistration_shouldAnswerTheUpdatedProfile_whenTheBirthDateAndNamesAreValid() {
         UUID userId = givenTheCaller();
         LocalDate birthDate = LocalDate.of(1995, 3, 12);
-        when(userService.completeRegistration(userId, new Registration(birthDate))).thenReturn(Mono.just(
+        when(userService.completeRegistration(userId, new Registration(birthDate, "Léa", "Martin"))).thenReturn(Mono.just(
+                new BusinessUser(userId, "lea", 4242, "Léa", "Martin", null, LocalDateTime.of(2026, 1, 15, 10, 30),
+                        birthDate, true)));
+
+        webTestClient.put()
+                .uri("/profile/registration")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"birthDate\":\"1995-03-12\",\"firstName\":\"Léa\",\"lastName\":\"Martin\"}")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.firstName").isEqualTo("Léa")
+                .jsonPath("$.lastName").isEqualTo("Martin")
+                .jsonPath("$.birthDate").isEqualTo("1995-03-12")
+                .jsonPath("$.registrationCompleted").isEqualTo(true);
+    }
+
+    @Test
+    void completeRegistration_shouldPassNoNames_whenOnlyTheBirthDateIsSent() {
+        UUID userId = givenTheCaller();
+        LocalDate birthDate = LocalDate.of(1995, 3, 12);
+        when(userService.completeRegistration(userId, new Registration(birthDate, null, null))).thenReturn(Mono.just(
                 new BusinessUser(userId, "lea", 4242, "Léa", "Martin", null, LocalDateTime.of(2026, 1, 15, 10, 30),
                         birthDate, true)));
 
@@ -480,10 +501,22 @@ class ProfileControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("{\"birthDate\":\"1995-03-12\"}")
                 .exchange()
-                .expectStatus().isOk()
-                .expectBody()
-                .jsonPath("$.birthDate").isEqualTo("1995-03-12")
-                .jsonPath("$.registrationCompleted").isEqualTo(true);
+                .expectStatus().isOk();
+    }
+
+    @Test
+    void completeRegistration_shouldAnswer400WithUsrVal003_whenTheDomainRefusesTheNames() {
+        UUID userId = givenTheCaller();
+        when(userService.completeRegistration(eq(userId), any()))
+                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.NAMES_INVALID)));
+
+        webTestClient.put()
+                .uri("/profile/registration")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"birthDate\":\"1995-03-12\",\"firstName\":\" \",\"lastName\":\"Martin\"}")
+                .exchange()
+                .expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.code").isEqualTo("USR-VAL-003");
     }
 
     @Test

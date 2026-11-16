@@ -4,5 +4,8 @@ import jakarta.validation.constraints.NotNull;
 
 import java.time.LocalDate;
 
-/** The signup completion form; later steps add their fields here. The age rule is the domain's. */
-public record RegistrationRequest(@NotNull LocalDate birthDate) {}
+/**
+ * The signup completion form. The names are required unless the user already has both, which the
+ * domain decides, as it does the age rule.
+ */
+public record RegistrationRequest(@NotNull LocalDate birthDate, String firstName, String lastName) {}

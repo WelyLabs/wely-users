@@ -44,7 +44,10 @@ public interface UserRepository {
      */
     Mono<BusinessUser> updateProfile(BusinessUser businessUser, String previousUserName);
 
-    /** Stores the birth date, marks the signup completed and writes USER_BIRTHDAY; USER_NOT_FOUND for an unknown user. */
+    /**
+     * Stores the birth date and the names when given (USER_MODIFIED), marks the signup completed and
+     * writes USER_BIRTHDAY; USER_NOT_FOUND for an unknown user.
+     */
     Mono<BusinessUser> completeRegistration(UUID userId, Registration registration);
 
     /** The identity provider's id for this user. */
