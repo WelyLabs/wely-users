@@ -29,12 +29,14 @@ import static org.mockito.Mockito.when;
 
 class OrphanUserReaperTest {
 
+    private static final Duration PACE = Duration.ofSeconds(1);
+
     private final UserService userService = mock(UserService.class);
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
     private OrphanUserReaper reaper(Duration interval) {
         return new OrphanUserReaper(userService, new TechnicalErrorCounter(meterRegistry), interval,
-                Duration.ofMinutes(15), 50);
+                Duration.ofMinutes(15), 50, PACE);
     }
 
     private double technicalErrors(String code) {
@@ -47,28 +49,28 @@ class OrphanUserReaperTest {
 
     @Test
     void sweepOnce_shouldOnlyCheckUsersOlderThanTheGracePeriod() {
-        when(userService.removeOrphans(any(), anyInt())).thenReturn(Mono.just(new OrphanSweep(1, 1, List.of())));
+        when(userService.removeOrphans(any(), anyInt(), any())).thenReturn(Mono.just(new OrphanSweep(1, 1, List.of())));
         LocalDateTime before = LocalDateTime.now().minusMinutes(15);
 
         StepVerifier.create(reaper(Duration.ofHours(1)).sweepOnce()).expectComplete().verify(Duration.ofSeconds(10));
 
         LocalDateTime after = LocalDateTime.now().minusMinutes(15);
         ArgumentCaptor<LocalDateTime> cutoff = ArgumentCaptor.captor();
-        verify(userService).removeOrphans(cutoff.capture(), eq(50));
+        verify(userService).removeOrphans(cutoff.capture(), eq(50), eq(PACE));
         assertThat(cutoff.getValue()).isBetween(before, after);
     }
 
     @Test
     void start_shouldKeepSweeping_afterAFailedPass() {
         // An error reaching repeatWhen would stop the loop for good.
-        when(userService.removeOrphans(any(), anyInt()))
+        when(userService.removeOrphans(any(), anyInt(), any()))
                 .thenReturn(Mono.error(new IllegalStateException("database down")))
                 .thenReturn(Mono.just(OrphanSweep.EMPTY));
         OrphanUserReaper reaper = reaper(Duration.ofMillis(20));
 
         reaper.start();
         try {
-            verify(userService, timeout(2000).atLeast(2)).removeOrphans(any(), anyInt());
+            verify(userService, timeout(2000).atLeast(2)).removeOrphans(any(), anyInt(), any());
             assertThat(reaper.isRunning()).isTrue();
         } finally {
             reaper.stop();
@@ -79,7 +81,7 @@ class OrphanUserReaperTest {
     @Test
     @DisplayName("each user left unchecked by an outage is counted under the outage's code")
     void sweepOnce_shouldCountEachFailedCheck_asATechnicalFailureOfTheJob() {
-        when(userService.removeOrphans(any(), anyInt()))
+        when(userService.removeOrphans(any(), anyInt(), any()))
                 .thenReturn(Mono.just(new OrphanSweep(1, 0, List.of("USR-TEC-001", "USR-TEC-001"))));
 
         StepVerifier.create(reaper(Duration.ofHours(1)).sweepOnce()).expectComplete().verify(Duration.ofSeconds(10));
@@ -89,7 +91,7 @@ class OrphanUserReaperTest {
 
     @Test
     void sweepOnce_shouldCountNothing_whenEveryCheckCompletes() {
-        when(userService.removeOrphans(any(), anyInt())).thenReturn(Mono.just(new OrphanSweep(3, 1, List.of())));
+        when(userService.removeOrphans(any(), anyInt(), any())).thenReturn(Mono.just(new OrphanSweep(3, 1, List.of())));
 
         StepVerifier.create(reaper(Duration.ofHours(1)).sweepOnce()).expectComplete().verify(Duration.ofSeconds(10));
 
@@ -98,14 +100,14 @@ class OrphanUserReaperTest {
 
     @Test
     void start_shouldCountAFailedSweep_underItsCode() {
-        when(userService.removeOrphans(any(), anyInt()))
+        when(userService.removeOrphans(any(), anyInt(), any()))
                 .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.DATABASE_ERROR)))
                 .thenReturn(Mono.just(OrphanSweep.EMPTY));
         OrphanUserReaper reaper = reaper(Duration.ofMillis(20));
 
         reaper.start();
         try {
-            verify(userService, timeout(2000).atLeast(2)).removeOrphans(any(), anyInt());
+            verify(userService, timeout(2000).atLeast(2)).removeOrphans(any(), anyInt(), any());
             assertThat(technicalErrors("USR-TEC-002")).isEqualTo(1.0);
         } finally {
             reaper.stop();

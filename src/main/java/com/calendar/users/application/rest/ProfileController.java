@@ -18,7 +18,6 @@ import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.multipart.FilePart;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotNull;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -35,7 +34,8 @@ import java.util.UUID;
 public class ProfileController {
 
     private static final String BUSINESS_ID = "businessId";
-    private static final String AUTH_TIME = "auth_time";
+    // Set by the Auth0 Action: Auth0 puts no auth_time in access tokens.
+    private static final String AUTHENTICATED_AT = "authenticatedAt";
 
     private final UserService userService;
     private final AccountDeletionService accountDeletionService;
@@ -54,17 +54,11 @@ public class ProfileController {
         this.registrationRequestMapper = registrationRequestMapper;
     }
 
-    /** Called by Keycloak during registration. Idempotent: a known Keycloak id returns its user. */
+    /** Called by the Auth0 Action at a user's first sign-in. Idempotent: a known subject id returns its user. */
     @PostMapping("provision")
     public Mono<String> provisionUser(@Valid @RequestBody ProvisionUserRequest request) {
-        return userService.provisionUser(request.keycloakId(), provisionUserRequestMapper.toIdentityUser(request))
+        return userService.provisionUser(request.subjectId(), provisionUserRequestMapper.toIdentityUser(request))
                 .map(String::valueOf);
-    }
-
-    @GetMapping("resolve/{keycloakId}")
-    public Mono<String> findBusinessIdByKeycloakId(
-            @NotNull @PathVariable String keycloakId) {
-        return userService.findBusinessIdByKeycloakId(keycloakId).map(String::valueOf);
     }
 
     @GetMapping
@@ -146,7 +140,7 @@ public class ProfileController {
     /** Null when the claim is absent or unreadable, which the domain refuses: deletion fails closed. */
     private static Instant authenticatedAt(Jwt jwt) {
         try {
-            return jwt.getClaimAsInstant(AUTH_TIME);
+            return jwt.getClaimAsInstant(AUTHENTICATED_AT);
         } catch (IllegalArgumentException unreadable) {
             return null;
         }

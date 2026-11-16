@@ -19,7 +19,7 @@ import reactor.core.publisher.Mono;
  *
  * <p>Six adapter methods repeated the same shape: log the failure, map it to a
  * {@code TechnicalException}. The code differs by dependency, so there are two pointcuts
- * rather than one — a PostgreSQL timeout and an unreachable Keycloak are not the same
+ * rather than one — a PostgreSQL timeout and an unreachable Auth0 are not the same
  * incident and should not surface under the same error code.
  *
  * <h2>The reactive catch</h2>
@@ -40,7 +40,7 @@ import reactor.core.publisher.Mono;
  *
  * <h2>What is deliberately not logged</h2>
  *
- * <p>Method arguments. {@code save} receives a whole user and {@code resolve} a Keycloak
+ * <p>Method arguments. {@code save} receives a whole user and {@code getUser} an Auth0
  * subject id; an aspect that logs {@code args} puts them in the cluster logs. The method
  * name and the exception message locate a failure well enough.
  */
@@ -72,7 +72,7 @@ public class InfrastructureErrorAspect {
 
     @Around("identityAdapterMethod()")
     public Object translateIdentityFailures(ProceedingJoinPoint joinPoint) throws Throwable {
-        return wrap(joinPoint, "Keycloak", TechnicalErrorCode.KEYCLOAK_ERROR);
+        return wrap(joinPoint, "Auth0", TechnicalErrorCode.IDENTITY_PROVIDER_ERROR);
     }
 
     @Around("mediaAdapterMethod()")
@@ -100,8 +100,8 @@ public class InfrastructureErrorAspect {
      * business outcome, and an already-translated {@link TechnicalException} must not be
      * wrapped twice.
      *
-     * <p>A 404 from the dependency is also a business outcome, not an incident. Keycloak
-     * answering "no such user" was being reported as USR-TEC-001, "identity provider
+     * <p>A 404 from the dependency is also a business outcome, not an incident. The identity
+     * provider answering "no such user" was being reported as USR-TEC-001, "identity provider
      * unavailable", at 502 — which says the platform is broken when the caller simply asked
      * for someone who does not exist. It also fills the incident logs with failures that are
      * nothing of the sort.

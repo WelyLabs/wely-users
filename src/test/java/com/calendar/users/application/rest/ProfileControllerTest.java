@@ -84,22 +84,6 @@ class ProfileControllerTest {
     }
 
     @Test
-    void findBusinessIdByKeycloakId_ShouldReturnTheBusinessId() {
-        // Given
-        String kcId = "kc-123";
-        UUID internalId = UUID.randomUUID();
-        when(userService.findBusinessIdByKeycloakId(kcId)).thenReturn(Mono.just(internalId));
-
-        // When & Then
-        webTestClient.get()
-                .uri("/profile/resolve/{keycloakId}", kcId)
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody(String.class)
-                .isEqualTo(internalId.toString());
-    }
-
-    @Test
     void readProfile_ShouldReturnUser() {
         // Given
         UUID userId = UUID.randomUUID();
@@ -121,12 +105,12 @@ class ProfileControllerTest {
     @Test
     void provisionUser_ShouldReturnTheBusinessId() {
         UUID businessId = UUID.randomUUID();
-        when(userService.provisionUser("kc-1", new IdentityUser("léa", "Léa", "Martin")))
+        when(userService.provisionUser("auth0|1", new IdentityUser("léa", "Léa", "Martin")))
                 .thenReturn(Mono.just(businessId));
 
         webTestClient.post()
                 .uri("/profile/provision")
-                .bodyValue(new ProvisionUserRequest("kc-1", "léa", "Léa", "Martin"))
+                .bodyValue(new ProvisionUserRequest("auth0|1", "léa", "Léa", "Martin"))
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody(String.class)
@@ -182,7 +166,7 @@ class ProfileControllerTest {
     void provisionUser_ShouldRejectARequestWithoutUsername() {
         webTestClient.post()
                 .uri("/profile/provision")
-                .bodyValue(new ProvisionUserRequest("kc-1", " ", "Léa", "Martin"))
+                .bodyValue(new ProvisionUserRequest("auth0|1", " ", "Léa", "Martin"))
                 .exchange()
                 .expectStatus().isBadRequest();
     }
@@ -292,7 +276,7 @@ class ProfileControllerTest {
     @Test
     void deleteAccount_shouldAnswer202WithAnEmptyBody_whenTheDeletionIsAccepted() {
         UUID userId = givenTheCaller();
-        when(mockJwt.getClaimAsInstant("auth_time")).thenReturn(SIGNED_IN);
+        when(mockJwt.getClaimAsInstant("authenticatedAt")).thenReturn(SIGNED_IN);
         when(accountDeletionService.requestDeletion(userId, SIGNED_IN)).thenReturn(Mono.empty());
 
         webTestClient.delete()
@@ -305,7 +289,7 @@ class ProfileControllerTest {
     @Test
     void deleteAccount_shouldPassTheBusinessIdAndAuthTimeFromTheToken_whenBothArePresent() {
         UUID userId = givenTheCaller();
-        when(mockJwt.getClaimAsInstant("auth_time")).thenReturn(SIGNED_IN);
+        when(mockJwt.getClaimAsInstant("authenticatedAt")).thenReturn(SIGNED_IN);
         when(accountDeletionService.requestDeletion(any(), any())).thenReturn(Mono.empty());
 
         webTestClient.delete().uri("/profile").exchange().expectStatus().isAccepted();
@@ -316,7 +300,7 @@ class ProfileControllerTest {
     @Test
     void deleteAccount_shouldPassANullAuthTime_whenTheClaimIsMissing() {
         UUID userId = givenTheCaller();
-        when(mockJwt.getClaimAsInstant("auth_time")).thenReturn(null);
+        when(mockJwt.getClaimAsInstant("authenticatedAt")).thenReturn(null);
         when(accountDeletionService.requestDeletion(eq(userId), isNull()))
                 .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.REAUTHENTICATION_REQUIRED)));
 
@@ -329,7 +313,7 @@ class ProfileControllerTest {
     void deleteAccount_shouldPassANullAuthTime_whenTheClaimIsNotAnInstant() {
         // Spring Security throws on an unconvertible claim: read as absent, the check fails closed.
         UUID userId = givenTheCaller();
-        when(mockJwt.getClaimAsInstant("auth_time")).thenThrow(new IllegalArgumentException("not an instant"));
+        when(mockJwt.getClaimAsInstant("authenticatedAt")).thenThrow(new IllegalArgumentException("not an instant"));
         when(accountDeletionService.requestDeletion(eq(userId), isNull()))
                 .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.REAUTHENTICATION_REQUIRED)));
 
@@ -464,18 +448,6 @@ class ProfileControllerTest {
                 .exchange()
                 .expectStatus().isEqualTo(410)
                 .expectBody().jsonPath("$.code").isEqualTo("USR-BUS-012");
-    }
-
-    @Test
-    void findBusinessIdByKeycloakId_shouldAnswer404_whenTheAccountWasDeleted() {
-        // Never 410: the Keycloak mapper would read it as an outage and mint a token from its cache.
-        when(userService.findBusinessIdByKeycloakId("kc-deleted"))
-                .thenReturn(Mono.error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND)));
-
-        webTestClient.get()
-                .uri("/profile/resolve/{keycloakId}", "kc-deleted")
-                .exchange()
-                .expectStatus().isNotFound();
     }
 
     // --- signup completion ---------------------------------------------------

@@ -2,9 +2,9 @@ package com.calendar.users.application.dtos;
 
 import jakarta.validation.constraints.NotBlank;
 
-/** Sent by Keycloak's registration step, once the Keycloak user exists. */
+/** Sent by the Auth0 post-login Action for a user who has no businessId yet. */
 public record ProvisionUserRequest(
-        @NotBlank String keycloakId,
+        @NotBlank String subjectId,
         @NotBlank String username,
         String firstName,
         String lastName

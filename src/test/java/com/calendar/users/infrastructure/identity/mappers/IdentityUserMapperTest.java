@@ -1,7 +1,7 @@
 package com.calendar.users.infrastructure.identity.mappers;
 
 import com.calendar.users.domain.models.IdentityUser;
-import com.calendar.users.infrastructure.identity.models.KeycloakUserResponse;
+import com.calendar.users.infrastructure.identity.models.Auth0UserResponse;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -19,10 +19,10 @@ class IdentityUserMapperTest {
     private final IdentityUserMapper mapper = new IdentityUserMapperImpl();
 
     @Test
-    @DisplayName("carries the three fields the domain reads")
+    @DisplayName("carries the three fields the domain reads, from given_name and family_name")
     void toIdentityUser_shouldMapTheFieldsTheDomainUses() {
-        KeycloakUserResponse response =
-                new KeycloakUserResponse("alice", "Alice", "Martin", "alice@example.com", true);
+        Auth0UserResponse response =
+                new Auth0UserResponse("alice", "Alice", "Martin", "alice@example.com", true);
 
         IdentityUser user = mapper.toIdentityUser(response);
 
@@ -52,8 +52,8 @@ class IdentityUserMapperTest {
     @Test
     @DisplayName("absent names come through as null, not as empty strings")
     void toIdentityUser_shouldPreserveAbsentNames() {
-        KeycloakUserResponse response =
-                new KeycloakUserResponse("bob", null, null, null, false);
+        Auth0UserResponse response =
+                new Auth0UserResponse("bob", null, null, null, false);
 
         IdentityUser user = mapper.toIdentityUser(response);
 

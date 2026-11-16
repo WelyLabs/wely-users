@@ -3,9 +3,11 @@ package com.calendar.users.infrastructure.observability;
 import com.calendar.users.domain.ports.AccountDeletionRepository;
 import com.calendar.users.domain.ports.IdentityProvider;
 import com.calendar.users.domain.ports.UserRepository;
+import com.calendar.users.exception.BusinessErrorCode;
+import com.calendar.users.exception.BusinessException;
 import com.calendar.users.exception.TechnicalErrorCode;
 import com.calendar.users.exception.TechnicalException;
-import com.calendar.users.infrastructure.identity.api.KeycloakAdminApi;
+import com.calendar.users.infrastructure.identity.api.Auth0ManagementApi;
 import com.calendar.users.infrastructure.persistence.repositories.AccountDeletionR2dbcRepository;
 import com.calendar.users.infrastructure.persistence.repositories.UserR2dbcRepository;
 import org.junit.jupiter.api.DisplayName;
@@ -46,7 +48,7 @@ class InfrastructureErrorAspectWiringTest {
 
     @MockitoBean private UserR2dbcRepository userR2dbcRepository;
     @MockitoBean private AccountDeletionR2dbcRepository accountDeletionR2dbcRepository;
-    @MockitoBean private KeycloakAdminApi keycloakAdminApi;
+    @MockitoBean private Auth0ManagementApi managementApi;
 
     @Autowired private UserRepository userRepository;
     @Autowired private IdentityProvider identityProvider;
@@ -66,10 +68,10 @@ class InfrastructureErrorAspectWiringTest {
     @Test
     @DisplayName("a database failure surfaces as DATABASE_ERROR through the proxy")
     void persistenceAdapter_shouldTranslateToDatabaseError() {
-        when(userR2dbcRepository.findIdByKeycloakId(anyString()))
+        when(userR2dbcRepository.findIdBySubjectId(anyString()))
                 .thenReturn(Mono.error(new RuntimeException("connection reset by peer")));
 
-        StepVerifier.create(userRepository.findIdByKeycloakId("kc-1"))
+        StepVerifier.create(userRepository.findIdBySubjectId("auth0|1"))
                 .expectErrorMatches(error -> error instanceof TechnicalException
                         && ((TechnicalException) error).getErrorCode()
                                 == TechnicalErrorCode.DATABASE_ERROR)
@@ -77,15 +79,39 @@ class InfrastructureErrorAspectWiringTest {
     }
 
     @Test
-    @DisplayName("an unreachable Keycloak surfaces as KEYCLOAK_ERROR, not DATABASE_ERROR")
-    void identityAdapter_shouldTranslateToKeycloakError() {
-        when(keycloakAdminApi.getUser(anyString()))
+    @DisplayName("an unreachable Auth0 surfaces as IDENTITY_PROVIDER_ERROR, not DATABASE_ERROR")
+    void identityAdapter_shouldTranslateToIdentityProviderError() {
+        when(managementApi.getUser(anyString()))
                 .thenReturn(Mono.error(new RuntimeException("503 Service Unavailable")));
 
-        StepVerifier.create(identityProvider.getUser("kc-1"))
+        StepVerifier.create(identityProvider.getUser("auth0|1"))
                 .expectErrorMatches(error -> error instanceof TechnicalException
                         && ((TechnicalException) error).getErrorCode()
-                                == TechnicalErrorCode.KEYCLOAK_ERROR)
+                                == TechnicalErrorCode.IDENTITY_PROVIDER_ERROR)
+                .verify(Duration.ofSeconds(10));
+    }
+
+    @Test
+    @DisplayName("Auth0's 429 is an outage to retry, never a subject that is gone: the orphan sweep deletes on USER_NOT_FOUND")
+    void identityAdapter_shouldTranslateARateLimitToIdentityProviderError_notUserNotFound() {
+        when(managementApi.getUser(anyString())).thenReturn(Mono.error(
+                WebClientResponseException.create(429, "Too Many Requests", null, null, null)));
+
+        StepVerifier.create(identityProvider.getUser("auth0|1"))
+                .expectErrorMatches(error -> error instanceof TechnicalException technical
+                        && technical.getErrorCode() == TechnicalErrorCode.IDENTITY_PROVIDER_ERROR)
+                .verify(Duration.ofSeconds(10));
+    }
+
+    @Test
+    @DisplayName("Auth0's 404 on a read is USER_NOT_FOUND, which the orphan sweep reads as gone")
+    void identityAdapter_shouldTranslateANotFoundReadToUserNotFound() {
+        when(managementApi.getUser(anyString())).thenReturn(Mono.error(
+                WebClientResponseException.create(404, "Not Found", null, null, null)));
+
+        StepVerifier.create(identityProvider.getUser("auth0|1"))
+                .expectErrorMatches(error -> error instanceof BusinessException business
+                        && business.getErrorCode() == BusinessErrorCode.USER_NOT_FOUND)
                 .verify(Duration.ofSeconds(10));
     }
 
@@ -101,27 +127,27 @@ class InfrastructureErrorAspectWiringTest {
     }
 
     @Test
-    @DisplayName("a Keycloak failure while deleting a subject surfaces as KEYCLOAK_ERROR")
-    void identityAdapter_shouldTranslateADeleteFailureToKeycloakError_whenKeycloakAnswers500() {
-        when(keycloakAdminApi.logout(anyString())).thenReturn(Mono.empty());
-        when(keycloakAdminApi.deleteUser(anyString())).thenReturn(Mono.error(
+    @DisplayName("an Auth0 failure while deleting a subject surfaces as IDENTITY_PROVIDER_ERROR")
+    void identityAdapter_shouldTranslateADeleteFailureToIdentityProviderError_whenAuth0Answers500() {
+        when(managementApi.deleteSessions(anyString())).thenReturn(Mono.empty());
+        when(managementApi.deleteUser(anyString())).thenReturn(Mono.error(
                 WebClientResponseException.create(500, "Internal Server Error", null, null, null)));
 
-        StepVerifier.create(identityProvider.deleteSubject("kc-1"))
+        StepVerifier.create(identityProvider.deleteSubject("auth0|1"))
                 .expectErrorMatches(error -> error instanceof TechnicalException technical
-                        && technical.getErrorCode() == TechnicalErrorCode.KEYCLOAK_ERROR)
+                        && technical.getErrorCode() == TechnicalErrorCode.IDENTITY_PROVIDER_ERROR)
                 .verify(Duration.ofSeconds(10));
     }
 
     @Test
-    @DisplayName("Keycloak's 404 while deleting a subject is absorbed before the aspect turns it into USER_NOT_FOUND")
-    void identityAdapter_shouldCompleteADelete_whenKeycloakAnswers404() {
-        when(keycloakAdminApi.logout(anyString())).thenReturn(Mono.error(
+    @DisplayName("Auth0's 404 while deleting a subject is absorbed before the aspect turns it into USER_NOT_FOUND")
+    void identityAdapter_shouldCompleteADelete_whenAuth0Answers404() {
+        when(managementApi.deleteSessions(anyString())).thenReturn(Mono.error(
                 WebClientResponseException.create(404, "Not Found", null, null, null)));
-        when(keycloakAdminApi.deleteUser(anyString())).thenReturn(Mono.error(
+        when(managementApi.deleteUser(anyString())).thenReturn(Mono.error(
                 WebClientResponseException.create(404, "Not Found", null, null, null)));
 
-        StepVerifier.create(identityProvider.deleteSubject("kc-1")).expectComplete().verify(Duration.ofSeconds(10));
+        StepVerifier.create(identityProvider.deleteSubject("auth0|1")).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test

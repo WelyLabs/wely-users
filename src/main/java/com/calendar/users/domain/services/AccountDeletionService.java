@@ -68,7 +68,7 @@ public class AccountDeletionService {
 
     /**
      * Checks, in order, the switch, the demo guard, the tombstone (already deleted completes, whatever the sign-in
-     * age), then the sign-in age, and erases the account; Keycloak and the avatars are left to the worker.
+     * age), then the sign-in age, and erases the account; the identity provider and the avatars are left to the worker.
      */
     public Mono<Void> requestDeletion(UUID userId, Instant authenticatedAt) {
         return Mono.defer(() -> {

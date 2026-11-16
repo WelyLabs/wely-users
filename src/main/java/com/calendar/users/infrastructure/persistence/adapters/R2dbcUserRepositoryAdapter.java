@@ -78,9 +78,9 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
      */
     @Override
     @Transactional
-    public Mono<BusinessUser> save(BusinessUser businessUser, String keycloakId) {
+    public Mono<BusinessUser> save(BusinessUser businessUser, String subjectId) {
         UserEntity userEntity = userEntityMapper.toUserEntity(businessUser);
-        userEntity.setKeycloakId(keycloakId);
+        userEntity.setKeycloakId(subjectId);
 
         return userR2dbcRepository.save(userEntity)
                 .map(userEntityMapper::toBusinessUser)
@@ -245,8 +245,8 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
     }
 
     @Override
-    public Mono<String> findKeycloakIdByUserId(UUID userId) {
-        return userR2dbcRepository.findKeycloakIdById(userId);
+    public Mono<String> findSubjectIdByUserId(UUID userId) {
+        return userR2dbcRepository.findSubjectIdById(userId);
     }
 
     /** Writes USER_CREATED to the outbox; {@code OutboxRelay} sends it to Kafka. */
@@ -260,8 +260,8 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
     }
 
     @Override
-    public Mono<UUID> findIdByKeycloakId(String keycloakId) {
-        return userR2dbcRepository.findIdByKeycloakId(keycloakId);
+    public Mono<UUID> findIdBySubjectId(String subjectId) {
+        return userR2dbcRepository.findIdBySubjectId(subjectId);
     }
 
     @Override

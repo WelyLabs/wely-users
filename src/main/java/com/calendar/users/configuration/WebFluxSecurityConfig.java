@@ -17,7 +17,6 @@ import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.jwt.*;
 import org.springframework.security.web.server.SecurityWebFilterChain;
-import org.springframework.security.web.server.util.matcher.OrServerWebExchangeMatcher;
 import org.springframework.security.web.server.util.matcher.ServerWebExchangeMatcher;
 import org.springframework.security.web.server.util.matcher.ServerWebExchangeMatchers;
 import org.springframework.web.server.ServerWebExchange;
@@ -34,10 +33,9 @@ public class WebFluxSecurityConfig {
 
     static final String SECRET_HEADER = "X-Internal-Secret";
 
-    /** Called by Keycloak before any JWT exists: provision at registration, resolve while minting a token. */
-    static final ServerWebExchangeMatcher KEYCLOAK_CALLBACKS = new OrServerWebExchangeMatcher(
-            ServerWebExchangeMatchers.pathMatchers(HttpMethod.GET, "/user-service/profile/resolve/**"),
-            ServerWebExchangeMatchers.pathMatchers(HttpMethod.POST, "/user-service/profile/provision"));
+    /** Called by the identity provider's sign-in Action before any JWT exists, to provision the user. */
+    static final ServerWebExchangeMatcher IDENTITY_PROVIDER_CALLBACKS =
+            ServerWebExchangeMatchers.pathMatchers(HttpMethod.POST, "/user-service/profile/provision");
 
     /** Read by the other services' reconciliation, with a secret of its own. */
     static final ServerWebExchangeMatcher DELETED_USERS_READER =
@@ -75,7 +73,7 @@ public class WebFluxSecurityConfig {
                         .accessDeniedHandler(accessDeniedHandler))
                 .authorizeExchange((authorize) -> authorize
                         // Guarded by their secret in the filter below, which uses the same matchers.
-                        .matchers(KEYCLOAK_CALLBACKS, DELETED_USERS_READER).permitAll()
+                        .matchers(IDENTITY_PROVIDER_CALLBACKS, DELETED_USERS_READER).permitAll()
                         .pathMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         // Kubernetes probes: the kubelet carries no token. Only the two
                         // health groups are opened, not /actuator as a whole.
@@ -127,7 +125,7 @@ public class WebFluxSecurityConfig {
 
     /** The secret an internal path requires, or empty for any other path. */
     private Mono<Optional<String>> requiredSecret(ServerWebExchange exchange) {
-        return KEYCLOAK_CALLBACKS.matches(exchange)
+        return IDENTITY_PROVIDER_CALLBACKS.matches(exchange)
                 .flatMap(callback -> callback.isMatch()
                         ? Mono.just(Optional.of(internalSecret))
                         : DELETED_USERS_READER.matches(exchange)

@@ -125,7 +125,7 @@ class OpenApiConfigTest {
         apiDocs().jsonPath("$.components.schemas.Problem.properties.code.enum").value(codes ->
                 assertThat(((List<?>) codes).stream().map(String::valueOf).toList())
                         .contains(BusinessErrorCode.USER_NOT_FOUND.getCode(),
-                                TechnicalErrorCode.KEYCLOAK_ERROR.getCode(),
+                                TechnicalErrorCode.IDENTITY_PROVIDER_ERROR.getCode(),
                                 GlobalErrorHandler.VALIDATION_FAILED_CODE,
                                 GlobalErrorHandler.REQUEST_REFUSED_CODE,
                                 GlobalErrorHandler.UNEXPECTED_FAILURE_CODE)

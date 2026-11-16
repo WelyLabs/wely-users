@@ -9,7 +9,7 @@ import lombok.Getter;
  * a business failure means the caller should change the request, a technical one means the
  * caller should retry and someone should look at an incident.
  *
- * <p>When the failure comes from an underlying error — a Keycloak, PostgreSQL, Kafka or
+ * <p>When the failure comes from an underlying error — an Auth0, PostgreSQL, Kafka or
  * WebClient exception — pass it as the cause, so the incident log shows the real failure and
  * not only this wrapper.
  */

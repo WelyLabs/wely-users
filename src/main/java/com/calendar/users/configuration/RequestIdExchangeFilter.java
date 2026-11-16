@@ -12,7 +12,7 @@ import reactor.core.publisher.Mono;
  * {@link RequestIdWebFilter} wrote. A call made outside a request (a background loop) has none and
  * goes without the header.
  *
- * <p>For Wely services only: an external client (Keycloak) has no use for our ids and should not
+ * <p>For Wely services only: an external client (Auth0) has no use for our ids and should not
  * learn them.
  */
 public class RequestIdExchangeFilter implements ExchangeFilterFunction {

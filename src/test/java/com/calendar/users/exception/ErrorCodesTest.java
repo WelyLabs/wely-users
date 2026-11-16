@@ -13,7 +13,7 @@ class ErrorCodesTest {
 
     @Test
     void of_shouldAnswerTheTechnicalCode_whenADependencyFailed() {
-        assertThat(ErrorCodes.of(new TechnicalException(TechnicalErrorCode.KEYCLOAK_ERROR))).isEqualTo("USR-TEC-001");
+        assertThat(ErrorCodes.of(new TechnicalException(TechnicalErrorCode.IDENTITY_PROVIDER_ERROR))).isEqualTo("USR-TEC-001");
     }
 
     @Test
