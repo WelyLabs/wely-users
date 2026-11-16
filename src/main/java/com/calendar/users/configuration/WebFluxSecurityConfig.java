@@ -25,6 +25,9 @@ import reactor.core.publisher.Mono;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 
 @Configuration
@@ -43,6 +46,7 @@ public class WebFluxSecurityConfig {
 
     private final String publicIssuer;
     private final String internalJwkSetUri;
+    private final List<String> audiences;
     private final String internalSecret;
     private final String deletedUsersReaderSecret;
 
@@ -50,10 +54,12 @@ public class WebFluxSecurityConfig {
     public WebFluxSecurityConfig(
             @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}") String publicIssuer,
             @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri}") String internalJwkSetUri,
+            @Value("${spring.security.oauth2.resourceserver.jwt.audiences:}") List<String> audiences,
             @Value("${app.internal-secret}") String internalSecret,
             @Value("${app.deleted-users.reader-secret:}") String deletedUsersReaderSecret) {
         this.publicIssuer = publicIssuer;
         this.internalJwkSetUri = internalJwkSetUri;
+        this.audiences = audiences;
         this.internalSecret = internalSecret;
         this.deletedUsersReaderSecret = deletedUsersReaderSecret;
     }
@@ -100,12 +106,20 @@ public class WebFluxSecurityConfig {
     public ReactiveJwtDecoder jwtDecoder() {
         NimbusReactiveJwtDecoder jwtDecoder = NimbusReactiveJwtDecoder.withJwkSetUri(internalJwkSetUri).build();
 
-        OAuth2TokenValidator<Jwt> issuerValidator = JwtValidators.createDefaultWithIssuer(publicIssuer);
-        OAuth2TokenValidator<Jwt> withTimestamp = new JwtTimestampValidator();
-        OAuth2TokenValidator<Jwt> validator = new DelegatingOAuth2TokenValidator<>(withTimestamp, issuerValidator);
-
-        jwtDecoder.setJwtValidator(validator);
+        jwtDecoder.setJwtValidator(jwtValidator(publicIssuer, audiences));
         return jwtDecoder;
+    }
+
+    /** Timestamps, issuer and audience; declaring our own decoder makes Boot skip its audience check, so it is redone here. */
+    static OAuth2TokenValidator<Jwt> jwtValidator(String issuer, List<String> audiences) {
+        List<OAuth2TokenValidator<Jwt>> validators = new ArrayList<>(
+                List.of(new JwtTimestampValidator(), JwtValidators.createDefaultWithIssuer(issuer)));
+        // An empty list disables the check (local dev), as Boot does.
+        if (!audiences.isEmpty()) {
+            validators.add(new JwtClaimValidator<List<String>>(JwtClaimNames.AUD,
+                    aud -> aud != null && !Collections.disjoint(aud, audiences)));
+        }
+        return new DelegatingOAuth2TokenValidator<>(validators);
     }
 
     /** 401 problem for an internal path whose secret is missing or wrong; every other request passes through. */

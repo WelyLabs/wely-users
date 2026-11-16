@@ -31,6 +31,9 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.springframework.security.oauth2.jwt.Jwt;
+import java.time.Instant;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -218,7 +221,7 @@ class WebFluxSecurityConfigTest {
     void readerSecretFilter_shouldAnswer401_whenNoReaderSecretIsConfigured() {
         ProblemResponseWriter problems = new ProblemResponseWriter(
                 new GlobalErrorHandler(new TechnicalErrorCounter(new SimpleMeterRegistry())), ServerCodecConfigurer.create());
-        WebFilter filter = new WebFluxSecurityConfig("http://issuer", "http://jwks", VALID_SECRET, "")
+        WebFilter filter = new WebFluxSecurityConfig("http://issuer", "http://jwks", List.of(), VALID_SECRET, "")
                 .internalSecretWebFilter(problems);
         AtomicBoolean reached = new AtomicBoolean();
 
@@ -396,5 +399,32 @@ class WebFluxSecurityConfigTest {
     @DisplayName("the decoder is built on the internal JWKS, separate from the public issuer")
     void jwtDecoder_shouldBeConfigured() {
         assertThat(config.jwtDecoder()).isNotNull();
+    }
+
+    private static final String AUDIENCE_ISSUER = "https://issuer.example/";
+
+    private static Jwt tokenWithAudience(String... audiences) {
+        return Jwt.withTokenValue("token").header("alg", "RS256")
+                .issuer(AUDIENCE_ISSUER).audience(List.of(audiences))
+                .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(60))
+                .build();
+    }
+
+    @Test
+    void jwtValidator_shouldAcceptATokenForAConfiguredAudience() {
+        assertThat(WebFluxSecurityConfig.jwtValidator(AUDIENCE_ISSUER, List.of("wely-api-dev"))
+                .validate(tokenWithAudience("other", "wely-api-dev")).hasErrors()).isFalse();
+    }
+
+    @Test
+    void jwtValidator_shouldRejectATokenForAnotherAudience() {
+        assertThat(WebFluxSecurityConfig.jwtValidator(AUDIENCE_ISSUER, List.of("wely-api-dev"))
+                .validate(tokenWithAudience("wely-api-prod")).hasErrors()).isTrue();
+    }
+
+    @Test
+    void jwtValidator_shouldSkipTheAudienceCheck_whenNoneIsConfigured() {
+        assertThat(WebFluxSecurityConfig.jwtValidator(AUDIENCE_ISSUER, List.of())
+                .validate(tokenWithAudience("wely-api-prod")).hasErrors()).isFalse();
     }
 }
