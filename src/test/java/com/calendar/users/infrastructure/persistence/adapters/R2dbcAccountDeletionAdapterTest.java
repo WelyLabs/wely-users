@@ -47,7 +47,7 @@ class R2dbcAccountDeletionAdapterTest {
     @Test
     void claimDue_shouldPassTheLeaseInSecondsAndMapTheRows_whenJobsAreDue() {
         AccountDeletionEntity row = AccountDeletionEntity.builder()
-                .userId(USER).keycloakId("kc-1").requestedAt(AT_UTC).attempts(2).build();
+                .userId(USER).subjectId("kc-1").requestedAt(AT_UTC).attempts(2).build();
         when(repository.claimDue(20, 300L)).thenReturn(Flux.just(row));
 
         StepVerifier.create(adapter.claimDue(20))

@@ -87,7 +87,7 @@ public class DatabaseSeeder implements ApplicationRunner {
      */
     private Mono<Long> insertBatch(int size) {
         StringBuilder sql = new StringBuilder(
-                "INSERT INTO app_user (keycloak_id, user_name, hashtag, profile_pic_url, joined_date) VALUES ");
+                "INSERT INTO app_user (subject_id, user_name, hashtag, profile_pic_url, joined_date) VALUES ");
         for (int i = 0; i < size; i++) {
             if (i > 0) {
                 sql.append(", ");
@@ -101,12 +101,12 @@ public class DatabaseSeeder implements ApplicationRunner {
 
         var spec = template.getDatabaseClient().sql(sql.toString());
         for (int i = 0; i < size; i++) {
-            String keycloakId = UUID.randomUUID().toString();
+            String subjectId = UUID.randomUUID().toString();
             spec = spec
-                    .bind("k" + i, keycloakId)
-                    .bind("u" + i, "seed-" + keycloakId.substring(0, 8))
+                    .bind("k" + i, subjectId)
+                    .bind("u" + i, "seed-" + subjectId.substring(0, 8))
                     .bind("h" + i, ThreadLocalRandom.current().nextInt(1000, 10_000))
-                    .bind("p" + i, "https://example-bucket/" + keycloakId)
+                    .bind("p" + i, "https://example-bucket/" + subjectId)
                     .bind("j" + i, LocalDateTime.now()
                             .minusDays(ThreadLocalRandom.current().nextInt(0, 3650)));
         }

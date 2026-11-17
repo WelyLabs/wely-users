@@ -25,8 +25,8 @@ public class AccountDeletionEntity {
     @Column("user_id")
     private UUID userId;
 
-    @Column("keycloak_id")
-    private String keycloakId;
+    @Column("subject_id")
+    private String subjectId;
 
     @Column("requested_at")
     private OffsetDateTime requestedAt;

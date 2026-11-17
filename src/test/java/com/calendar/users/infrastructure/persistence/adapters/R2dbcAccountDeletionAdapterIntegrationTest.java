@@ -85,11 +85,11 @@ class R2dbcAccountDeletionAdapterIntegrationTest {
         BusinessUser user = users.save(new BusinessUser(null, "user" + UUID.randomUUID().toString().substring(0, 8),
                 1111, null, null, null, LocalDateTime.now()), "kc-" + UUID.randomUUID()).block();
         databaseClient.sql("""
-                        INSERT INTO account_deletion (user_id, keycloak_id, requested_at, next_attempt_at)
-                        VALUES (:id, :keycloakId, now() - make_interval(mins => :ago), now() + make_interval(mins => :next))
+                        INSERT INTO account_deletion (user_id, subject_id, requested_at, next_attempt_at)
+                        VALUES (:id, :subjectId, now() - make_interval(mins => :ago), now() + make_interval(mins => :next))
                         """)
                 .bind("id", user.id())
-                .bind("keycloakId", "kc-" + user.id())
+                .bind("subjectId", "kc-" + user.id())
                 .bind("ago", requestedMinutesAgo)
                 .bind("next", nextAttemptInMinutes)
                 .then()
@@ -193,14 +193,14 @@ class R2dbcAccountDeletionAdapterIntegrationTest {
     }
 
     @Test
-    @DisplayName("once Keycloak confirmed, the job keeps when, and no longer the Keycloak id")
-    void markIdentityDeleted_shouldSetTheTimeAndNullTheKeycloakId_whenCalled() {
+    @DisplayName("once the identity provider confirmed, the job keeps when, and no longer the subject id")
+    void markIdentityDeleted_shouldSetTheTimeAndNullTheSubjectId_whenCalled() {
         UUID job = aJob(1, 0);
 
         adapter.markIdentityDeleted(job).block();
 
         Map<String, Object> row = jobOf(job);
-        assertThat(row.get("keycloak_id")).isNull();
+        assertThat(row.get("subject_id")).isNull();
         assertThat(row.get("identity_deleted_at")).isNotNull();
         assertThat(row.get("media_deleted_at")).isNull();
     }
@@ -213,7 +213,7 @@ class R2dbcAccountDeletionAdapterIntegrationTest {
 
         Map<String, Object> row = jobOf(job);
         assertThat(row.get("media_deleted_at")).isNotNull();
-        assertThat(row.get("keycloak_id")).isEqualTo("kc-" + job);
+        assertThat(row.get("subject_id")).isEqualTo("kc-" + job);
     }
 
     @Test

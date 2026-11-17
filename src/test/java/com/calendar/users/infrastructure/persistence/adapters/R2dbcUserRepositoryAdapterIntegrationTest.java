@@ -124,7 +124,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     @Test
     @DisplayName("a saved user comes back with every field and a generated id")
     void save_shouldRoundTripEveryField() {
-        BusinessUser saved = adapter.save(aUser("alice", 1111), "keycloak-alice").block();
+        BusinessUser saved = adapter.save(aUser("alice", 1111), "subject-alice").block();
 
         assertThat(saved).isNotNull();
         assertThat(saved.id()).isNotNull();
@@ -142,9 +142,9 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         // its violation to USER_ALREADY_EXISTS rather than letting it surface as a technical
         // fault — asserted here against the constraint itself rather than against a mock that
         // was told to throw.
-        adapter.save(aUser("alice", 1111), "keycloak-alice").block();
+        adapter.save(aUser("alice", 1111), "subject-alice").block();
 
-        StepVerifier.create(adapter.save(aUser("alice", 1111), "keycloak-someone-else"))
+        StepVerifier.create(adapter.save(aUser("alice", 1111), "subject-someone-else"))
                 .expectErrorSatisfies(error -> {
                     assertThat(error).isInstanceOf(BusinessException.class);
                     assertThat(((BusinessException) error).getErrorCode())
@@ -157,32 +157,32 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     @DisplayName("the same name with a different hashtag is allowed")
     void save_shouldAllowTheSameNameWithAnotherHashtag() {
         // The whole point of the hashtag: names are not unique on their own.
-        adapter.save(aUser("alice", 1111), "keycloak-alice").block();
+        adapter.save(aUser("alice", 1111), "subject-alice").block();
 
-        StepVerifier.create(adapter.save(aUser("alice", 2222), "keycloak-other-alice"))
+        StepVerifier.create(adapter.save(aUser("alice", 2222), "subject-other-alice"))
                 .expectNextCount(1)
                 .expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
-    @DisplayName("one Keycloak identity cannot be claimed twice")
-    void save_shouldRefuseADuplicateKeycloakId() {
-        // keycloak_id is UNIQUE too. The adapter maps every integrity violation to
+    @DisplayName("one identity cannot be claimed twice")
+    void save_shouldRefuseADuplicateSubjectId() {
+        // subject_id is UNIQUE too. The adapter maps every integrity violation to
         // USER_ALREADY_EXISTS, so this reads the same to a caller as a taken tag — worth
         // knowing, since the two are not the same problem.
-        adapter.save(aUser("alice", 1111), "keycloak-alice").block();
+        adapter.save(aUser("alice", 1111), "subject-alice").block();
 
-        StepVerifier.create(adapter.save(aUser("bob", 2222), "keycloak-alice"))
+        StepVerifier.create(adapter.save(aUser("bob", 2222), "subject-alice"))
                 .expectError(BusinessException.class)
                 .verify(Duration.ofSeconds(10));
     }
 
     @Test
-    @DisplayName("an id is found from the Keycloak subject")
+    @DisplayName("an id is found from the OIDC subject")
     void findIdBySubjectId_shouldReturnTheInternalId() {
-        BusinessUser saved = adapter.save(aUser("alice", 1111), "keycloak-alice").block();
+        BusinessUser saved = adapter.save(aUser("alice", 1111), "subject-alice").block();
 
-        StepVerifier.create(adapter.findIdBySubjectId("keycloak-alice"))
+        StepVerifier.create(adapter.findIdBySubjectId("subject-alice"))
                 .expectNext(saved.id())
                 .expectComplete().verify(Duration.ofSeconds(10));
     }
@@ -198,7 +198,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     @Test
     @DisplayName("a taken tag is reported as taken, and a free one as free")
     void existsByUserNameAndHashtag_shouldAnswerBothWays() {
-        adapter.save(aUser("alice", 1111), "keycloak-alice").block();
+        adapter.save(aUser("alice", 1111), "subject-alice").block();
 
         StepVerifier.create(adapter.existsByUserNameAndHashtag("alice", 1111))
                 .expectNext(true).expectComplete().verify(Duration.ofSeconds(10));
@@ -211,7 +211,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     @Test
     @DisplayName("a user is read back by internal id")
     void getBusinessUserByUserId_shouldReturnTheUser() {
-        BusinessUser saved = adapter.save(aUser("alice", 1111), "keycloak-alice").block();
+        BusinessUser saved = adapter.save(aUser("alice", 1111), "subject-alice").block();
 
         StepVerifier.create(adapter.getBusinessUserByUserId(saved.id()))
                 .assertNext(found -> {
@@ -228,24 +228,24 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     }
 
     @Test
-    @DisplayName("the Keycloak subject is stored, though the domain model never carries it")
-    void save_shouldPersistTheKeycloakIdOutsideTheDomainModel() {
-        // BusinessUser has no keycloakId: the link to the identity provider is infrastructure.
+    @DisplayName("the OIDC subject is stored, though the domain model never carries it")
+    void save_shouldPersistTheSubjectIdOutsideTheDomainModel() {
+        // BusinessUser has no subjectId: the link to the identity provider is infrastructure.
         // The adapter sets it on the entity, and nothing but a real row proves it landed.
-        adapter.save(aUser("alice", 1111), "keycloak-alice").block();
+        adapter.save(aUser("alice", 1111), "subject-alice").block();
 
-        String stored = databaseClient.sql("SELECT keycloak_id FROM app_user WHERE user_name = 'alice'")
-                .map(row -> row.get("keycloak_id", String.class))
+        String stored = databaseClient.sql("SELECT subject_id FROM app_user WHERE user_name = 'alice'")
+                .map(row -> row.get("subject_id", String.class))
                 .one()
                 .block();
 
-        assertThat(stored).isEqualTo("keycloak-alice");
+        assertThat(stored).isEqualTo("subject-alice");
     }
 
     @Test
     @DisplayName("saving a user also records its USER_CREATED event")
     void save_shouldRecordTheUserCreatedEvent() {
-        BusinessUser saved = adapter.save(aUser("alice", 1111), "keycloak-alice").block();
+        BusinessUser saved = adapter.save(aUser("alice", 1111), "subject-alice").block();
 
         assertThat(count("app_user")).isEqualTo(1L);
         assertThat(count("outbox_event")).isEqualTo(1L);
@@ -263,7 +263,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         databaseClient.sql("ALTER TABLE outbox_event ADD CONSTRAINT refuse_all CHECK (false) NOT VALID")
                 .then().block();
         try {
-            StepVerifier.create(adapter.save(aUser("alice", 1111), "keycloak-alice"))
+            StepVerifier.create(adapter.save(aUser("alice", 1111), "subject-alice"))
                     .expectError()
                     .verify(Duration.ofSeconds(10));
 
@@ -277,9 +277,9 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     @Test
     @DisplayName("a refused user leaves no event behind")
     void save_shouldNotRecordAnEventForARefusedUser() {
-        adapter.save(aUser("alice", 1111), "keycloak-alice").block();
+        adapter.save(aUser("alice", 1111), "subject-alice").block();
 
-        StepVerifier.create(adapter.save(aUser("alice", 1111), "keycloak-bob"))
+        StepVerifier.create(adapter.save(aUser("alice", 1111), "subject-bob"))
                 .expectError(BusinessException.class)
                 .verify(Duration.ofSeconds(10));
 
@@ -287,9 +287,9 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
         assertThat(count("outbox_event")).isEqualTo(1L);
     }
 
-    private BusinessUser savedAgo(String userName, int hashtag, String keycloakId, long minutesAgo) {
+    private BusinessUser savedAgo(String userName, int hashtag, String subjectId, long minutesAgo) {
         return adapter.save(new BusinessUser(null, userName, hashtag, "First", "Last", null,
-                LocalDateTime.now().minusMinutes(minutesAgo)), keycloakId).block();
+                LocalDateTime.now().minusMinutes(minutesAgo)), subjectId).block();
     }
 
     @Test
@@ -614,8 +614,8 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
                 .block();
     }
 
-    private BusinessUser aFullUser(String userName, int hashtag, String keycloakId) {
-        BusinessUser user = adapter.save(aUser(userName, hashtag), keycloakId).block();
+    private BusinessUser aFullUser(String userName, int hashtag, String subjectId) {
+        BusinessUser user = adapter.save(aUser(userName, hashtag), subjectId).block();
         adapter.updatePicture(user.id(), "avatars/" + user.id() + "/a.jpg").block();
         adapter.updateAbout(user.id(), new UserAbout("Partante", List.of("Rando"))).block();
         adapter.updatePreferences(user.id(), new UserPreferences(Theme.DARK)).block();
@@ -644,7 +644,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
                 .expectComplete().verify(Duration.ofSeconds(10));
 
         Map<String, Object> row = rowOf(user.id());
-        assertThat(row.get("keycloak_id")).isEqualTo("deleted:" + user.id());
+        assertThat(row.get("subject_id")).isEqualTo("deleted:" + user.id());
         assertThat(row.get("user_name")).isEqualTo("deleted-" + user.id());
         assertThat(row.get("hashtag")).isEqualTo(0);
         assertThat(row.get("first_name")).isNull();
@@ -669,8 +669,8 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     }
 
     @Test
-    @DisplayName("the job keeps the original Keycloak id, the only copy left once the row is a tombstone")
-    void eraseAccount_shouldQueueTheJobWithTheOriginalKeycloakId_whenTheAccountIsErased() {
+    @DisplayName("the job keeps the original subject id, the only copy left once the row is a tombstone")
+    void eraseAccount_shouldQueueTheJobWithTheOriginalSubjectId_whenTheAccountIsErased() {
         BusinessUser user = adapter.save(aUser("alice", 1111), "kc-alice").block();
         Instant deletedAt = now();
 
@@ -681,7 +681,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
                 .fetch()
                 .one()
                 .block();
-        assertThat(job.get("keycloak_id")).isEqualTo("kc-alice");
+        assertThat(job.get("subject_id")).isEqualTo("kc-alice");
         assertThat(((OffsetDateTime) job.get("requested_at")).toInstant()).isEqualTo(deletedAt);
         assertThat(((OffsetDateTime) job.get("next_attempt_at")).toInstant()).isEqualTo(deletedAt);
         assertThat(job.get("identity_deleted_at")).isNull();
@@ -801,8 +801,8 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     }
 
     @Test
-    @DisplayName("a job cannot claim the identity is deleted while still holding the Keycloak id")
-    void accountDeletionCheck_shouldRefuseARow_whenIdentityIsDeletedButTheKeycloakIdRemains() {
+    @DisplayName("a job cannot claim the identity is deleted while still holding the subject id")
+    void accountDeletionCheck_shouldRefuseARow_whenIdentityIsDeletedButTheSubjectIdRemains() {
         BusinessUser user = aTombstone();
 
         StepVerifier.create(databaseClient.sql("UPDATE account_deletion SET identity_deleted_at = now() WHERE user_id = :id")
@@ -901,7 +901,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     }
 
     @Test
-    @DisplayName("neither the original Keycloak id nor the placeholder resolves: the mapper refuses tokens")
+    @DisplayName("neither the original subject id nor the placeholder resolves: the mapper refuses tokens")
     void findIdBySubjectId_shouldBeEmpty_forTheOriginalAndThePlaceholderIds() {
         BusinessUser user = aTombstone();
 

@@ -17,11 +17,11 @@ public interface AccountDeletionR2dbcRepository extends ReactiveCrudRepository<A
 
     @Modifying
     @Query("""
-            INSERT INTO account_deletion (user_id, keycloak_id, requested_at, next_attempt_at)
-            VALUES (:userId, :keycloakId, :requestedAt, :requestedAt)
+            INSERT INTO account_deletion (user_id, subject_id, requested_at, next_attempt_at)
+            VALUES (:userId, :subjectId, :requestedAt, :requestedAt)
             ON CONFLICT (user_id) DO NOTHING
             """)
-    Mono<Long> insertJob(UUID userId, String keycloakId, OffsetDateTime requestedAt);
+    Mono<Long> insertJob(UUID userId, String subjectId, OffsetDateTime requestedAt);
 
     /** Leases the due unfinished jobs, so a second worker skips them without a transaction held across HTTP calls. */
     @Query("""
@@ -46,7 +46,7 @@ public interface AccountDeletionR2dbcRepository extends ReactiveCrudRepository<A
     Flux<AccountDeletionEntity> claimDue(int limit, long leaseSeconds);
 
     @Modifying
-    @Query("UPDATE account_deletion SET identity_deleted_at = now(), keycloak_id = NULL WHERE user_id = :userId")
+    @Query("UPDATE account_deletion SET identity_deleted_at = now(), subject_id = NULL WHERE user_id = :userId")
     Mono<Long> markIdentityDeleted(UUID userId);
 
     @Modifying

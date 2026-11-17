@@ -3,9 +3,9 @@ package com.calendar.users.domain.models;
 /**
  * A user as the identity provider knows them, in terms the domain owns.
  *
- * <p>The {@code IdentityProvider} port used to return {@code KeycloakUserResponse}, an
+ * <p>The {@code IdentityProvider} port used to return an
  * infrastructure record named after the vendor. That inverted the dependency the hexagon
- * exists to establish: the domain could not be compiled or tested without the Keycloak
+ * exists to establish: the domain could not be compiled or tested without the vendor's
  * client on the classpath, and swapping identity providers would have meant editing the
  * domain.
  *

@@ -123,7 +123,7 @@ sequenceDiagram
     R->>DB: UPDATE published_at
 ```
 
-`provisionUser` est **idempotente** sur le `subjectId` : un appel rejoué renvoie l'utilisateur existant, et de deux appels simultanés, celui qui bute sur la contrainte de la colonne `keycloak_id` (qui porte le `subjectId`, nom hérité) renvoie l'identifiant du gagnant.
+`provisionUser` est **idempotente** sur le `subjectId` : un appel rejoué renvoie l'utilisateur existant, et de deux appels simultanés, celui qui bute sur la contrainte de la colonne `subject_id` (qui porte le `subjectId`, nom hérité) renvoie l'identifiant du gagnant.
 
 La publication **ne fait pas partie de la requête** : l'Action attend l'identifiant métier, pas un aller-retour vers le broker, et un Kafka indisponible fait grossir une file au lieu de perdre un événement.
 
@@ -221,7 +221,7 @@ public record BusinessUser(
 ```sql
 CREATE TABLE app_user (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    keycloak_id     TEXT UNIQUE NOT NULL,
+    subject_id     TEXT UNIQUE NOT NULL,
     user_name       TEXT NOT NULL,
     hashtag         INTEGER NOT NULL,
     first_name      TEXT,
@@ -307,7 +307,7 @@ Written with `PUT /profile/registration`, and with every profile update of a use
 
 | Column | Tombstone |
 |---|---|
-| `keycloak_id` | `deleted:<id>` |
+| `subject_id` | `deleted:<id>` |
 | `user_name`, `hashtag` | `deleted-<id>`, `0` (outside the drawn 1000–9999) |
 | names, picture, bio, interests | cleared |
 | `theme`, `joined_date` | `SYSTEM`, the deletion time |
@@ -418,8 +418,8 @@ client peut tester et un `timestamp` :
 |---|---|
 | `DB_URL` | URL R2DBC PostgreSQL |
 | `DB_USERNAME` / `DB_PASSWORD` | Identifiants base |
-| `KEYCLOAK_ISSUER_URI` | Issuer Auth0, `https://<tenant>/` (slash final) — nom hérité, renommage `OIDC_*` à venir |
-| `KEYCLOAK_INTERNAL_JWK_SET_URI` | JWKS Auth0, `https://<tenant>/.well-known/jwks.json` — nom hérité |
+| `OIDC_ISSUER_URI` | Issuer Auth0, `https://<tenant>/` (slash final) |
+| `OIDC_JWK_SET_URI` | JWKS Auth0, `https://<tenant>/.well-known/jwks.json` |
 | `JWT_AUDIENCES` | Identifiant de l'API Auth0 (`wely-api-<env>`) |
 | `AUTH0_DOMAIN` | Domaine du tenant (`dev-….eu.auth0.com`) : Management API et endpoint token |
 | `AUTH0_MGMT_CLIENT_ID` / `AUTH0_MGMT_CLIENT_SECRET` | Application M2M `wely-users-<env>` ; scopes `read:users update:users delete:users delete:sessions` (secret scellé) |

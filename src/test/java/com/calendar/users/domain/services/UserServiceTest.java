@@ -207,7 +207,7 @@ class UserServiceTest {
 
         @Test
         void provisionUser_ShouldFail_WhenTheConflictIsNotOnTheSubjectId() {
-                // USER_ALREADY_EXISTS without a row for this Keycloak id: the pseudo and hashtag were taken.
+                // USER_ALREADY_EXISTS without a row for this subject id: the pseudo and hashtag were taken.
                 when(userRepository.findIdBySubjectId("kc-1")).thenReturn(Mono.empty());
                 when(userRepository.existsByUserNameAndHashtag(eq("léa"), anyInt())).thenReturn(Mono.just(false));
                 when(userRepository.save(any(BusinessUser.class), eq("kc-1")))
@@ -399,16 +399,16 @@ class UserServiceTest {
         void updateProfile_ShouldKeepTheOriginalError_WhenTheUndoFailsToo() {
                 givenCamille();
                 RuntimeException databaseDown = new IllegalStateException("database down");
-                RuntimeException keycloakDown = new IllegalStateException("keycloak down");
+                RuntimeException providerDown = new IllegalStateException("identity provider down");
                 when(identityProvider.updateProfile(eq("kc-camille"), any()))
                                 .thenReturn(Mono.empty())
-                                .thenReturn(Mono.error(keycloakDown));
+                                .thenReturn(Mono.error(providerDown));
                 when(userRepository.updateProfile(any(), any())).thenReturn(Mono.error(databaseDown));
 
                 StepVerifier.create(userService.updateProfile(USER_ID, new ProfileUpdate("camille_d", "Cam", "Dupont")))
                                 .expectErrorMatches(error -> error == databaseDown
                                                 && error.getSuppressed().length == 1
-                                                && error.getSuppressed()[0] == keycloakDown)
+                                                && error.getSuppressed()[0] == providerDown)
                                 .verify(Duration.ofSeconds(10));
         }
 

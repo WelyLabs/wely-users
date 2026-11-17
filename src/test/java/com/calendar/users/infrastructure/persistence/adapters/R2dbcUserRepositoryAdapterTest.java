@@ -124,7 +124,7 @@ class R2dbcUserRepositoryAdapterTest {
                                 .expectNext(user)
                                 .expectComplete().verify(Duration.ofSeconds(10));
 
-                verify(entity).setKeycloakId("kc-123");
+                verify(entity).setSubjectId("kc-123");
                 ArgumentCaptor<String> payload = ArgumentCaptor.captor();
                 verify(outboxEventStore).append(eq(id), eq(OutboxEventType.USER_CREATED.name()), payload.capture());
                 assertThat(objectMapper.readValue(payload.getValue(), UserCreatedEventDTO.class))

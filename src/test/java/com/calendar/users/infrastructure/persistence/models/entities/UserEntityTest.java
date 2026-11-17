@@ -23,7 +23,7 @@ class UserEntityTest {
 
         // When
         entity.setId(id);
-        entity.setKeycloakId(kcId);
+        entity.setSubjectId(kcId);
         entity.setUserName(userName);
         entity.setHashtag(hashtag);
         entity.setFirstName(firstName);
@@ -33,7 +33,7 @@ class UserEntityTest {
 
         // Then
         assertEquals(id, entity.getId());
-        assertEquals(kcId, entity.getKeycloakId());
+        assertEquals(kcId, entity.getSubjectId());
         assertEquals(userName, entity.getUserName());
         assertEquals(hashtag, entity.getHashtag());
         assertEquals(firstName, entity.getFirstName());

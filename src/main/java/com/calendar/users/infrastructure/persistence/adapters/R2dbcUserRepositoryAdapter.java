@@ -80,7 +80,7 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
     @Transactional
     public Mono<BusinessUser> save(BusinessUser businessUser, String subjectId) {
         UserEntity userEntity = userEntityMapper.toUserEntity(businessUser);
-        userEntity.setKeycloakId(subjectId);
+        userEntity.setSubjectId(subjectId);
 
         return userR2dbcRepository.save(userEntity)
                 .map(userEntityMapper::toBusinessUser)
@@ -93,7 +93,7 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
     @Override
     public Flux<IdentityToCheck> findIdentitiesToCheck(LocalDateTime createdBefore, int limit) {
         return userR2dbcRepository.findIdentitiesToCheck(createdBefore, limit)
-                .map(row -> new IdentityToCheck(row.id(), row.keycloakId()));
+                .map(row -> new IdentityToCheck(row.id(), row.subjectId()));
     }
 
     @Override
@@ -196,7 +196,7 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
                 .flatMap(updated -> updated == 1
                         ? Mono.just(updated)
                         : Mono.error(new IllegalStateException("The tombstone matched " + updated + " rows")))
-                .then(Mono.defer(() -> accountDeletions.insertJob(userId, row.keycloakId(), at)))
+                .then(Mono.defer(() -> accountDeletions.insertJob(userId, row.subjectId(), at)))
                 .then(Mono.defer(() -> outboxEventStore.deleteOtherEventsOf(userId, OutboxEventType.USER_DELETED.name())))
                 .then(Mono.defer(() -> appendEvent(userId, OutboxEventType.USER_DELETED,
                         new UserDeletedEventDTO(userId, deletedAt))))

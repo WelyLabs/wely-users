@@ -535,7 +535,7 @@ class AccountDeletionServiceTest {
     void processDueDeletions_shouldStoreAnErrorCodeOnly_whenAStepFails() {
         givenTheJobs(job(NOW.minusSeconds(5), false, true, 0));
         when(identityProvider.deleteSubject("kc-1"))
-                .thenReturn(Mono.error(new IllegalStateException("https://keycloak/admin/users/kc-1 refused")));
+                .thenReturn(Mono.error(new IllegalStateException("https://idp.example/api/v2/users/kc-1 refused")));
         when(jobs.recordFailure(eq(USER), anyString(), any())).thenReturn(Mono.empty());
 
         StepVerifier.create(service.processDueDeletions(20)).expectNextCount(1).expectComplete().verify(Duration.ofSeconds(10));

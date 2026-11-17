@@ -27,8 +27,8 @@ public interface UserR2dbcRepository extends ReactiveCrudRepository<UserEntity, 
     @Query("SELECT * FROM app_user WHERE id = :id AND deleted_at IS NULL")
     Mono<UserEntity> findLiveById(UUID id);
 
-    @Query("SELECT id FROM app_user WHERE keycloak_id = :keycloakId AND deleted_at IS NULL")
-    Mono<UUID> findIdBySubjectId(String keycloakId);
+    @Query("SELECT id FROM app_user WHERE subject_id = :subjectId AND deleted_at IS NULL")
+    Mono<UUID> findIdBySubjectId(String subjectId);
 
     /** A live user's handle, or a retired one: either way it is not free. */
     @Query("""
@@ -39,7 +39,7 @@ public interface UserR2dbcRepository extends ReactiveCrudRepository<UserEntity, 
     Mono<Boolean> existsByUserNameAndHashtag(String userName, Integer hashTag);
 
     @Query("""
-            SELECT id, keycloak_id
+            SELECT id, subject_id
               FROM app_user
              WHERE identity_checked_at IS NULL
                AND deleted_at IS NULL
@@ -77,7 +77,7 @@ public interface UserR2dbcRepository extends ReactiveCrudRepository<UserEntity, 
             """)
     Mono<Long> completeRegistration(UUID id, LocalDate birthDate, String firstName, String lastName, boolean completed);
 
-    @Query("SELECT keycloak_id FROM app_user WHERE id = :id AND deleted_at IS NULL")
+    @Query("SELECT subject_id FROM app_user WHERE id = :id AND deleted_at IS NULL")
     Mono<String> findSubjectIdById(UUID id);
 
     /**
@@ -107,14 +107,14 @@ public interface UserR2dbcRepository extends ReactiveCrudRepository<UserEntity, 
     Mono<Long> updatePreferences(UUID id, String theme);
 
     /** Locks the row for the deletion transaction, tombstone or not. */
-    @Query("SELECT id, keycloak_id, deleted_at FROM app_user WHERE id = :id FOR UPDATE")
+    @Query("SELECT id, subject_id, deleted_at FROM app_user WHERE id = :id FOR UPDATE")
     Mono<DeletionLockRow> lockForDeletion(UUID id);
 
     /** Clears every personal field; the placeholders are those app_user_tombstone_check requires. */
     @Modifying
     @Query("""
             UPDATE app_user
-               SET keycloak_id = 'deleted:' || id::text,
+               SET subject_id = 'deleted:' || id::text,
                    user_name = 'deleted-' || id::text,
                    hashtag = 0,
                    first_name = NULL,
