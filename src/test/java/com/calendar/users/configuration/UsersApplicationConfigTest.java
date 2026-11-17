@@ -62,7 +62,8 @@ class UsersApplicationConfigTest {
 
     private AccountDeletionPolicy policy(boolean enabled, String protectedUserIds) {
         return config.accountDeletionPolicy(enabled, protectedUserIds, Duration.ofMinutes(5),
-                Duration.ofSeconds(60), Duration.ofSeconds(5), Duration.ofHours(1), Duration.ofMinutes(10));
+                Duration.ofSeconds(60), Duration.ofSeconds(5), Duration.ofHours(1), Duration.ofMinutes(10),
+                Duration.ofDays(30));
     }
 
     /** The messages UsersApplicationConfig logs at INFO while the action runs. */
@@ -86,7 +87,7 @@ class UsersApplicationConfigTest {
     void accountDeletionPolicy_shouldCarryTheSwitchAndTheConfiguredDurations_whenBuilt() {
         assertThat(policy(true, FIRST.toString())).isEqualTo(new AccountDeletionPolicy(true, Set.of(FIRST),
                 Duration.ofMinutes(5), Duration.ofSeconds(60), Duration.ofSeconds(5), Duration.ofHours(1),
-                Duration.ofMinutes(10)));
+                Duration.ofMinutes(10), Duration.ofDays(30)));
     }
 
     @Test
@@ -115,7 +116,7 @@ class UsersApplicationConfigTest {
         AccountDeletionService service = config.accountDeletionService(mock(UserRepository.class),
                 mock(AccountDeletionRepository.class), mock(IdentityProvider.class), mock(MediaStore.class),
                 config.accountDeletionPolicy(true, "", Duration.ZERO, Duration.ZERO, Duration.ZERO,
-                        Duration.ZERO, Duration.ZERO),
+                        Duration.ZERO, Duration.ZERO, Duration.ZERO),
                 Clock.systemUTC(), mock(UsersActivity.class));
 
         assertThat(service).isNotNull();

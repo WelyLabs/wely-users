@@ -18,7 +18,7 @@ class AccountDeletionPolicyTest {
 
     private static AccountDeletionPolicy policy(Set<UUID> protectedIds) {
         return new AccountDeletionPolicy(true, protectedIds, Duration.ofMinutes(5), Duration.ofSeconds(60),
-                Duration.ofSeconds(5), Duration.ofHours(1), Duration.ofMinutes(10));
+                Duration.ofSeconds(5), Duration.ofHours(1), Duration.ofMinutes(10), Duration.ofDays(30));
     }
 
     private final AccountDeletionPolicy policy = policy(Set.of(DEMO));
@@ -37,7 +37,8 @@ class AccountDeletionPolicyTest {
     @Test
     void isProtected_shouldStillAnswerTrue_whenDeletionIsDisabled() {
         AccountDeletionPolicy disabled = new AccountDeletionPolicy(false, Set.of(DEMO), Duration.ofMinutes(5),
-                Duration.ofSeconds(60), Duration.ofSeconds(5), Duration.ofHours(1), Duration.ofMinutes(10));
+                Duration.ofSeconds(60), Duration.ofSeconds(5), Duration.ofHours(1), Duration.ofMinutes(10),
+                Duration.ofDays(30));
 
         assertThat(disabled.enabled()).isFalse();
         assertThat(disabled.isProtected(DEMO)).isTrue();
@@ -113,17 +114,17 @@ class AccountDeletionPolicyTest {
     @Test
     void constructor_shouldRefuse_whenADurationIsNegative() {
         assertThatThrownBy(() -> new AccountDeletionPolicy(true, Set.of(), Duration.ofMinutes(-1), Duration.ZERO,
-                Duration.ZERO, Duration.ZERO, Duration.ZERO))
+                Duration.ZERO, Duration.ZERO, Duration.ZERO, Duration.ZERO))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void constructor_shouldRefuse_whenAValueIsMissing() {
         assertThatThrownBy(() -> new AccountDeletionPolicy(true, null, Duration.ZERO, Duration.ZERO,
-                Duration.ZERO, Duration.ZERO, Duration.ZERO))
+                Duration.ZERO, Duration.ZERO, Duration.ZERO, Duration.ZERO))
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new AccountDeletionPolicy(true, Set.of(), Duration.ZERO, Duration.ZERO,
-                null, Duration.ZERO, Duration.ZERO))
+                null, Duration.ZERO, Duration.ZERO, Duration.ZERO))
                 .isInstanceOf(NullPointerException.class);
     }
 }

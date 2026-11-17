@@ -174,8 +174,8 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
     }
 
     /**
-     * Locks the row, retires its handle, writes the tombstone, queues the identity and media cleanup,
-     * drops the user's other outbox events and appends USER_DELETED, all in one transaction.
+     * Locks the row, retires its handle, writes the tombstone, drops the user's other outbox events and
+     * appends USER_DELETED, all in one transaction. The cleanup job was queued when the deletion was scheduled.
      */
     @Override
     @Transactional
@@ -196,7 +196,6 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
                 .flatMap(updated -> updated == 1
                         ? Mono.just(updated)
                         : Mono.error(new IllegalStateException("The tombstone matched " + updated + " rows")))
-                .then(Mono.defer(() -> accountDeletions.insertJob(userId, row.subjectId(), at)))
                 .then(Mono.defer(() -> outboxEventStore.deleteOtherEventsOf(userId, OutboxEventType.USER_DELETED.name())))
                 .then(Mono.defer(() -> appendEvent(userId, OutboxEventType.USER_DELETED,
                         new UserDeletedEventDTO(userId, deletedAt))))
@@ -205,8 +204,37 @@ public class R2dbcUserRepositoryAdapter implements UserRepository {
 
     @Override
     public Mono<AccountState> findAccountState(UUID userId) {
-        return userR2dbcRepository.isDeleted(userId)
-                .map(deleted -> deleted ? AccountState.DELETED : AccountState.ACTIVE);
+        return userR2dbcRepository.accountState(userId).map(AccountState::valueOf);
+    }
+
+    /** The schedule and its job in one transaction: a job without a due date would be purged at once. */
+    @Override
+    @Transactional
+    public Mono<Boolean> scheduleDeletion(UUID userId, Instant requestedAt, Instant dueAt) {
+        OffsetDateTime due = OffsetDateTime.ofInstant(dueAt, ZoneOffset.UTC);
+        return userR2dbcRepository.lockForDeletion(userId)
+                .flatMap(row -> row.deletedAt() != null
+                        ? Mono.just(false)
+                        : userR2dbcRepository.scheduleDeletion(userId, due)
+                                .flatMap(updated -> updated == 0
+                                        ? Mono.just(false)
+                                        : accountDeletions.insertJob(userId, row.subjectId(),
+                                                OffsetDateTime.ofInstant(requestedAt, ZoneOffset.UTC), due)
+                                                .thenReturn(true)));
+    }
+
+    @Override
+    @Transactional
+    public Mono<Boolean> cancelDeletion(UUID userId) {
+        return userR2dbcRepository.cancelDeletion(userId)
+                .flatMap(updated -> updated == 0
+                        ? Mono.just(false)
+                        : accountDeletions.deleteById(userId).thenReturn(true));
+    }
+
+    @Override
+    public Mono<Instant> findDeletionDueAt(UUID userId) {
+        return userR2dbcRepository.findDeletionDueAt(userId).map(OffsetDateTime::toInstant);
     }
 
     @Override

@@ -18,10 +18,11 @@ public interface AccountDeletionR2dbcRepository extends ReactiveCrudRepository<A
     @Modifying
     @Query("""
             INSERT INTO account_deletion (user_id, subject_id, requested_at, next_attempt_at)
-            VALUES (:userId, :subjectId, :requestedAt, :requestedAt)
+            VALUES (:userId, :subjectId, :requestedAt, :dueAt)
             ON CONFLICT (user_id) DO NOTHING
             """)
-    Mono<Long> insertJob(UUID userId, String subjectId, OffsetDateTime requestedAt);
+    // next_attempt_at is the end of the grace period: claimDue leaves the job alone until then.
+    Mono<Long> insertJob(UUID userId, String subjectId, OffsetDateTime requestedAt, OffsetDateTime dueAt);
 
     /** Leases the due unfinished jobs, so a second worker skips them without a transaction held across HTTP calls. */
     @Query("""

@@ -24,11 +24,17 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
-/** Deletes accounts: the tombstone at once, the identity and the avatars afterwards, retried until done. */
+/**
+ * Deletes accounts: the request only schedules the erasure, which the worker performs once the grace period
+ * has run out, followed by the identity and the avatars, retried until done. Any sign-in before the due date
+ * cancels the whole thing.
+ */
 public class AccountDeletionService {
 
     private final UserRepository users;
@@ -61,14 +67,15 @@ public class AccountDeletionService {
         }
         return users.findAccountState(userId)
                 .switchIfEmpty(Mono.error(() -> new BusinessException(BusinessErrorCode.USER_NOT_FOUND)))
-                .flatMap(state -> state == AccountState.ACTIVE
-                        ? Mono.just(true)
-                        : Mono.error(new BusinessException(BusinessErrorCode.USER_DELETED)));
+                .flatMap(state -> state == AccountState.DELETED
+                        ? Mono.error(new BusinessException(BusinessErrorCode.USER_DELETED))
+                        : Mono.just(true));
     }
 
     /**
      * Checks, in order, the switch, the demo guard, the tombstone (already deleted completes, whatever the sign-in
-     * age), then the sign-in age, and erases the account; the identity provider and the avatars are left to the worker.
+     * age), an already scheduled deletion (completes too), then the sign-in age, and schedules the erasure for the
+     * end of the grace period. The worker does the rest once that date is reached.
      */
     public Mono<Void> requestDeletion(UUID userId, Instant authenticatedAt) {
         return Mono.defer(() -> {
@@ -79,24 +86,33 @@ public class AccountDeletionService {
                 return Mono.error(new BusinessException(BusinessErrorCode.ACCOUNT_PROTECTED));
             }
             return users.findAccountState(userId)
-                    .map(state -> state == AccountState.DELETED)
-                    .defaultIfEmpty(false)
-                    .flatMap(deleted -> deleted ? Mono.empty() : eraseIfRecentlyAuthenticated(userId, authenticatedAt));
+                    .defaultIfEmpty(AccountState.ACTIVE)
+                    .flatMap(state -> state == AccountState.ACTIVE
+                            ? scheduleIfRecentlyAuthenticated(userId, authenticatedAt)
+                            : Mono.empty());
         });
     }
 
-    private Mono<Void> eraseIfRecentlyAuthenticated(UUID userId, Instant authenticatedAt) {
+    private Mono<Void> scheduleIfRecentlyAuthenticated(UUID userId, Instant authenticatedAt) {
         Instant now = clock.instant();
         if (!policy.isRecentAuthentication(authenticatedAt, now)) {
             return Mono.error(new BusinessException(BusinessErrorCode.REAUTHENTICATION_REQUIRED));
         }
-        return users.eraseAccount(userId, now.truncatedTo(ChronoUnit.MICROS))
-                .flatMap(erasure -> switch (erasure) {
-                    case UNKNOWN_USER -> Mono.<Void>error(new BusinessException(BusinessErrorCode.USER_NOT_FOUND));
-                    // ALREADY_ERASED: a concurrent request erased it first and was counted.
-                    case ERASED -> Mono.<Void>fromRunnable(activity::deletionRequested);
-                    case ALREADY_ERASED -> Mono.<Void>empty();
-                });
+        Instant requestedAt = now.truncatedTo(ChronoUnit.MICROS);
+        return users.scheduleDeletion(userId, requestedAt, requestedAt.plus(policy.gracePeriod()))
+                .switchIfEmpty(Mono.error(() -> new BusinessException(BusinessErrorCode.USER_NOT_FOUND)))
+                // False: a concurrent request scheduled it first and was counted.
+                .flatMap(scheduled -> scheduled ? Mono.<Void>fromRunnable(activity::deletionRequested) : Mono.empty());
+    }
+
+    /** Cancels a scheduled deletion, whether or not deletion is still switched on; a no-op when none is pending. */
+    public Mono<Void> cancelDeletion(UUID userId) {
+        return users.cancelDeletion(userId).then();
+    }
+
+    /** When the caller's scheduled erasure is due; empty when nothing is scheduled. */
+    public Mono<Instant> deletionDueAt(UUID userId) {
+        return users.findDeletionDueAt(userId);
     }
 
     /** Those of these ids whose account was deleted. */
@@ -128,9 +144,12 @@ public class AccountDeletionService {
     private Mono<DeletionProgress> advance(AccountDeletionJob job) {
         return Mono.defer(() -> {
                     Instant now = clock.instant();
-                    return deleteIdentity(job)
-                            .flatMap(identity -> purgeMedia(job, now)
-                                    .flatMap(media -> settle(job, now, identity, media)));
+                    return erase(job, now)
+                            .flatMap(erased -> erased.error() != null
+                                    ? settle(job, now, erased)
+                                    : deleteIdentity(job)
+                                            .flatMap(identity -> purgeMedia(job, now)
+                                                    .flatMap(media -> settle(job, now, identity, media))));
                 })
                 .doOnNext(progress -> {
                     if (progress.status() == DeletionProgress.Status.COMPLETED) {
@@ -140,6 +159,15 @@ public class AccountDeletionService {
                 .onErrorResume(error -> Mono.just(
                         new DeletionProgress(job.userId(), DeletionProgress.Status.FAILED, job.attempts() + 1,
                                 ErrorCodes.of(error))));
+    }
+
+    /** First step of the job: the grace period is over, so the tombstone is written now. */
+    private Mono<Step> erase(AccountDeletionJob job, Instant now) {
+        return users.eraseAccount(job.userId(), now.truncatedTo(ChronoUnit.MICROS))
+                .map(erasure -> erasure == AccountErasure.UNKNOWN_USER
+                        ? Step.failed(new BusinessException(BusinessErrorCode.USER_NOT_FOUND))
+                        : Step.DONE)
+                .onErrorResume(error -> Mono.just(Step.failed(error)));
     }
 
     private Mono<Step> deleteIdentity(AccountDeletionJob job) {
@@ -152,7 +180,10 @@ public class AccountDeletionService {
                 .onErrorResume(error -> Mono.just(Step.failed(error)));
     }
 
-    /** Purges on every pass; only a purge after the settle delay closes the step. */
+    /**
+     * Purges on every pass; only a purge after the settle delay closes the step. With the grace period that
+     * delay is always behind us, so a single purge, right after the tombstone of the same pass, closes it.
+     */
     private Mono<Step> purgeMedia(AccountDeletionJob job, Instant now) {
         if (job.mediaDeleted()) {
             return Mono.just(Step.DONE);
@@ -165,15 +196,15 @@ public class AccountDeletionService {
                 .onErrorResume(error -> Mono.just(Step.failed(error)));
     }
 
-    private Mono<DeletionProgress> settle(AccountDeletionJob job, Instant now, Step identity, Step media) {
-        Throwable failure = identity.error() != null ? identity.error() : media.error();
+    private Mono<DeletionProgress> settle(AccountDeletionJob job, Instant now, Step... steps) {
+        Throwable failure = Stream.of(steps).map(Step::error).filter(Objects::nonNull).findFirst().orElse(null);
         if (failure != null) {
             int attempts = job.attempts() + 1;
             String code = ErrorCodes.of(failure);
             return jobs.recordFailure(job.userId(), code, now.plus(policy.retryDelay(attempts)))
                     .thenReturn(new DeletionProgress(job.userId(), DeletionProgress.Status.FAILED, attempts, code));
         }
-        DeletionProgress.Status status = identity.done() && media.done()
+        DeletionProgress.Status status = Stream.of(steps).allMatch(Step::done)
                 ? DeletionProgress.Status.COMPLETED
                 : DeletionProgress.Status.WAITING;
         return Mono.just(new DeletionProgress(job.userId(), status, job.attempts(), null));

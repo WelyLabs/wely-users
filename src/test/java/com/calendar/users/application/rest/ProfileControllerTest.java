@@ -391,24 +391,67 @@ class ProfileControllerTest {
     void deletionEligibility_shouldAnswerAllowedTrue_whenTheAccountMayBeDeleted() {
         UUID userId = givenTheCaller();
         when(accountDeletionService.isDeletionAllowed(userId)).thenReturn(Mono.just(true));
+        when(accountDeletionService.deletionDueAt(userId)).thenReturn(Mono.empty());
 
         webTestClient.get()
                 .uri("/profile/deletion")
                 .exchange()
                 .expectStatus().isOk()
-                .expectBody().json("{\"allowed\":true}", true);
+                .expectBody().json("{\"allowed\":true,\"dueAt\":null}", true);
+    }
+
+    @Test
+    void deletionEligibility_shouldCarryTheDueDate_whenADeletionIsScheduled() {
+        UUID userId = givenTheCaller();
+        when(accountDeletionService.isDeletionAllowed(userId)).thenReturn(Mono.just(true));
+        when(accountDeletionService.deletionDueAt(userId))
+                .thenReturn(Mono.just(Instant.parse("2026-12-15T14:03:27Z")));
+
+        webTestClient.get()
+                .uri("/profile/deletion")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().json("{\"allowed\":true,\"dueAt\":\"2026-12-15T14:03:27Z\"}", true);
+    }
+
+    @Test
+    void cancelDeletion_shouldAnswer204_whenTheDeletionIsCancelled() {
+        UUID userId = givenTheCaller();
+        when(accountDeletionService.cancelDeletion(userId)).thenReturn(Mono.empty());
+
+        webTestClient.delete()
+                .uri("/profile/deletion")
+                .exchange()
+                .expectStatus().isNoContent()
+                .expectBody().isEmpty();
+
+        verify(accountDeletionService).cancelDeletion(userId);
+    }
+
+    @Test
+    void cancelDeletion_shouldAnswer502_whenTheDatabaseIsDown() {
+        UUID userId = givenTheCaller();
+        when(accountDeletionService.cancelDeletion(userId))
+                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.DATABASE_ERROR)));
+
+        webTestClient.delete()
+                .uri("/profile/deletion")
+                .exchange()
+                .expectStatus().isEqualTo(502)
+                .expectBody().jsonPath("$.code").isEqualTo("USR-TEC-002");
     }
 
     @Test
     void deletionEligibility_shouldAnswerAllowedFalse_whenDeletionIsNotAllowed() {
         UUID userId = givenTheCaller();
         when(accountDeletionService.isDeletionAllowed(userId)).thenReturn(Mono.just(false));
+        when(accountDeletionService.deletionDueAt(userId)).thenReturn(Mono.empty());
 
         webTestClient.get()
                 .uri("/profile/deletion")
                 .exchange()
                 .expectStatus().isOk()
-                .expectBody().json("{\"allowed\":false}", true);
+                .expectBody().json("{\"allowed\":false,\"dueAt\":null}", true);
     }
 
     @Test

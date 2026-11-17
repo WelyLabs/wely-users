@@ -74,8 +74,22 @@ public interface UserRepository {
     Mono<UserPreferences> updatePreferences(UUID userId, UserPreferences preferences);
 
     /**
-     * Turns the user into a tombstone, retires their handle, queues the identity and media cleanup, drops
-     * the user's other outbox events and appends USER_DELETED, all in one transaction.
+     * Marks the account for deletion at {@code dueAt} and queues the cleanup job for that date, in one
+     * transaction. True when it was scheduled now, false for a tombstone or an already scheduled deletion,
+     * empty for an unknown user.
+     */
+    Mono<Boolean> scheduleDeletion(UUID userId, Instant requestedAt, Instant dueAt);
+
+    /** Unschedules the deletion and drops its job; false when nothing was scheduled or the account is erased. */
+    Mono<Boolean> cancelDeletion(UUID userId);
+
+    /** When the scheduled erasure is due; empty when no deletion is scheduled or the user is unknown. */
+    Mono<Instant> findDeletionDueAt(UUID userId);
+
+    /**
+     * Turns the user into a tombstone, retires their handle, drops the user's other outbox events and
+     * appends USER_DELETED, all in one transaction. The cleanup job was queued when the deletion was
+     * scheduled.
      */
     Mono<AccountErasure> eraseAccount(UUID userId, Instant deletedAt);
 

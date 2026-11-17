@@ -45,11 +45,12 @@ public class UsersApplicationConfig {
             @Value("${app.account-deletion.allowed-clock-skew:60s}") Duration allowedClockSkew,
             @Value("${app.account-deletion.retry.initial-delay:5s}") Duration initialRetryDelay,
             @Value("${app.account-deletion.retry.max-delay:1h}") Duration maxRetryDelay,
-            @Value("${app.account-deletion.media-settle-delay:10m}") Duration mediaSettleDelay) {
+            @Value("${app.account-deletion.media-settle-delay:10m}") Duration mediaSettleDelay,
+            @Value("${app.account-deletion.grace-period:30d}") Duration gracePeriod) {
         Set<UUID> protectedIds = parseProtectedUserIds(protectedUserIds);
         log.info("Account deletion: {} protected account(s), {}", protectedIds.size(), enabled ? "enabled" : "disabled");
         return new AccountDeletionPolicy(enabled, protectedIds, maxAuthenticationAge, allowedClockSkew,
-                initialRetryDelay, maxRetryDelay, mediaSettleDelay);
+                initialRetryDelay, maxRetryDelay, mediaSettleDelay, gracePeriod);
     }
 
     @Bean
