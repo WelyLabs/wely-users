@@ -6,7 +6,8 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
-/** Account deletion rules: whether it is on, who may never delete, how fresh a sign-in must be, how failures back off. */
+/** Account deletion rules: whether it is on, who may never delete, how fresh a sign-in must be, how long the
+ * grace period is, how failures back off. */
 public record AccountDeletionPolicy(
         boolean enabled,
         Set<UUID> protectedUserIds,
@@ -14,7 +15,8 @@ public record AccountDeletionPolicy(
         Duration allowedClockSkew,
         Duration initialRetryDelay,
         Duration maxRetryDelay,
-        Duration mediaSettleDelay
+        Duration mediaSettleDelay,
+        Duration gracePeriod
 ) {
 
     // 2^62 is the largest power of two a long holds; anything past it is capped anyway.
@@ -27,6 +29,7 @@ public record AccountDeletionPolicy(
         requirePositiveOrZero(initialRetryDelay, "initialRetryDelay");
         requirePositiveOrZero(maxRetryDelay, "maxRetryDelay");
         requirePositiveOrZero(mediaSettleDelay, "mediaSettleDelay");
+        requirePositiveOrZero(gracePeriod, "gracePeriod");
     }
 
     public boolean isProtected(UUID userId) {

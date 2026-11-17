@@ -539,7 +539,6 @@ class R2dbcUserRepositoryAdapterTest {
         private void givenEveryStepBeforeTheEventSucceeds() {
                 when(retiredHandles.retireHandleOf(ID)).thenReturn(Mono.just(1L));
                 when(userR2dbcRepository.tombstone(ID, DELETED_AT_UTC)).thenReturn(Mono.just(1L));
-                when(accountDeletions.insertJob(ID, "kc-camille", DELETED_AT_UTC)).thenReturn(Mono.just(1L));
                 when(outboxEventStore.deleteOtherEventsOf(ID, "USER_DELETED")).thenReturn(Mono.just(3L));
         }
 
@@ -566,7 +565,7 @@ class R2dbcUserRepositoryAdapterTest {
         }
 
         @Test
-        void eraseAccount_shouldRetireTombstoneQueueDropAndAppendInThatOrder_whenTheRowIsLive() {
+        void eraseAccount_shouldRetireTombstoneDropAndAppendInThatOrder_whenTheRowIsLive() {
                 givenALiveRowLocked();
                 givenEveryStepSucceeds();
 
@@ -576,7 +575,7 @@ class R2dbcUserRepositoryAdapterTest {
                 order.verify(userR2dbcRepository).lockForDeletion(ID);
                 order.verify(retiredHandles).retireHandleOf(ID);
                 order.verify(userR2dbcRepository).tombstone(ID, DELETED_AT_UTC);
-                order.verify(accountDeletions).insertJob(ID, "kc-camille", DELETED_AT_UTC);
+                verifyNoInteractions(accountDeletions);
                 order.verify(outboxEventStore).deleteOtherEventsOf(ID, "USER_DELETED");
                 order.verify(outboxEventStore).append(eq(ID), eq("USER_DELETED"), anyString());
         }
@@ -619,20 +618,108 @@ class R2dbcUserRepositoryAdapterTest {
         // --- tombstone reads -----------------------------------------------------
 
         @Test
-        void findAccountState_shouldMapTheFlag_whenTheRowExists() {
+        void findAccountState_shouldMapTheState_whenTheRowExists() {
                 UUID live = UUID.randomUUID();
-                when(userR2dbcRepository.isDeleted(ID)).thenReturn(Mono.just(true));
-                when(userR2dbcRepository.isDeleted(live)).thenReturn(Mono.just(false));
+                UUID pending = UUID.randomUUID();
+                when(userR2dbcRepository.accountState(ID)).thenReturn(Mono.just("DELETED"));
+                when(userR2dbcRepository.accountState(live)).thenReturn(Mono.just("ACTIVE"));
+                when(userR2dbcRepository.accountState(pending)).thenReturn(Mono.just("PENDING_DELETION"));
 
                 StepVerifier.create(adapter.findAccountState(ID)).expectNext(AccountState.DELETED).expectComplete().verify(Duration.ofSeconds(10));
                 StepVerifier.create(adapter.findAccountState(live)).expectNext(AccountState.ACTIVE).expectComplete().verify(Duration.ofSeconds(10));
+                StepVerifier.create(adapter.findAccountState(pending)).expectNext(AccountState.PENDING_DELETION).expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test
         void findAccountState_shouldBeEmpty_whenTheUserIsUnknown() {
-                when(userR2dbcRepository.isDeleted(ID)).thenReturn(Mono.empty());
+                when(userR2dbcRepository.accountState(ID)).thenReturn(Mono.empty());
 
                 StepVerifier.create(adapter.findAccountState(ID)).expectComplete().verify(Duration.ofSeconds(10));
+        }
+
+        // --- scheduleDeletion ----------------------------------------------------
+
+        private static final Instant DUE_AT = DELETED_AT.plus(Duration.ofDays(30));
+        private static final OffsetDateTime DUE_AT_UTC = OffsetDateTime.ofInstant(DUE_AT, ZoneOffset.UTC);
+
+        @Test
+        void scheduleDeletion_shouldWriteTheDueDateAndQueueTheJob_whenTheRowIsLive() {
+                givenALiveRowLocked();
+                when(userR2dbcRepository.scheduleDeletion(ID, DUE_AT_UTC)).thenReturn(Mono.just(1L));
+                when(accountDeletions.insertJob(ID, "kc-camille", DELETED_AT_UTC, DUE_AT_UTC)).thenReturn(Mono.just(1L));
+
+                StepVerifier.create(adapter.scheduleDeletion(ID, DELETED_AT, DUE_AT)).expectNext(true).expectComplete().verify(Duration.ofSeconds(10));
+
+                InOrder order = inOrder(userR2dbcRepository, accountDeletions);
+                order.verify(userR2dbcRepository).scheduleDeletion(ID, DUE_AT_UTC);
+                order.verify(accountDeletions).insertJob(ID, "kc-camille", DELETED_AT_UTC, DUE_AT_UTC);
+        }
+
+        @Test
+        void scheduleDeletion_shouldAnswerFalseWithoutQueueing_whenTheRowIsATombstone() {
+                when(userR2dbcRepository.lockForDeletion(ID))
+                                .thenReturn(Mono.just(new DeletionLockRow(ID, "deleted:" + ID, DELETED_AT_UTC)));
+
+                StepVerifier.create(adapter.scheduleDeletion(ID, DELETED_AT, DUE_AT)).expectNext(false).expectComplete().verify(Duration.ofSeconds(10));
+
+                verifyNoInteractions(accountDeletions);
+        }
+
+        @Test
+        void scheduleDeletion_shouldAnswerFalseWithoutQueueing_whenADeletionIsAlreadyScheduled() {
+                givenALiveRowLocked();
+                when(userR2dbcRepository.scheduleDeletion(ID, DUE_AT_UTC)).thenReturn(Mono.just(0L));
+
+                StepVerifier.create(adapter.scheduleDeletion(ID, DELETED_AT, DUE_AT)).expectNext(false).expectComplete().verify(Duration.ofSeconds(10));
+
+                verifyNoInteractions(accountDeletions);
+        }
+
+        @Test
+        void scheduleDeletion_shouldBeEmpty_whenNoRowIsLocked() {
+                when(userR2dbcRepository.lockForDeletion(ID)).thenReturn(Mono.empty());
+
+                StepVerifier.create(adapter.scheduleDeletion(ID, DELETED_AT, DUE_AT)).expectComplete().verify(Duration.ofSeconds(10));
+
+                verifyNoInteractions(accountDeletions);
+        }
+
+        // --- cancelDeletion ------------------------------------------------------
+
+        @Test
+        void cancelDeletion_shouldClearTheDueDateAndDropTheJob_whenADeletionIsPending() {
+                when(userR2dbcRepository.cancelDeletion(ID)).thenReturn(Mono.just(1L));
+                when(accountDeletions.deleteById(ID)).thenReturn(Mono.empty());
+
+                StepVerifier.create(adapter.cancelDeletion(ID)).expectNext(true).expectComplete().verify(Duration.ofSeconds(10));
+
+                verify(accountDeletions).deleteById(ID);
+        }
+
+        @Test
+        void cancelDeletion_shouldKeepTheJob_whenNoDeletionIsPending() {
+                // Nothing to undo, or the erasure already ran: the job must survive either way.
+                when(userR2dbcRepository.cancelDeletion(ID)).thenReturn(Mono.just(0L));
+
+                StepVerifier.create(adapter.cancelDeletion(ID)).expectNext(false).expectComplete().verify(Duration.ofSeconds(10));
+
+                verifyNoInteractions(accountDeletions);
+        }
+
+        // --- findDeletionDueAt ---------------------------------------------------
+
+        @Test
+        void findDeletionDueAt_shouldReturnTheInstant_whenADeletionIsScheduled() {
+                when(userR2dbcRepository.findDeletionDueAt(ID)).thenReturn(Mono.just(DUE_AT_UTC));
+
+                StepVerifier.create(adapter.findDeletionDueAt(ID)).expectNext(DUE_AT).expectComplete().verify(Duration.ofSeconds(10));
+        }
+
+        @Test
+        void findDeletionDueAt_shouldBeEmpty_whenNoneIsScheduled() {
+                when(userR2dbcRepository.findDeletionDueAt(ID)).thenReturn(Mono.empty());
+
+                StepVerifier.create(adapter.findDeletionDueAt(ID)).expectComplete().verify(Duration.ofSeconds(10));
         }
 
         @Test

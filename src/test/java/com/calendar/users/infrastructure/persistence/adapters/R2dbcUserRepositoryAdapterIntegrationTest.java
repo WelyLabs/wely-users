@@ -669,12 +669,24 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     }
 
     @Test
-    @DisplayName("the job keeps the original subject id, the only copy left once the row is a tombstone")
-    void eraseAccount_shouldQueueTheJobWithTheOriginalSubjectId_whenTheAccountIsErased() {
+    @DisplayName("the job is queued when the deletion is scheduled, not when it runs")
+    void eraseAccount_shouldNotQueueAJob_whenTheAccountIsErased() {
         BusinessUser user = adapter.save(aUser("alice", 1111), "kc-alice").block();
-        Instant deletedAt = now();
 
-        adapter.eraseAccount(user.id(), deletedAt).block();
+        adapter.eraseAccount(user.id(), now()).block();
+
+        assertThat(count("account_deletion")).isZero();
+    }
+
+    @Test
+    @DisplayName("the job keeps the original subject id, the only copy left once the row is a tombstone")
+    void scheduleDeletion_shouldQueueTheJobWithTheOriginalSubjectIdDueAtTheEndOfTheGracePeriod() {
+        BusinessUser user = adapter.save(aUser("alice", 1111), "kc-alice").block();
+        Instant requestedAt = now();
+        Instant dueAt = requestedAt.plus(Duration.ofDays(30));
+
+        StepVerifier.create(adapter.scheduleDeletion(user.id(), requestedAt, dueAt))
+                .expectNext(true).expectComplete().verify(Duration.ofSeconds(10));
 
         Map<String, Object> job = databaseClient.sql("SELECT * FROM account_deletion WHERE user_id = :id")
                 .bind("id", user.id())
@@ -682,11 +694,111 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
                 .one()
                 .block();
         assertThat(job.get("subject_id")).isEqualTo("kc-alice");
-        assertThat(((OffsetDateTime) job.get("requested_at")).toInstant()).isEqualTo(deletedAt);
-        assertThat(((OffsetDateTime) job.get("next_attempt_at")).toInstant()).isEqualTo(deletedAt);
+        assertThat(((OffsetDateTime) job.get("requested_at")).toInstant()).isEqualTo(requestedAt);
+        assertThat(((OffsetDateTime) job.get("next_attempt_at")).toInstant()).isEqualTo(dueAt);
         assertThat(job.get("identity_deleted_at")).isNull();
         assertThat(job.get("media_deleted_at")).isNull();
         assertThat(job.get("attempts")).isEqualTo(0);
+        assertThat(((OffsetDateTime) rowOf(user.id()).get("deletion_due_at")).toInstant()).isEqualTo(dueAt);
+    }
+
+    @Test
+    @DisplayName("a scheduled account stays live and visible until the grace period runs out")
+    void scheduleDeletion_shouldLeaveTheProfileUntouched_whenScheduled() {
+        BusinessUser user = aFullUser("alice", 1111, "kc-alice");
+        Instant requestedAt = now();
+
+        adapter.scheduleDeletion(user.id(), requestedAt, requestedAt.plus(Duration.ofDays(30))).block();
+
+        assertThat(rowOf(user.id()).get("deleted_at")).isNull();
+        assertThat(rowOf(user.id()).get("first_name")).isEqualTo("First");
+        StepVerifier.create(adapter.findAccountState(user.id()))
+                .expectNext(AccountState.PENDING_DELETION).expectComplete().verify(Duration.ofSeconds(10));
+    }
+
+    @Test
+    @DisplayName("a second request leaves the first due date and job alone")
+    void scheduleDeletion_shouldAnswerFalse_whenADeletionIsAlreadyScheduled() {
+        BusinessUser user = adapter.save(aUser("alice", 1111), "kc-alice").block();
+        Instant requestedAt = now();
+        Instant dueAt = requestedAt.plus(Duration.ofDays(30));
+        adapter.scheduleDeletion(user.id(), requestedAt, dueAt).block();
+
+        StepVerifier.create(adapter.scheduleDeletion(user.id(), requestedAt.plusSeconds(60), dueAt.plusSeconds(60)))
+                .expectNext(false).expectComplete().verify(Duration.ofSeconds(10));
+
+        assertThat(((OffsetDateTime) rowOf(user.id()).get("deletion_due_at")).toInstant()).isEqualTo(dueAt);
+        assertThat(count("account_deletion")).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("the erasure clears the schedule, which app_user_deletion_due_check forbids on a tombstone")
+    void eraseAccount_shouldClearTheDueDate_whenTheDeletionWasScheduled() {
+        BusinessUser user = adapter.save(aUser("alice", 1111), "kc-alice").block();
+        Instant requestedAt = now();
+        adapter.scheduleDeletion(user.id(), requestedAt, requestedAt.plus(Duration.ofDays(30))).block();
+
+        StepVerifier.create(adapter.eraseAccount(user.id(), now()))
+                .expectNext(AccountErasure.ERASED).expectComplete().verify(Duration.ofSeconds(10));
+
+        assertThat(rowOf(user.id()).get("deletion_due_at")).isNull();
+        // The job queued at scheduling is the one the worker is finishing.
+        assertThat(count("account_deletion")).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("cancelling clears the due date and drops the job, so nothing is ever erased")
+    void cancelDeletion_shouldUnscheduleAndDropTheJob_whenADeletionIsPending() {
+        BusinessUser user = adapter.save(aUser("alice", 1111), "kc-alice").block();
+        Instant requestedAt = now();
+        adapter.scheduleDeletion(user.id(), requestedAt, requestedAt.plus(Duration.ofDays(30))).block();
+
+        StepVerifier.create(adapter.cancelDeletion(user.id())).expectNext(true).expectComplete().verify(Duration.ofSeconds(10));
+
+        assertThat(rowOf(user.id()).get("deletion_due_at")).isNull();
+        assertThat(count("account_deletion")).isZero();
+        StepVerifier.create(adapter.findAccountState(user.id()))
+                .expectNext(AccountState.ACTIVE).expectComplete().verify(Duration.ofSeconds(10));
+    }
+
+    @Test
+    @DisplayName("cancelling after the erasure changes nothing: the job must still finish")
+    void cancelDeletion_shouldAnswerFalseAndKeepTheJob_whenTheAccountIsAlreadyATombstone() {
+        BusinessUser user = adapter.save(aUser("alice", 1111), "kc-alice").block();
+        Instant requestedAt = now();
+        adapter.scheduleDeletion(user.id(), requestedAt, requestedAt.plus(Duration.ofDays(30))).block();
+        adapter.eraseAccount(user.id(), now()).block();
+
+        StepVerifier.create(adapter.cancelDeletion(user.id())).expectNext(false).expectComplete().verify(Duration.ofSeconds(10));
+
+        assertThat(count("account_deletion")).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("the due date is readable while pending, and gone once cancelled")
+    void findDeletionDueAt_shouldReturnTheDueDateUntilItIsCancelled() {
+        BusinessUser user = adapter.save(aUser("alice", 1111), "kc-alice").block();
+        Instant requestedAt = now();
+        Instant dueAt = requestedAt.plus(Duration.ofDays(30));
+
+        StepVerifier.create(adapter.findDeletionDueAt(user.id())).expectComplete().verify(Duration.ofSeconds(10));
+
+        adapter.scheduleDeletion(user.id(), requestedAt, dueAt).block();
+        StepVerifier.create(adapter.findDeletionDueAt(user.id())).expectNext(dueAt).expectComplete().verify(Duration.ofSeconds(10));
+
+        adapter.cancelDeletion(user.id()).block();
+        StepVerifier.create(adapter.findDeletionDueAt(user.id())).expectComplete().verify(Duration.ofSeconds(10));
+    }
+
+    @Test
+    @DisplayName("an unknown user cannot be scheduled: the row lock finds nothing")
+    void scheduleDeletion_shouldBeEmpty_whenTheUserIsUnknown() {
+        Instant requestedAt = now();
+
+        StepVerifier.create(adapter.scheduleDeletion(UUID.randomUUID(), requestedAt, requestedAt.plusSeconds(60)))
+                .expectComplete().verify(Duration.ofSeconds(10));
+
+        assertThat(count("account_deletion")).isZero();
     }
 
     @Test

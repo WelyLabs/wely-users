@@ -20,6 +20,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Flux;
@@ -38,6 +39,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -53,6 +55,8 @@ class AccountDeletionServiceTest {
     private static final Instant NOW = Instant.parse("2026-10-15T14:03:27.123456789Z");
     private static final Instant SIGNED_IN = NOW.minusSeconds(30);
     private static final String AVATARS = "avatars/" + USER + "/";
+    private static final Duration GRACE = Duration.ofDays(30);
+    private static final Instant DUE_AT = Instant.parse("2026-10-15T14:03:27.123456Z").plus(GRACE);
 
     @Mock private UserRepository users;
     @Mock private AccountDeletionRepository jobs;
@@ -64,7 +68,7 @@ class AccountDeletionServiceTest {
 
     private static AccountDeletionPolicy policy(boolean enabled) {
         return new AccountDeletionPolicy(enabled, Set.of(DEMO), Duration.ofMinutes(5), Duration.ofSeconds(60),
-                Duration.ofSeconds(5), Duration.ofHours(1), Duration.ofMinutes(10));
+                Duration.ofSeconds(5), Duration.ofHours(1), Duration.ofMinutes(10), GRACE);
     }
 
     private AccountDeletionService switchedOff() {
@@ -86,6 +90,10 @@ class AccountDeletionServiceTest {
 
     private void givenALiveAccount() {
         when(users.findAccountState(USER)).thenReturn(Mono.just(AccountState.ACTIVE));
+    }
+
+    private void givenTheDeletionIsScheduled() {
+        when(users.scheduleDeletion(eq(USER), any(), any())).thenReturn(Mono.just(true));
     }
 
     // --- requestDeletion ------------------------------------------------------
@@ -132,7 +140,7 @@ class AccountDeletionServiceTest {
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.REAUTHENTICATION_REQUIRED))
                 .verify(Duration.ofSeconds(10));
 
-        verify(users, never()).eraseAccount(any(), any());
+        verify(users, never()).scheduleDeletion(any(), any(), any());
     }
 
     @Test
@@ -143,13 +151,13 @@ class AccountDeletionServiceTest {
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.REAUTHENTICATION_REQUIRED))
                 .verify(Duration.ofSeconds(10));
 
-        verify(users, never()).eraseAccount(any(), any());
+        verify(users, never()).scheduleDeletion(any(), any(), any());
     }
 
     @Test
     void requestDeletion_shouldAccept_whenAuthTimeIsExactlyFiveMinutesOld() {
         givenALiveAccount();
-        when(users.eraseAccount(eq(USER), any())).thenReturn(Mono.just(AccountErasure.ERASED));
+        givenTheDeletionIsScheduled();
 
         StepVerifier.create(service.requestDeletion(USER, NOW.minusSeconds(300))).expectComplete().verify(Duration.ofSeconds(10));
     }
@@ -166,32 +174,33 @@ class AccountDeletionServiceTest {
     @Test
     void requestDeletion_shouldAccept_whenAuthTimeIsAheadWithinTheSkew() {
         givenALiveAccount();
-        when(users.eraseAccount(eq(USER), any())).thenReturn(Mono.just(AccountErasure.ERASED));
+        givenTheDeletionIsScheduled();
 
         StepVerifier.create(service.requestDeletion(USER, NOW.plusSeconds(60))).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     @Test
-    void requestDeletion_shouldEraseWithTheClockInstantTruncatedToMicros_whenAuthenticationIsRecent() {
+    void requestDeletion_shouldScheduleThirtyDaysAheadOfTheClockInstantTruncatedToMicros_whenAuthenticationIsRecent() {
         givenALiveAccount();
-        when(users.eraseAccount(eq(USER), any())).thenReturn(Mono.just(AccountErasure.ERASED));
+        givenTheDeletionIsScheduled();
 
         StepVerifier.create(service.requestDeletion(USER, SIGNED_IN)).expectComplete().verify(Duration.ofSeconds(10));
 
-        verify(users).eraseAccount(USER, Instant.parse("2026-10-15T14:03:27.123456Z"));
+        verify(users).scheduleDeletion(USER, Instant.parse("2026-10-15T14:03:27.123456Z"), DUE_AT);
+        verify(users, never()).eraseAccount(any(), any());
 
         verify(activity).deletionRequested();
     }
 
     @Test
-    void requestDeletion_shouldComplete_whenTheAccountIsAlreadyErased() {
-        // Two requests racing past the state check: the second finds the tombstone under the row lock.
+    void requestDeletion_shouldComplete_whenTheDeletionWasJustScheduledByAConcurrentRequest() {
+        // Two requests racing past the state check: the second finds the schedule under the row lock.
         givenALiveAccount();
-        when(users.eraseAccount(eq(USER), any())).thenReturn(Mono.just(AccountErasure.ALREADY_ERASED));
+        when(users.scheduleDeletion(eq(USER), any(), any())).thenReturn(Mono.just(false));
 
         StepVerifier.create(service.requestDeletion(USER, SIGNED_IN)).expectComplete().verify(Duration.ofSeconds(10));
 
-        // The request that erased it first was the one counted.
+        // The request that scheduled it first was the one counted.
         verify(activity, never()).deletionRequested();
     }
 
@@ -202,7 +211,7 @@ class AccountDeletionServiceTest {
 
         StepVerifier.create(service.requestDeletion(USER, NOW.minus(Duration.ofHours(1)))).expectComplete().verify(Duration.ofSeconds(10));
 
-        verify(users, never()).eraseAccount(any(), any());
+        verify(users, never()).scheduleDeletion(any(), any(), any());
 
         verify(activity, never()).deletionRequested();
     }
@@ -210,7 +219,7 @@ class AccountDeletionServiceTest {
     @Test
     void requestDeletion_shouldFailWithUserNotFound_whenNoRowExists() {
         when(users.findAccountState(USER)).thenReturn(Mono.empty());
-        when(users.eraseAccount(eq(USER), any())).thenReturn(Mono.just(AccountErasure.UNKNOWN_USER));
+        when(users.scheduleDeletion(eq(USER), any(), any())).thenReturn(Mono.empty());
 
         StepVerifier.create(service.requestDeletion(USER, SIGNED_IN))
                 .expectErrorMatches(error -> isBusiness(error, BusinessErrorCode.USER_NOT_FOUND))
@@ -220,9 +229,9 @@ class AccountDeletionServiceTest {
     }
 
     @Test
-    void requestDeletion_shouldPropagateATechnicalFailure_whenTheErasureFails() {
+    void requestDeletion_shouldPropagateATechnicalFailure_whenTheSchedulingFails() {
         givenALiveAccount();
-        when(users.eraseAccount(eq(USER), any()))
+        when(users.scheduleDeletion(eq(USER), any(), any()))
                 .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.DATABASE_ERROR)));
 
         StepVerifier.create(service.requestDeletion(USER, SIGNED_IN))
@@ -235,7 +244,7 @@ class AccountDeletionServiceTest {
     @Test
     void requestDeletion_shouldNotCallTheIdentityProviderOrMediaStore_whenAccepted() {
         givenALiveAccount();
-        when(users.eraseAccount(eq(USER), any())).thenReturn(Mono.just(AccountErasure.ERASED));
+        givenTheDeletionIsScheduled();
 
         StepVerifier.create(service.requestDeletion(USER, SIGNED_IN)).expectComplete().verify(Duration.ofSeconds(10));
 
@@ -251,6 +260,69 @@ class AccountDeletionServiceTest {
         lazy.requestDeletion(USER, SIGNED_IN);
 
         verifyNoInteractions(clock, users);
+    }
+
+    @Test
+    void requestDeletion_shouldComplete_whenADeletionIsAlreadyScheduled() {
+        // The user asked twice: the second request must not move the due date.
+        when(users.findAccountState(USER)).thenReturn(Mono.just(AccountState.PENDING_DELETION));
+
+        StepVerifier.create(service.requestDeletion(USER, SIGNED_IN)).expectComplete().verify(Duration.ofSeconds(10));
+
+        verify(users, never()).scheduleDeletion(any(), any(), any());
+
+        verify(activity, never()).deletionRequested();
+    }
+
+    // --- cancelDeletion -------------------------------------------------------
+
+    @Test
+    void cancelDeletion_shouldUnschedule_whenADeletionIsPending() {
+        when(users.cancelDeletion(USER)).thenReturn(Mono.just(true));
+
+        StepVerifier.create(service.cancelDeletion(USER)).expectComplete().verify(Duration.ofSeconds(10));
+
+        verify(users).cancelDeletion(USER);
+    }
+
+    @Test
+    void cancelDeletion_shouldComplete_whenNothingIsScheduled() {
+        when(users.cancelDeletion(USER)).thenReturn(Mono.just(false));
+
+        StepVerifier.create(service.cancelDeletion(USER)).expectComplete().verify(Duration.ofSeconds(10));
+    }
+
+    @Test
+    void cancelDeletion_shouldStillUnschedule_whenDeletionIsSwitchedOff() {
+        // The switch must never trap a user inside a deletion they asked to cancel.
+        when(users.cancelDeletion(USER)).thenReturn(Mono.just(true));
+
+        StepVerifier.create(switchedOff().cancelDeletion(USER)).expectComplete().verify(Duration.ofSeconds(10));
+    }
+
+    @Test
+    void cancelDeletion_shouldPropagateATechnicalFailure_whenTheDatabaseIsDown() {
+        when(users.cancelDeletion(USER))
+                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.DATABASE_ERROR)));
+
+        StepVerifier.create(service.cancelDeletion(USER))
+                .expectError(TechnicalException.class).verify(Duration.ofSeconds(10));
+    }
+
+    // --- deletionDueAt --------------------------------------------------------
+
+    @Test
+    void deletionDueAt_shouldReturnTheDueDate_whenADeletionIsScheduled() {
+        when(users.findDeletionDueAt(USER)).thenReturn(Mono.just(DUE_AT));
+
+        StepVerifier.create(service.deletionDueAt(USER)).expectNext(DUE_AT).expectComplete().verify(Duration.ofSeconds(10));
+    }
+
+    @Test
+    void deletionDueAt_shouldBeEmpty_whenNothingIsScheduled() {
+        when(users.findDeletionDueAt(USER)).thenReturn(Mono.empty());
+
+        StepVerifier.create(service.deletionDueAt(USER)).expectComplete().verify(Duration.ofSeconds(10));
     }
 
     // --- isDeletionAllowed ----------------------------------------------------
@@ -274,6 +346,13 @@ class AccountDeletionServiceTest {
     @Test
     void isDeletionAllowed_shouldAnswerTrue_whenTheAccountIsActive() {
         givenALiveAccount();
+
+        StepVerifier.create(service.isDeletionAllowed(USER)).expectNext(true).expectComplete().verify(Duration.ofSeconds(10));
+    }
+
+    @Test
+    void isDeletionAllowed_shouldAnswerTrue_whenADeletionIsAlreadyScheduled() {
+        when(users.findAccountState(USER)).thenReturn(Mono.just(AccountState.PENDING_DELETION));
 
         StepVerifier.create(service.isDeletionAllowed(USER)).expectNext(true).expectComplete().verify(Duration.ofSeconds(10));
     }
@@ -363,6 +442,8 @@ class AccountDeletionServiceTest {
 
     private void givenTheJobs(AccountDeletionJob... due) {
         when(jobs.claimDue(20)).thenReturn(Flux.just(due));
+        // The grace period is over when a job is claimed: the worker erases before anything else.
+        when(users.eraseAccount(any(), any())).thenReturn(Mono.just(AccountErasure.ERASED));
     }
 
     @Test
@@ -566,6 +647,66 @@ class AccountDeletionServiceTest {
 
         // The completed job only, not the failed one.
         verify(activity, times(1)).deletionCompleted();
+    }
+
+    @Test
+    void processDueDeletions_shouldEraseTheAccountBeforeTheIdentity_whenTheJobBecomesDue() {
+        givenTheJobs(job(NOW.minus(Duration.ofDays(30)), false, false, 0));
+        when(identityProvider.deleteSubject("kc-1")).thenReturn(Mono.empty());
+        when(jobs.markIdentityDeleted(USER)).thenReturn(Mono.empty());
+        when(mediaStore.deletePrefix(AVATARS)).thenReturn(Mono.empty());
+        when(jobs.markMediaDeleted(USER)).thenReturn(Mono.empty());
+
+        StepVerifier.create(service.processDueDeletions(20))
+                .expectNext(new DeletionProgress(USER, DeletionProgress.Status.COMPLETED, 0, null))
+                .expectComplete().verify(Duration.ofSeconds(10));
+
+        InOrder order = inOrder(users, identityProvider);
+        order.verify(users).eraseAccount(USER, Instant.parse("2026-10-15T14:03:27.123456Z"));
+        order.verify(identityProvider).deleteSubject("kc-1");
+    }
+
+    @Test
+    void processDueDeletions_shouldGoOn_whenTheAccountIsAlreadyATombstone() {
+        // A pass that erased and then failed later: the second pass must not stop on the tombstone.
+        givenTheJobs(job(NOW.minus(Duration.ofDays(30)), false, false, 1));
+        when(users.eraseAccount(any(), any())).thenReturn(Mono.just(AccountErasure.ALREADY_ERASED));
+        when(identityProvider.deleteSubject("kc-1")).thenReturn(Mono.empty());
+        when(jobs.markIdentityDeleted(USER)).thenReturn(Mono.empty());
+        when(mediaStore.deletePrefix(AVATARS)).thenReturn(Mono.empty());
+        when(jobs.markMediaDeleted(USER)).thenReturn(Mono.empty());
+
+        StepVerifier.create(service.processDueDeletions(20))
+                .expectNext(new DeletionProgress(USER, DeletionProgress.Status.COMPLETED, 1, null))
+                .expectComplete().verify(Duration.ofSeconds(10));
+    }
+
+    @Test
+    void processDueDeletions_shouldRecordAFailureAndTouchNothingElse_whenTheErasureFails() {
+        givenTheJobs(job(NOW.minus(Duration.ofDays(30)), false, false, 0));
+        when(users.eraseAccount(any(), any()))
+                .thenReturn(Mono.error(new TechnicalException(TechnicalErrorCode.DATABASE_ERROR)));
+        when(jobs.recordFailure(eq(USER), anyString(), any())).thenReturn(Mono.empty());
+
+        StepVerifier.create(service.processDueDeletions(20))
+                .expectNext(new DeletionProgress(USER, DeletionProgress.Status.FAILED, 1, "USR-TEC-002"))
+                .expectComplete().verify(Duration.ofSeconds(10));
+
+        verifyNoInteractions(identityProvider, mediaStore);
+        verify(jobs).recordFailure(USER, "USR-TEC-002", NOW.plusSeconds(5));
+    }
+
+    @Test
+    void processDueDeletions_shouldRecordAFailure_whenTheUserRowHasVanished() {
+        givenTheJobs(job(NOW.minus(Duration.ofDays(30)), false, false, 0));
+        when(users.eraseAccount(any(), any())).thenReturn(Mono.just(AccountErasure.UNKNOWN_USER));
+        when(jobs.recordFailure(eq(USER), anyString(), any())).thenReturn(Mono.empty());
+
+        StepVerifier.create(service.processDueDeletions(20))
+                .expectNext(new DeletionProgress(USER, DeletionProgress.Status.FAILED, 1, "USR-BUS-001"))
+                .expectComplete().verify(Duration.ofSeconds(10));
+
+        verifyNoInteractions(identityProvider, mediaStore);
     }
 
     @Test

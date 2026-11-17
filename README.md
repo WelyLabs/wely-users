@@ -165,8 +165,9 @@ Toutes les routes sont préfixées par `/user-service` et exposées via la gatew
 | `POST` | `/profile/provision` | `X-Internal-Secret` | **Interne.** Crée l'utilisateur à sa première connexion, depuis l'Action post-login d'Auth0. Idempotent sur le `subjectId` |
 | `POST` | `/profile/picture` | JWT | Remplace la photo de l'utilisateur courant (multipart `file`, 5 Mo au plus) et répond une URL signée |
 | `POST` | `/avatars` | JWT | URL des photos de 100 utilisateurs au plus, `{ userId: url }` ; les utilisateurs sans photo sont absents |
-| `DELETE` | `/profile` | JWT with a recent `authenticatedAt` | Deletes the caller's account: **202**, no body. 403 `USR-BUS-014` while deletion is switched off, 403 `USR-BUS-011` for a demo account, 202 again for an account already deleted, 403 `USR-BUS-010` when the last sign-in is over 5 min old or unknown, 404 for an unknown id. See [Account deletion](#account-deletion) |
-| `GET` | `/profile/deletion` | JWT | `{"allowed": boolean}`: false for a demo account, so the web app never sends the user through a new sign-in for nothing; 403 `USR-BUS-014` while deletion is switched off |
+| `DELETE` | `/profile` | JWT with a recent `authenticatedAt` | Schedules the deletion of the caller's account 30 days out: **202**, no body. 403 `USR-BUS-014` while deletion is switched off, 403 `USR-BUS-011` for a demo account, 202 again for an account already deleted or already scheduled, 403 `USR-BUS-010` when the last sign-in is over 30 min old or unknown, 404 for an unknown id. See [Account deletion](#account-deletion) |
+| `GET` | `/profile/deletion` | JWT | `{"allowed": boolean, "dueAt": instant}`: `allowed` false for a demo account, so the web app never sends the user through a new sign-in for nothing; `dueAt` is the scheduled erasure, null when none is pending; 403 `USR-BUS-014` while deletion is switched off |
+| `DELETE` | `/profile/deletion` | JWT | Cancels a scheduled deletion: **204**, no body. A no-op when none is pending, and allowed even while deletion is switched off |
 | `POST` | `/users/deleted` | JWT | `{"userIds": [...]}` (100 at most) → `{"deletedIds": [...]}`, the ids whose account was deleted, for the "deleted user" label |
 | `GET` | `/internal/deleted-users?after=&limit=` | `X-Internal-Secret` (`DELETED_USERS_READER_SECRET`) | **Internal.** Every deleted account, `{"items": [{"userId", "deletedAt"}], "next": cursor}` (500 per page, opaque cursor, `next` null on the last page), for the other services' reconciliation. Blocked by the gateway, refused while the secret is unset |
 
@@ -298,12 +299,12 @@ Written with `PUT /profile/registration`, and with every profile update of a use
 
 ## Account deletion
 
-`DELETE /profile` keeps the row as a **tombstone**: the `businessId` survives, because every other service keeps it as a pseudonym, and every personal field is cleared.
+`DELETE /profile` **schedules** the deletion 30 days out (`app.account-deletion.grace-period`); nothing is erased before that date. Until then the account stays whole and visible to everyone else, and any sign-in cancels the deletion — the web app calls `DELETE /profile/deletion` on load. At the end of the grace period the row becomes a **tombstone**: the `businessId` survives, because every other service keeps it as a pseudonym, and every personal field is cleared.
 
-1. **Checks, in this order.** The switch first: unless `ACCOUNT_DELETION_ENABLED` is `true`, 403 `USR-BUS-014` on both `DELETE /profile` and `GET /profile/deletion`, without reading the account. Then the demo guard (`ACCOUNT_DELETION_PROTECTED_USER_IDS`, 403 `USR-BUS-011`), so a demo visitor is never made to sign in again for nothing. Then an account already deleted answers 202: a retry after a lost 202 must not send the user to a sign-in that can no longer succeed. Then the access token's `authenticatedAt` claim (epoch seconds, set by the Auth0 Action: Auth0 puts no `auth_time` in access tokens) must be at most 5 min old and at most 60 s ahead, or 403 `USR-BUS-010` — 403 and not 401, because the web app answers any 401 with a plain login. A missing claim fails closed.
-2. **One R2DBC transaction** (`R2dbcUserRepositoryAdapter.eraseAccount`): lock the row, retire the handle, write the tombstone, queue an `account_deletion` job holding the original subject id, delete the user's other outbox rows (pending, parked or published), append `<env>.user-deleted`. Then 202.
-3. **From that commit on**, the original subject id matches no live user; updates match no row, so no `<env>.user-modified` can follow `<env>.user-deleted`.
-4. **`AccountDeletionWorker`** (a 5 s loop shaped like the relay) ends the user's Auth0 sessions (`DELETE /api/v2/users/{id}/sessions`; a 403, when the plan or the scope lacks it, is tolerated), then deletes them (a 404 counts as done), and purges `avatars/<businessId>/` through wely-media — again 10 min later, for an upload that raced the deletion. Jobs are leased, not locked, so no transaction stays open across HTTP calls. Failures back off from 5 s to 1 h and are never parked; the log turns ERROR from the 5th.
+1. **Checks, in this order.** The switch first: unless `ACCOUNT_DELETION_ENABLED` is `true`, 403 `USR-BUS-014` on both `DELETE /profile` and `GET /profile/deletion`, without reading the account. Then the demo guard (`ACCOUNT_DELETION_PROTECTED_USER_IDS`, 403 `USR-BUS-011`), so a demo visitor is never made to sign in again for nothing. Then an account already deleted, or already scheduled, answers 202: a retry after a lost 202 must not send the user to a sign-in that can no longer succeed, and a second request must not move the due date. Then the access token's `authenticatedAt` claim (epoch seconds, set by the Auth0 Action: Auth0 puts no `auth_time` in access tokens) must be at most 30 min old and at most 60 s ahead, or 403 `USR-BUS-010` — 403 and not 401, because the web app answers any 401 with a plain login. A missing claim fails closed.
+2. **One R2DBC transaction** (`R2dbcUserRepositoryAdapter.scheduleDeletion`): lock the row, write `app_user.deletion_due_at`, queue an `account_deletion` job holding the original subject id with `next_attempt_at` set to the due date — `claimDue` filters on it, so the grace period needs no scheduler of its own. Then 202.
+3. **Cancellation** (`DELETE /profile/deletion`, 204): clears `deletion_due_at` and drops the job, in one transaction. It matches nothing once the erasure has run, so a started deletion is never half-undone.
+4. **`AccountDeletionWorker`** (a 5 s loop shaped like the relay) picks the job up once it is due and erases first, in one R2DBC transaction (`eraseAccount`): lock the row, retire the handle, write the tombstone, delete the user's other outbox rows (pending, parked or published), append `<env>.user-deleted`. From that commit on, the original subject id matches no live user; updates match no row, so no `<env>.user-modified` can follow `<env>.user-deleted`. It then ends the user's Auth0 sessions (`DELETE /api/v2/users/{id}/sessions`; a 403, when the plan or the scope lacks it, is tolerated), deletes them (a 404 counts as done), and purges `avatars/<businessId>/` through wely-media. The 10 min settle delay, counted from the request, is always behind us now, so the purge that follows the tombstone closes the step. Jobs are leased, not locked, so no transaction stays open across HTTP calls. Failures back off from 5 s to 1 h and are never parked; the log turns ERROR from the 5th.
 
 | Column | Tombstone |
 |---|---|
@@ -312,6 +313,7 @@ Written with `PUT /profile/registration`, and with every profile update of a use
 | names, picture, bio, interests | cleared |
 | `theme`, `joined_date` | `SYSTEM`, the deletion time |
 | `deleted_at` | the deletion time (null for a live user) |
+| `deletion_due_at` | when a scheduled erasure is due; null for a live account with no deletion pending, and cleared by the erasure itself (`app_user_deletion_due_check`) |
 
 `app_user_tombstone_check` makes "no personal field survives" a database invariant. The old handle is kept only as a SHA-256 digest of `lower(name)#hashtag` in `retired_handle`, computed by the one SQL function `retired_handle_digest` (V6): allocation draws another hashtag and a rename answers `USERNAME_TAKEN`, so a handle is never handed out again. The rename check runs only when the name changes, after the UPDATE, so it sees a concurrent deletion that committed while the UPDATE waited on the unique index.
 
@@ -369,7 +371,7 @@ Deux hiérarchies distinctes — métier et technique — traduites par `GlobalE
 | `USR-BUS-007` | 413 | Photo de plus de 5 Mo |
 | `USR-BUS-008` | 400 | Présentation hors limites (bio, centres d'intérêt) |
 | `USR-BUS-009` | 403 | Profil d'un utilisateur qui n'est pas un ami |
-| `USR-BUS-010` | 403 | Account deletion needs a sign-in less than 5 min old |
+| `USR-BUS-010` | 403 | Account deletion needs a sign-in less than 30 min old |
 | `USR-BUS-011` | 403 | Demo account, which cannot be deleted |
 | `USR-BUS-012` | 410 | The account was deleted |
 | `USR-BUS-013` | 400 | Deleted-users cursor not issued by this service |

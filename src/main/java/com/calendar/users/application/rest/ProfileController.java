@@ -120,7 +120,7 @@ public class ProfileController {
         return userService.completeRegistration(userId, registrationRequestMapper.toRegistration(request));
     }
 
-    /** Deletes the caller's account; identity and sign-in time come from the token only. */
+    /** Schedules the deletion of the caller's account; identity and sign-in time come from the token only. */
     @DeleteMapping
     public Mono<ResponseEntity<Void>> deleteAccount(@AuthenticationPrincipal Jwt jwt) {
         UUID userId = UUID.fromString(jwt.getClaimAsString(BUSINESS_ID));
@@ -129,12 +129,27 @@ public class ProfileController {
                 .then(Mono.fromSupplier(() -> ResponseEntity.accepted().<Void>build()));
     }
 
-    /** Whether the caller may delete their account, so the web app never sends a demo visitor to sign in again. */
+    /**
+     * Whether the caller may delete their account, so the web app never sends a demo visitor to sign in
+     * again, and when a scheduled erasure is due, so it can tell them it is still pending.
+     */
     @GetMapping("deletion")
     public Mono<DeletionEligibilityResponse> deletionEligibility(@AuthenticationPrincipal Jwt jwt) {
         UUID userId = UUID.fromString(jwt.getClaimAsString(BUSINESS_ID));
 
-        return accountDeletionService.isDeletionAllowed(userId).map(DeletionEligibilityResponse::new);
+        return accountDeletionService.isDeletionAllowed(userId)
+                .flatMap(allowed -> accountDeletionService.deletionDueAt(userId)
+                        .map(dueAt -> new DeletionEligibilityResponse(allowed, dueAt))
+                        .defaultIfEmpty(new DeletionEligibilityResponse(allowed, null)));
+    }
+
+    /** Cancels the caller's scheduled deletion; the web app calls it on every sign-in. */
+    @DeleteMapping("deletion")
+    public Mono<ResponseEntity<Void>> cancelDeletion(@AuthenticationPrincipal Jwt jwt) {
+        UUID userId = UUID.fromString(jwt.getClaimAsString(BUSINESS_ID));
+
+        return accountDeletionService.cancelDeletion(userId)
+                .then(Mono.fromSupplier(() -> ResponseEntity.noContent().<Void>build()));
     }
 
     /** Null when the claim is absent or unreadable, which the domain refuses: deletion fails closed. */

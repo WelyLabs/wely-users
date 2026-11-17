@@ -126,15 +126,39 @@ public interface UserR2dbcRepository extends ReactiveCrudRepository<UserEntity, 
                    theme = 'SYSTEM',
                    joined_date = (:deletedAt AT TIME ZONE 'UTC'),
                    identity_checked_at = COALESCE(identity_checked_at, :deletedAt),
-                   deleted_at = :deletedAt
+                   deleted_at = :deletedAt,
+                   deletion_due_at = NULL
              WHERE id = :id
                AND deleted_at IS NULL
             """)
     Mono<Long> tombstone(UUID id, OffsetDateTime deletedAt);
 
     /** Empty for an unknown id. */
-    @Query("SELECT deleted_at IS NOT NULL FROM app_user WHERE id = :id")
-    Mono<Boolean> isDeleted(UUID id);
+    @Query("""
+            SELECT CASE WHEN deleted_at IS NOT NULL THEN 'DELETED'
+                        WHEN deletion_due_at IS NOT NULL THEN 'PENDING_DELETION'
+                        ELSE 'ACTIVE' END
+              FROM app_user WHERE id = :id
+            """)
+    Mono<String> accountState(UUID id);
+
+    /** Schedules the erasure; matches nothing for a tombstone or an already scheduled deletion. */
+    @Modifying
+    @Query("""
+            UPDATE app_user SET deletion_due_at = :dueAt
+             WHERE id = :id AND deleted_at IS NULL AND deletion_due_at IS NULL
+            """)
+    Mono<Long> scheduleDeletion(UUID id, OffsetDateTime dueAt);
+
+    /** Unschedules it; matches nothing once the account is erased, so a started erasure is never undone. */
+    @Modifying
+    @Query("UPDATE app_user SET deletion_due_at = NULL WHERE id = :id AND deleted_at IS NULL "
+            + "AND deletion_due_at IS NOT NULL")
+    Mono<Long> cancelDeletion(UUID id);
+
+    /** Empty when no deletion is scheduled, as for an unknown id. */
+    @Query("SELECT deletion_due_at FROM app_user WHERE id = :id")
+    Mono<OffsetDateTime> findDeletionDueAt(UUID id);
 
     @Query("SELECT id FROM app_user WHERE id IN (:ids) AND deleted_at IS NOT NULL")
     Flux<UUID> findDeletedIds(Collection<UUID> ids);
