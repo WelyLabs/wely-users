@@ -342,6 +342,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     @DisplayName("an orphan check read before a deletion never hard-deletes the tombstone")
     void deleteOrphan_shouldLeaveATombstoneAlone() {
         BusinessUser user = savedAgo("orphan", 1111, "kc-orphan", 60);
+        scheduleDeletionOf(user.id());
         adapter.eraseAccount(user.id(), now()).block();
 
         adapter.deleteOrphan(user.id()).block();
@@ -625,8 +626,15 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
 
     private BusinessUser aTombstone() {
         BusinessUser user = adapter.save(aUser("alice", 1111), "kc-alice").block();
+        scheduleDeletionOf(user.id());
         adapter.eraseAccount(user.id(), now()).block();
         return user;
+    }
+
+    /** The real path to a tombstone: the deletion is scheduled, with its job, and the worker erases later. */
+    private void scheduleDeletionOf(UUID userId) {
+        Instant requestedAt = now();
+        adapter.scheduleDeletion(userId, requestedAt, requestedAt.plus(Duration.ofDays(30))).block();
     }
 
     private static boolean isBusiness(Throwable error, BusinessErrorCode code) {
@@ -868,6 +876,7 @@ class R2dbcUserRepositoryAdapterIntegrationTest {
     @DisplayName("two erasures racing on one row serialize on its lock: one USER_DELETED, one already erased")
     void eraseAccount_shouldWriteOneUserDeleted_whenTwoErasuresRace() {
         BusinessUser user = adapter.save(aUser("alice", 1111), "kc-alice").block();
+        scheduleDeletionOf(user.id());
 
         List<AccountErasure> outcomes = Flux.merge(
                         adapter.eraseAccount(user.id(), now()).subscribeOn(Schedulers.boundedElastic()),
