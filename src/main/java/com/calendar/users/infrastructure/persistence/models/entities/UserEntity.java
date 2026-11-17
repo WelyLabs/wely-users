@@ -22,8 +22,8 @@ public class UserEntity {
     @Id
     private UUID id;
 
-    @Column("keycloak_id")
-    private String keycloakId;
+    @Column("subject_id")
+    private String subjectId;
 
     @Column("user_name")
     private String userName;

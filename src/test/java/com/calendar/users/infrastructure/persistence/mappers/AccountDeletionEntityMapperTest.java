@@ -33,7 +33,7 @@ class AccountDeletionEntityMapperTest {
     @Test
     void toJob_shouldKeepTheSubjectAndFlagStepsLeft_whenTimestampsAreNull() {
         AccountDeletionEntity entity = AccountDeletionEntity.builder()
-                .userId(USER).keycloakId("kc-1").requestedAt(REQUESTED).attempts(0).build();
+                .userId(USER).subjectId("kc-1").requestedAt(REQUESTED).attempts(0).build();
 
         assertThat(mapper.toJob(entity))
                 .isEqualTo(new AccountDeletionJob(USER, "kc-1", REQUESTED.toInstant(), false, false, 0));

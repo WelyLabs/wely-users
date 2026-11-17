@@ -13,7 +13,6 @@ import java.time.OffsetDateTime;
 @Mapper(componentModel = "spring")
 public interface AccountDeletionEntityMapper {
 
-    @Mapping(target = "subjectId", source = "keycloakId")
     @Mapping(target = "identityDeleted", expression = "java(entity.getIdentityDeletedAt() != null)")
     @Mapping(target = "mediaDeleted", expression = "java(entity.getMediaDeletedAt() != null)")
     @Mapping(target = "attempts", source = "attempts", defaultValue = "0")

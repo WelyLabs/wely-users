@@ -250,7 +250,7 @@ public class UserService {
     public Mono<UUID> provisionUser(String subjectId, IdentityUser identityUser) {
         return userRepository.findIdBySubjectId(subjectId)
                 .switchIfEmpty(Mono.defer(() -> createUser(subjectId, identityUser)))
-                // Two concurrent calls for one id: the loser hits the keycloak_id (subject id) constraint.
+                // Two concurrent calls for one id: the loser hits the subject_id constraint.
                 .onErrorResume(UserService::isAlreadyExists,
                         e -> userRepository.findIdBySubjectId(subjectId).switchIfEmpty(Mono.error(e)));
     }

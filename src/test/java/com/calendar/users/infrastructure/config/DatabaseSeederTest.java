@@ -149,7 +149,7 @@ class DatabaseSeederTest {
         runAndWait();
 
         assertThat(firstInsert())
-                .contains("keycloak_id", "user_name", "hashtag", "profile_pic_url", "joined_date")
+                .contains("subject_id", "user_name", "hashtag", "profile_pic_url", "joined_date")
                 .contains("(:k0, :u0, :h0, :p0, :j0)");
 
         verify(executeSpec, atLeastOnce()).bind(eq("k0"), anyString());

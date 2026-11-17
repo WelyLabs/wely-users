@@ -57,7 +57,7 @@ class GlobalErrorHandlerWiringTest {
     private ApplicationContext context;
 
     @MockitoBean private ReactiveJwtDecoder jwtDecoder;
-    // Mocked so no request reaches an absent PostgreSQL or Keycloak.
+    // Mocked so no request reaches an absent PostgreSQL or Auth0.
     @MockitoBean private UserRepository userRepository;
     @MockitoBean private IdentityProvider identityProvider;
 
@@ -144,7 +144,7 @@ class GlobalErrorHandlerWiringTest {
     @Test
     @DisplayName("a wrong internal secret answers our 401 too")
     void internalSecretFilter_shouldAnswerOurProblem_whenTheSecretIsWrong() {
-        assertOurProblem(anonymous().get().uri("/user-service/profile/resolve/keycloak-abc")
+        assertOurProblem(anonymous().get().uri("/user-service/profile/resolve/subject-abc")
                         .header("X-Internal-Secret", "wrong-secret")
                         .exchange(),
                 401, BusinessErrorCode.AUTHENTICATION_REQUIRED.getCode());
